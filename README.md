@@ -12,13 +12,17 @@ Version 0.2.0 is an early Windows 11 x64 test build, not a production release. T
 - local-only Private Soundcheck before hosting or joining;
 - a working `JL1` invite code containing a public IPv4 address, UDP port, and random 256-bit room secret;
 - automatic UPnP port mapping, public-address discovery through Cloudflare's public STUN endpoint, and a displayed manual UDP-port fallback;
-- authenticated AES-256-GCM direct peer handshake and bidirectional 48 kHz mono PCM audio;
-- replay rejection, endpoint pinning, room mute, packet counters, remote meter, and network round-trip display;
+- authenticated AES-256-GCM direct peer handshake with per-direction keys, a sliding-window replay filter, and endpoint pinning;
+- independent instrument and voice streams, each with its own receive buffer and its own remote level and mute, so one can be turned down without the other;
+- an adaptive receive jitter buffer with pitch-synchronous packet-loss concealment and bounded latency growth;
+- room mute, packet counters, per-stream meters, and a connection summary that separates measured round trip from estimated one-way delay;
 - a self-contained Windows ZIP, including its exact JamLink source archive, produced by `scripts/package_windows.ps1`.
 
-The invite system is functional, not a visual placeholder. Automated tests create a host and guest on real loopback UDP sockets, complete the encrypted handshake, and exchange nonzero audio in both directions. A development-machine automation also opened a real Focusrite WASAPI combination. Those checks are not live-user, cross-home-network, subjective, or hardware-compatibility validation.
+The invite system is functional, not a visual placeholder. Automated tests create a host and guest on real loopback UDP sockets, complete the encrypted handshake, exchange nonzero audio on both streams in both directions, confirm that muting one stream leaves the other audible, reflect the host's own packets back at it from its pinned endpoint, and flood a live session with malformed datagrams. A development-machine automation also opened a real Focusrite WASAPI combination. Those checks are not live-user, cross-home-network, subjective, or hardware-compatibility validation.
 
-Read [TONIGHT_TEST.md](TONIGHT_TEST.md) before testing across two homes. The most important limitation is that this build has no relay: UPnP or manual UDP forwarding may be required, and carrier-grade or symmetric NAT can still prevent connection.
+The jitter buffer and concealment are measured against a deterministic impairment model in `tests/jamlink_network_tests.cpp`, not against a real Internet path. Over one virtual hour at 1.1% channel loss with 25 ms latency, 8 ms jitter, bursts, and reordering, concealment tracked real loss at 0.87% and receive depth peaked at 65 ms. Isolated-loss concealment measured 14.8 dB below zero fill.
+
+Read [TONIGHT_TEST.md](TONIGHT_TEST.md) before testing across two homes. The most important limitation is that this build has no relay: UPnP or manual UDP forwarding may be required, and carrier-grade or symmetric NAT can still prevent connection. Sending instrument and voice separately also roughly doubles upstream bandwidth to about 1.6 Mbit/s, because there is still no codec.
 
 ## Build and test on Windows
 
