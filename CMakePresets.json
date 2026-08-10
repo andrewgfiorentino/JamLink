@@ -1,0 +1,104 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-vs2022",
+      "displayName": "Windows x64 (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-vs2022",
+      "cacheVariables": {
+        "JAMLINK_BUILD_TESTS": "ON",
+        "JAMLINK_BUILD_TOOLS": "ON",
+        "JAMLINK_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "windows-gui-vs2022",
+      "displayName": "Windows x64 GUI (Visual Studio 2022 + Qt 6.10.3)",
+      "inherits": "windows-vs2022",
+      "binaryDir": "${sourceDir}/build/windows-gui-vs2022",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "${sourceDir}/.qt/6.10.3/msvc2022_64",
+        "JAMLINK_BUILD_DESKTOP": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Debug",
+      "jobs": 1
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Release",
+      "jobs": 1
+    },
+    {
+      "name": "windows-gui-debug",
+      "configurePreset": "windows-gui-vs2022",
+      "configuration": "Debug",
+      "jobs": 1
+    },
+    {
+      "name": "windows-gui-release",
+      "configurePreset": "windows-gui-vs2022",
+      "configuration": "Release",
+      "jobs": 1
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": true
+      }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": true
+      }
+    },
+    {
+      "name": "windows-gui-debug",
+      "configurePreset": "windows-gui-vs2022",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": true
+      }
+    },
+    {
+      "name": "windows-gui-release",
+      "configurePreset": "windows-gui-vs2022",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "stopOnFailure": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "project_license": "GPL-3.0-or-later",
+  "runtime": [
+    {
+      "name": "Qt",
+      "version": "6.10.3",
+      "license_selection": "GPL-3.0-only",
+      "upstream_license_expression": "LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+      "direct_modules_and_imports": [
+        "Core",
+        "Gui",
+        "Qml",
+        "Quick",
+        "QtQuick.Controls.Basic",
+        "QtQuick.Effects",
+        "QtQuick.Layouts",
+        "SVG image plugin"
+      ],
+      "source_archives": [
+        {
+          "filename": "qtbase-everywhere-src-6.10.3.zip",
+          "url": "https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtbase-everywhere-src-6.10.3.zip",
+          "sha256": "ddd7c0a3c798a8144a0fadb39c7c17b41cd5c55dd5caac22aca9ca3277b20024"
+        },
+        {
+          "filename": "qtdeclarative-everywhere-src-6.10.3.zip",
+          "url": "https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtdeclarative-everywhere-src-6.10.3.zip",
+          "sha256": "6fe0d0e569c53effd8c82d6f57fb54a59b4914f2e52b9713035bcd1a2ccdf4fe"
+        },
+        {
+          "filename": "qtsvg-everywhere-src-6.10.3.zip",
+          "url": "https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtsvg-everywhere-src-6.10.3.zip",
+          "sha256": "5cf19e3d35524f17711511e5174a3b1316e60c94eeac0627a27b040c04af63c0"
+        }
+      ],
+      "installed_kit_sboms": [
+        "qtbase-6.10.3.spdx.json",
+        "qtdeclarative-6.10.3.spdx.json",
+        "qtsvg-6.10.3.spdx.json"
+      ],
+      "distributed_with_source_repository": false,
+      "package_status": "not packaged; deployment manifest and corresponding-source bundle remain release gates"
+    },
+    {
+      "name": "Material Design Icons",
+      "variant": "Round",
+      "revision": "50f0603134ce7b70b2d71b686cc13e8b57ccb74c",
+      "license": "Apache-2.0",
+      "source": "https://github.com/google/material-design-icons",
+      "vendored_files": [
+        "arrow_back.svg",
+        "check_circle.svg",
+        "close.svg",
+        "expand_more.svg",
+        "headphones.svg",
+        "mic.svg",
+        "music_note.svg",
+        "settings.svg",
+        "tune.svg",
+        "volume_up.svg"
+      ],
+      "modifications": "Added fill=#ffffff to each root SVG element; path geometry unchanged",
+      "distributed_with_source_repository": true
+    }
+  ],
+  "build": [
+    {
+      "name": "CMake",
+      "minimum_version": "3.25",
+      "license": "BSD-3-Clause",
+      "source": "https://gitlab.kitware.com/cmake/cmake",
+      "distributed_with_source_repository": false
+    },
+    {
+      "name": "C++ standard library",
+      "standard": "C++20",
+      "provider": "selected compiler toolchain",
+      "distributed_with_source_repository": false
+    }
+  ],
+  "ci": [
+    {
+      "name": "actions/checkout",
+      "version": "v7.0.1",
+      "revision": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "license": "MIT",
+      "source": "https://github.com/actions/checkout",
+      "distributed_with_source_repository": false
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+JamLink
+Copyright (C) 2026 JamLink contributors
+
+The primary JamLink application and repository are licensed under the
+GNU General Public License, version 3 or (at your option) any later
+version. The full license text is in LICENSE.
+
+Individual files may carry a different SPDX-License-Identifier when a
+separately licensed protocol specification, interoperability SDK, IPC
+library, third-party component, or other clearly separable work is added.
+Such exceptions apply only to the files that state them; they do not change
+the GPL-3.0-or-later status of the primary JamLink application.
+
+Third-party notices and license obligations are recorded in
+THIRD_PARTY_LICENSES.md and dependencies.json.
+
+The desktop source includes selected Google Material Design Icons under
+the Apache License 2.0. The exact revision, changed-file notice, hashes,
+and full license are recorded under apps/desktop/assets and
+third_party/material-design-icons.
+
+The optional desktop build uses an external Qt 6.10.3 kit under Qt's
+GPL-3.0-only option. Qt is not vendored or packaged by this repository.
+Qt and the Qt logo are trademarks of The Qt Company Ltd.
+
+ASIO is a trademark of Steinberg Media Technologies GmbH. The ASIO SDK
+is not currently present in this repository.
