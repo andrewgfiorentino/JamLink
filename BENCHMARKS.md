@@ -18,8 +18,8 @@ Result:
 | Metric | Value |
 |---|---:|
 | Simulated audio time | 3,600 s |
-| Wall time | 3.48902 s |
-| Processing factor | 1031.81× real time |
+| Wall time | 3.38034 s |
+| Processing factor | 1064.98× real time |
 | SPSC underruns | 0 |
 | SPSC overruns | 0 |
 | Final synthetic peak | -6.02108 dBFS |

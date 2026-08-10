@@ -3,6 +3,8 @@
 #include "app_controller.hpp"
 
 #include <QByteArray>
+#include <QClipboard>
+#include <QGuiApplication>
 
 #include <algorithm>
 #include <cmath>
@@ -30,19 +32,24 @@ AppController::AppController(
     QString initialPage,
     std::uint32_t widthOverride,
     std::uint32_t heightOverride,
-    QObject* parent)
+    QObject* parent,
+    std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService)
     : QObject(parent),
       store_(std::move(preferencePath)),
       currentPage_(std::move(initialPage)),
-      visualFixture_(visualFixture) {
+      visualFixture_(visualFixture),
+      audioService_(std::move(audioService)) {
     const bool automaticPage = currentPage_ == QStringLiteral("auto");
     if (!automaticPage && currentPage_ != QStringLiteral("home")
         && currentPage_ != QStringLiteral("soundcheck")
-        && currentPage_ != QStringLiteral("settings")) {
+        && currentPage_ != QStringLiteral("settings")
+        && currentPage_ != QStringLiteral("room")) {
         currentPage_ = QStringLiteral("home");
     }
 
     if (visualFixture_) {
+        sampleRateValues_ = {44'100U, 48'000U, 96'000U};
+        bufferSizeValues_ = {64U, 128U, 256U};
         instrumentOptions_ = {
             {QStringLiteral("fixture:interface"),
              QStringLiteral("Focusrite Scarlett 2i2 — Input 1"),
@@ -59,19 +66,38 @@ AppController::AppController(
              QStringLiteral("output:1"), QStringLiteral("output:2")}};
         devicesAvailable_ = true;
     } else {
-        instrumentOptions_ = {{QString(), QStringLiteral("No audio backend available"), {}, {}}};
-        voiceOptions_ = {{QString(), QStringLiteral("No audio backend available"), {}, {}}};
-        outputOptions_ = {{QString(), QStringLiteral("No audio backend available"), {}, {}}};
+        if (!audioService_) {
+            audioService_ = jamlink::audio::createPlatformSoundcheckAudioService();
+        }
+        loadDeviceInventory();
     }
 
     saveTimer_.setSingleShot(true);
     saveTimer_.setInterval(350);
     connect(&saveTimer_, &QTimer::timeout, this, &AppController::persistNow);
+    audioRestartTimer_.setSingleShot(true);
+    audioRestartTimer_.setInterval(180);
+    connect(&audioRestartTimer_, &QTimer::timeout, this, &AppController::retryAudio);
+    telemetryTimer_.setInterval(33);
+    connect(&telemetryTimer_, &QTimer::timeout, this, &AppController::pollAudioTelemetry);
     loadPreferences(widthOverride, heightOverride);
     if (automaticPage) {
         currentPage_ = restoredSetupAvailable_
             ? QStringLiteral("home")
             : QStringLiteral("soundcheck");
+    }
+    if (!visualFixture_ && devicesAvailable_) {
+        audioRestartTimer_.start(0);
+    }
+}
+
+AppController::~AppController() {
+    if (audioService_) {
+        audioService_->stop();
+        audioService_->setPeerAudioExchange(nullptr);
+    }
+    if (peerTransport_) {
+        peerTransport_->stop();
     }
 }
 
@@ -79,7 +105,7 @@ QString AppController::currentPage() const { return currentPage_; }
 
 void AppController::setCurrentPage(const QString& page) {
     if (page != QStringLiteral("home") && page != QStringLiteral("soundcheck")
-        && page != QStringLiteral("settings")) {
+        && page != QStringLiteral("settings") && page != QStringLiteral("room")) {
         return;
     }
     if (page != currentPage_) {
@@ -91,6 +117,26 @@ void AppController::setCurrentPage(const QString& page) {
 bool AppController::visualFixture() const noexcept { return visualFixture_; }
 bool AppController::restoredPreferences() const noexcept { return restoredPreferences_; }
 bool AppController::devicesAvailable() const noexcept { return devicesAvailable_; }
+bool AppController::audioActive() const noexcept {
+    return visualFixture_
+        || audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running;
+}
+QString AppController::audioStatus() const {
+    if (visualFixture_) {
+        return QStringLiteral("Deterministic visual fixture");
+    }
+    if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running) {
+        return QStringLiteral("WASAPI Shared · %1 kHz · %2 frames")
+            .arg(audioTelemetry_.outputSampleRate / 1'000.0, 0, 'g', 3)
+            .arg(audioTelemetry_.outputBufferFrames);
+    }
+    const QString state = audioStateText(audioTelemetry_.state);
+    return audioTelemetry_.nativeError == 0
+        ? state
+        : state + QStringLiteral(" · error 0x%1").arg(
+            static_cast<std::uint32_t>(audioTelemetry_.nativeError),
+            8, 16, QChar('0'));
+}
 bool AppController::allReady() const noexcept { return readiness_.allVerified(); }
 QString AppController::readinessLabel() const {
     if (!devicesAvailable_) {
@@ -114,6 +160,7 @@ void AppController::setInstrumentDeviceIndex(int index) {
     }
     instrumentIndex_ = index;
     invalidateReadiness();
+    scheduleAudioRestart();
 }
 
 void AppController::setVoiceDeviceIndex(int index) {
@@ -122,6 +169,7 @@ void AppController::setVoiceDeviceIndex(int index) {
     }
     voiceIndex_ = index;
     invalidateReadiness();
+    scheduleAudioRestart();
 }
 
 void AppController::setOutputDeviceIndex(int index) {
@@ -129,7 +177,9 @@ void AppController::setOutputDeviceIndex(int index) {
         return;
     }
     outputIndex_ = index;
+    updateOutputCapabilities();
     invalidateReadiness();
+    scheduleAudioRestart();
 }
 
 QStringList AppController::sampleRates() const {
@@ -159,6 +209,7 @@ void AppController::setSampleRateIndex(int index) {
     }
     sampleRateIndex_ = index;
     invalidateReadiness();
+    scheduleAudioRestart();
 }
 
 void AppController::setBufferSizeIndex(int index) {
@@ -167,6 +218,7 @@ void AppController::setBufferSizeIndex(int index) {
     }
     bufferSizeIndex_ = index;
     invalidateReadiness();
+    scheduleAudioRestart();
 }
 
 double AppController::instrumentMonitorGain() const noexcept {
@@ -188,6 +240,13 @@ void AppController::setInstrumentMonitorGain(double gain) {
         return;
     }
     preferences_.instrumentMonitorGain = bounded;
+    if (audioService_) {
+        audioService_->setMonitorControls(
+            preferences_.instrumentMonitorGain,
+            preferences_.instrumentMonitorEnabled,
+            preferences_.voiceMonitorGain,
+            preferences_.voiceMonitorEnabled);
+    }
     scheduleSave();
     emit setupChanged();
 }
@@ -198,6 +257,13 @@ void AppController::setVoiceMonitorGain(double gain) {
         return;
     }
     preferences_.voiceMonitorGain = bounded;
+    if (audioService_) {
+        audioService_->setMonitorControls(
+            preferences_.instrumentMonitorGain,
+            preferences_.instrumentMonitorEnabled,
+            preferences_.voiceMonitorGain,
+            preferences_.voiceMonitorEnabled);
+    }
     scheduleSave();
     emit setupChanged();
 }
@@ -207,6 +273,13 @@ void AppController::setInstrumentMonitorEnabled(bool enabled) {
         return;
     }
     preferences_.instrumentMonitorEnabled = enabled;
+    if (audioService_) {
+        audioService_->setMonitorControls(
+            preferences_.instrumentMonitorGain,
+            preferences_.instrumentMonitorEnabled,
+            preferences_.voiceMonitorGain,
+            preferences_.voiceMonitorEnabled);
+    }
     scheduleSave();
     emit setupChanged();
 }
@@ -216,15 +289,78 @@ void AppController::setVoiceMonitorEnabled(bool enabled) {
         return;
     }
     preferences_.voiceMonitorEnabled = enabled;
+    if (enabled && !visualFixture_) {
+        setupMessage_ = QStringLiteral(
+            "Voice monitoring is live; use headphones to prevent speaker feedback");
+    }
+    if (audioService_) {
+        audioService_->setMonitorControls(
+            preferences_.instrumentMonitorGain,
+            preferences_.instrumentMonitorEnabled,
+            preferences_.voiceMonitorGain,
+            preferences_.voiceMonitorEnabled);
+    }
     scheduleSave();
     emit setupChanged();
 }
 
 double AppController::instrumentLevel() const noexcept {
-    return visualFixture_ ? 0.78 : 0.0;
+    return visualFixture_ ? 0.78 : audioTelemetry_.instrumentPeak;
 }
-double AppController::voiceLevel() const noexcept { return visualFixture_ ? 0.55 : 0.0; }
-double AppController::outputLevel() const noexcept { return visualFixture_ ? 0.50 : 0.0; }
+double AppController::voiceLevel() const noexcept {
+    return visualFixture_ ? 0.55 : audioTelemetry_.voicePeak;
+}
+double AppController::outputLevel() const noexcept {
+    return visualFixture_ ? 0.50 : audioTelemetry_.outputPeak;
+}
+
+bool AppController::roomActive() const noexcept { return peerTransport_ != nullptr; }
+bool AppController::peerConnected() const noexcept {
+    return peerTelemetry_.state == jamlink::network::PeerConnectionState::Connected;
+}
+QString AppController::roomStatus() const {
+    if (!peerTransport_) {
+        return QStringLiteral("No room session");
+    }
+    if (peerConnected()) {
+        return QStringLiteral("Connected · encrypted direct audio · %1 ms")
+            .arg(peerTelemetry_.roundTripMilliseconds);
+    }
+    if (peerTelemetry_.state == jamlink::network::PeerConnectionState::WaitingForPeer
+        && !peerTelemetry_.automaticPortMapping) {
+        return QStringLiteral(
+            "Waiting for your friend · automatic router mapping unavailable");
+    }
+    return peerStateText(peerTelemetry_.state);
+}
+QString AppController::inviteCode() const { return inviteCode_; }
+bool AppController::automaticPortMapping() const noexcept {
+    return peerTelemetry_.automaticPortMapping;
+}
+int AppController::roomPort() const noexcept {
+    return peerTransport_ ? static_cast<int>(peerTransport_->localPort()) : 0;
+}
+int AppController::roundTripMilliseconds() const noexcept {
+    return static_cast<int>(peerTelemetry_.roundTripMilliseconds);
+}
+double AppController::remoteLevel() const noexcept { return peerTelemetry_.remotePeak; }
+QString AppController::packetSummary() const {
+    return QStringLiteral("%1 received · %2 sent · %3 rejected")
+        .arg(peerTelemetry_.packetsReceived)
+        .arg(peerTelemetry_.packetsSent)
+        .arg(peerTelemetry_.packetsRejected);
+}
+bool AppController::sendMuted() const noexcept { return sendMuted_; }
+void AppController::setSendMuted(bool muted) {
+    if (sendMuted_ == muted) {
+        return;
+    }
+    sendMuted_ = muted;
+    if (peerTransport_) {
+        peerTransport_->setSendMuted(muted);
+    }
+    emit roomChanged();
+}
 
 int AppController::preferredWindowX() const noexcept { return preferences_.window.x; }
 int AppController::preferredWindowY() const noexcept { return preferences_.window.y; }
@@ -241,7 +377,7 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
 
 void AppController::saveSoundcheck() {
-    if (devicesAvailable_) {
+    if (devicesAvailable_ && audioActive()) {
         updateReadinessConfiguration();
         static_cast<void>(readiness_.markVerified(
             jamlink::control::SetupComponent::Instrument,
@@ -258,12 +394,136 @@ void AppController::saveSoundcheck() {
             fingerprint(outputOptions_[static_cast<std::size_t>(outputIndex_)],
                         sampleRateValues_[static_cast<std::size_t>(sampleRateIndex_)],
                         bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)])));
-        setupMessage_ = QStringLiteral("Private setup saved for this run");
+        setupMessage_ = QStringLiteral("Private setup verified and saved for this run");
+    } else if (devicesAvailable_) {
+        setupMessage_ = QStringLiteral("Start the private monitor before verifying this setup");
     } else {
-        setupMessage_ = QStringLiteral("Audio backends are not available in this build");
+        setupMessage_ = QStringLiteral("No compatible Windows audio endpoints are available");
     }
     persistNow();
     emit setupChanged();
+}
+
+void AppController::testOutput() {
+    if (audioService_ && audioActive()) {
+        audioService_->requestOutputTest();
+        setupMessage_ = QStringLiteral("Playing a quiet 440 Hz output test for one second");
+    } else {
+        setupMessage_ = QStringLiteral("The private monitor must be active to test the output");
+    }
+    emit setupChanged();
+}
+
+void AppController::retryAudio() {
+    if (!visualFixture_) {
+        if (!instrumentOptions_.empty() && !voiceOptions_.empty() && !outputOptions_.empty()) {
+            applySelectionsToPreferences();
+        }
+        loadDeviceInventory();
+        if (devicesAvailable_) {
+            instrumentIndex_ = resolveDevice(instrumentOptions_, preferences_.instrument);
+            voiceIndex_ = resolveDevice(voiceOptions_, preferences_.voice);
+            outputIndex_ = resolveDevice(outputOptions_, preferences_.output);
+            updateOutputCapabilities();
+            sampleRateIndex_ = resolveScalar(sampleRateValues_, preferences_.sampleRate);
+            bufferSizeIndex_ = resolveScalar(bufferSizeValues_, preferences_.bufferFrames);
+            updateReadinessConfiguration();
+            restartAudio();
+        } else {
+            audioTelemetry_ = {};
+            audioTelemetry_.state = jamlink::audio::SoundcheckAudioState::NoEndpoints;
+            setupMessage_ = QStringLiteral("Connect an input and output, then retry audio");
+        }
+        emit setupChanged();
+    }
+}
+
+void AppController::hostSession() {
+    if (visualFixture_ || !audioService_ || !audioActive() || !allReady()) {
+        setupMessage_ = QStringLiteral("Verify the real private audio setup before hosting");
+        setCurrentPage(QStringLiteral("soundcheck"));
+        emit setupChanged();
+        return;
+    }
+    leaveSession();
+    auto transport = jamlink::network::createPlatformPeerAudioTransport();
+    if (!transport) {
+        setupMessage_ = QStringLiteral("This build has no Windows peer transport");
+        emit setupChanged();
+        return;
+    }
+    const std::string invite = transport->host();
+    peerTelemetry_ = transport->telemetry();
+    if (invite.empty()) {
+        setupMessage_ = peerStateText(peerTelemetry_.state);
+        emit setupChanged();
+        return;
+    }
+    audioService_->stop();
+    audioService_->setPeerAudioExchange(transport.get());
+    peerTransport_ = std::move(transport);
+    inviteCode_ = QString::fromStdString(invite);
+    sendMuted_ = false;
+    restartAudio();
+    setCurrentPage(QStringLiteral("room"));
+    emit roomChanged();
+}
+
+void AppController::joinSession(const QString& inviteCode) {
+    if (visualFixture_ || !audioService_ || !audioActive() || !allReady()) {
+        setupMessage_ = QStringLiteral("Verify the real private audio setup before joining");
+        setCurrentPage(QStringLiteral("soundcheck"));
+        emit setupChanged();
+        return;
+    }
+    leaveSession();
+    auto transport = jamlink::network::createPlatformPeerAudioTransport();
+    if (!transport || !transport->join(inviteCode.trimmed().toStdString())) {
+        if (transport) {
+            peerTelemetry_ = transport->telemetry();
+            setupMessage_ = peerStateText(peerTelemetry_.state);
+        } else {
+            setupMessage_ = QStringLiteral("This build has no Windows peer transport");
+        }
+        emit setupChanged();
+        return;
+    }
+    audioService_->stop();
+    audioService_->setPeerAudioExchange(transport.get());
+    peerTransport_ = std::move(transport);
+    inviteCode_.clear();
+    sendMuted_ = false;
+    restartAudio();
+    setCurrentPage(QStringLiteral("room"));
+    emit roomChanged();
+}
+
+void AppController::leaveSession() {
+    if (!peerTransport_) {
+        return;
+    }
+    if (audioService_) {
+        audioService_->stop();
+        audioService_->setPeerAudioExchange(nullptr);
+    }
+    peerTransport_->stop();
+    peerTransport_.reset();
+    peerTelemetry_ = {};
+    inviteCode_.clear();
+    sendMuted_ = false;
+    if (audioService_ && devicesAvailable_) {
+        restartAudio();
+    }
+    setCurrentPage(QStringLiteral("home"));
+    emit roomChanged();
+}
+
+void AppController::copyInvite() {
+    if (!inviteCode_.isEmpty()) {
+        QGuiApplication::clipboard()->setText(inviteCode_);
+        setupMessage_ = QStringLiteral("Invite code copied");
+        emit setupChanged();
+    }
 }
 
 void AppController::updateWindowPlacement(int x, int y, int width, int height) {
@@ -299,11 +559,86 @@ QStringList AppController::displayNames(const std::vector<DeviceOption>& options
     return result;
 }
 
+void AppController::loadDeviceInventory() {
+    instrumentOptions_.clear();
+    voiceOptions_.clear();
+    outputOptions_.clear();
+    devicesAvailable_ = false;
+    if (!audioService_) {
+        instrumentOptions_ = {{QString(), QStringLiteral("Windows audio service unavailable"), {}, {}, {}}};
+        voiceOptions_ = instrumentOptions_;
+        outputOptions_ = instrumentOptions_;
+        return;
+    }
+
+    const auto inventory = audioService_->enumerate();
+    const auto inputOption = [](const jamlink::audio::SoundcheckEndpointOption& option) {
+        return DeviceOption{
+            QString::fromUtf8(option.endpointId),
+            QString::fromUtf8(option.displayName),
+            QStringLiteral("input:%1").arg(option.primaryChannel),
+            {},
+            option};
+    };
+    const auto outputOption = [](const jamlink::audio::SoundcheckEndpointOption& option) {
+        return DeviceOption{
+            QString::fromUtf8(option.endpointId),
+            QString::fromUtf8(option.displayName),
+            QStringLiteral("output:%1").arg(option.primaryChannel),
+            option.hasSecondaryChannel
+                ? QStringLiteral("output:%1").arg(option.secondaryChannel)
+                : QString(),
+            option};
+    };
+    instrumentOptions_.reserve(inventory.inputOptions.size());
+    voiceOptions_.reserve(inventory.inputOptions.size());
+    outputOptions_.reserve(inventory.outputOptions.size());
+    for (const auto& option : inventory.inputOptions) {
+        instrumentOptions_.push_back(inputOption(option));
+        voiceOptions_.push_back(inputOption(option));
+    }
+    for (const auto& option : inventory.outputOptions) {
+        outputOptions_.push_back(outputOption(option));
+    }
+    devicesAvailable_ = !instrumentOptions_.empty()
+        && !voiceOptions_.empty() && !outputOptions_.empty();
+    if (!devicesAvailable_) {
+        instrumentOptions_ = {{QString(), QStringLiteral("No active Windows capture endpoint"), {}, {}, {}}};
+        voiceOptions_ = instrumentOptions_;
+        outputOptions_ = {{QString(), QStringLiteral("No active Windows output endpoint"), {}, {}, {}}};
+    }
+}
+
+void AppController::updateOutputCapabilities() {
+    if (visualFixture_ || !devicesAvailable_
+        || !validIndex(outputIndex_, outputOptions_.size())) {
+        return;
+    }
+    const auto& option = outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption;
+    sampleRateValues_ = {option.mixSampleRate == 0U ? 48'000U : option.mixSampleRate};
+    bufferSizeValues_ = option.bufferFrameOptions;
+    std::sort(bufferSizeValues_.begin(), bufferSizeValues_.end());
+    bufferSizeValues_.erase(
+        std::remove(bufferSizeValues_.begin(), bufferSizeValues_.end(), 0U),
+        bufferSizeValues_.end());
+    bufferSizeValues_.erase(
+        std::unique(bufferSizeValues_.begin(), bufferSizeValues_.end()),
+        bufferSizeValues_.end());
+    if (bufferSizeValues_.empty()) {
+        bufferSizeValues_ = {480U};
+    }
+    sampleRateIndex_ = 0;
+    bufferSizeIndex_ = std::clamp(
+        bufferSizeIndex_, 0, static_cast<int>(bufferSizeValues_.size() - 1U));
+}
+
 int AppController::resolveDevice(
     const std::vector<DeviceOption>& options,
-    const std::string& stableId) {
+    const jamlink::preferences::AudioSelection& selection) {
     for (std::size_t index = 0; index < options.size(); ++index) {
-        if (options[index].stableId.toStdString() == stableId) {
+        if (options[index].stableId.toStdString() == selection.deviceId
+            && options[index].primaryChannelId.toStdString() == selection.primaryChannelId
+            && options[index].secondaryChannelId.toStdString() == selection.secondaryChannelId) {
             return static_cast<int>(index);
         }
     }
@@ -350,6 +685,10 @@ void AppController::loadPreferences(
     restoredPreferences_ =
         loaded.state == jamlink::preferences::PreferencesLoadState::Loaded;
     preferences_ = loaded.preferences;
+    if (visualFixture_ && !restoredPreferences_) {
+        preferences_.instrumentMonitorEnabled = true;
+        preferences_.voiceMonitorEnabled = true;
+    }
     if (widthOverride >= 532U) {
         preferences_.window.width = widthOverride;
     }
@@ -357,9 +696,10 @@ void AppController::loadPreferences(
         preferences_.window.height = heightOverride;
     }
 
-    instrumentIndex_ = resolveDevice(instrumentOptions_, preferences_.instrument.deviceId);
-    voiceIndex_ = resolveDevice(voiceOptions_, preferences_.voice.deviceId);
-    outputIndex_ = resolveDevice(outputOptions_, preferences_.output.deviceId);
+    instrumentIndex_ = resolveDevice(instrumentOptions_, preferences_.instrument);
+    voiceIndex_ = resolveDevice(voiceOptions_, preferences_.voice);
+    outputIndex_ = resolveDevice(outputOptions_, preferences_.output);
+    updateOutputCapabilities();
     sampleRateIndex_ = resolveScalar(sampleRateValues_, preferences_.sampleRate);
     bufferSizeIndex_ = resolveScalar(bufferSizeValues_, preferences_.bufferFrames);
     restoredSetupAvailable_ = restoredPreferences_ && devicesAvailable_
@@ -373,10 +713,12 @@ void AppController::loadPreferences(
 
     if (loaded.state == jamlink::preferences::PreferencesLoadState::RecoveredDefaults) {
         setupMessage_ = QStringLiteral("Recovered safe defaults; verify devices again");
+    } else if (visualFixture_) {
+        setupMessage_ = QStringLiteral("Deterministic visual fixture; no hardware is active");
     } else if (devicesAvailable_) {
-        setupMessage_ = QStringLiteral("Only you can hear this private preview");
+        setupMessage_ = QStringLiteral("Starting private WASAPI Shared monitor");
     } else {
-        setupMessage_ = QStringLiteral("Audio backends are not available in this build");
+        setupMessage_ = QStringLiteral("Connect an input and output, then retry audio");
     }
     updateReadinessConfiguration();
     if (visualFixture_) {
@@ -439,5 +781,114 @@ void AppController::invalidateReadiness() {
 }
 
 void AppController::scheduleSave() { saveTimer_.start(); }
+
+void AppController::scheduleAudioRestart() {
+    if (visualFixture_ || !audioService_ || !devicesAvailable_) {
+        return;
+    }
+    telemetryTimer_.stop();
+    audioService_->stop();
+    audioTelemetry_ = audioService_->telemetry();
+    audioRestartTimer_.start();
+}
+
+void AppController::restartAudio() {
+    if (visualFixture_ || !audioService_ || !devicesAvailable_
+        || !validIndex(instrumentIndex_, instrumentOptions_.size())
+        || !validIndex(voiceIndex_, voiceOptions_.size())
+        || !validIndex(outputIndex_, outputOptions_.size())
+        || !validIndex(bufferSizeIndex_, bufferSizeValues_.size())) {
+        return;
+    }
+    audioService_->stop();
+    setupMessage_ = QStringLiteral("Opening private Windows audio monitor…");
+    emit setupChanged();
+    const jamlink::audio::SoundcheckAudioConfiguration configuration{
+        instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].serviceOption,
+        voiceOptions_[static_cast<std::size_t>(voiceIndex_)].serviceOption,
+        outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption,
+        bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)],
+        preferences_.instrumentMonitorGain,
+        preferences_.voiceMonitorGain,
+        preferences_.instrumentMonitorEnabled,
+        preferences_.voiceMonitorEnabled};
+    static_cast<void>(audioService_->start(configuration));
+    audioTelemetry_ = audioService_->telemetry();
+    if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running) {
+        setupMessage_ = QStringLiteral(
+            "Private local monitor active; Windows shared-mode processing may apply");
+        telemetryTimer_.start();
+    } else {
+        setupMessage_ = audioStateText(audioTelemetry_.state);
+    }
+    emit setupChanged();
+}
+
+void AppController::pollAudioTelemetry() {
+    if (!audioService_) {
+        return;
+    }
+    const auto previousState = audioTelemetry_.state;
+    audioTelemetry_ = audioService_->telemetry();
+    if (previousState == jamlink::audio::SoundcheckAudioState::Running
+        && audioTelemetry_.state != jamlink::audio::SoundcheckAudioState::Running) {
+        setupMessage_ = audioStateText(audioTelemetry_.state);
+        telemetryTimer_.stop();
+        audioRestartTimer_.start(1'000);
+    }
+    if (peerTransport_) {
+        peerTelemetry_ = peerTransport_->telemetry();
+        emit roomChanged();
+    }
+    emit setupChanged();
+}
+
+QString AppController::audioStateText(jamlink::audio::SoundcheckAudioState state) {
+    using State = jamlink::audio::SoundcheckAudioState;
+    switch (state) {
+    case State::Stopped:
+        return QStringLiteral("Private monitor stopped");
+    case State::Starting:
+        return QStringLiteral("Starting private monitor…");
+    case State::Running:
+        return QStringLiteral("Private monitor active");
+    case State::NoEndpoints:
+        return QStringLiteral("Select active input and output endpoints");
+    case State::DeviceUnavailable:
+        return QStringLiteral("A selected audio device is unavailable");
+    case State::UnsupportedFormat:
+        return QStringLiteral("A selected device uses an unsupported Windows format");
+    case State::InitializationFailed:
+        return QStringLiteral("Windows could not open this device combination");
+    case State::DeviceInvalidated:
+        return QStringLiteral("An audio device changed; retrying safely");
+    }
+    return QStringLiteral("Audio status unavailable");
+}
+
+QString AppController::peerStateText(jamlink::network::PeerConnectionState state) {
+    using State = jamlink::network::PeerConnectionState;
+    switch (state) {
+    case State::Idle:
+        return QStringLiteral("Room transport is idle");
+    case State::Preparing:
+        return QStringLiteral("Preparing secure invite…");
+    case State::WaitingForPeer:
+        return QStringLiteral("Invite ready · waiting for your friend");
+    case State::Connecting:
+        return QStringLiteral("Connecting with invite code…");
+    case State::Connected:
+        return QStringLiteral("Connected · encrypted direct audio");
+    case State::InviteInvalid:
+        return QStringLiteral("That invite code is invalid");
+    case State::SocketFailed:
+        return QStringLiteral("Windows could not open the room network port");
+    case State::EncryptionFailed:
+        return QStringLiteral("Secure room encryption could not start");
+    case State::ConnectionLost:
+        return QStringLiteral("Connection lost · retrying direct audio");
+    }
+    return QStringLiteral("Room status unavailable");
+}
 
 } // namespace jamlink::desktop

@@ -1,6 +1,7 @@
 # CMake build trees
 /build/
 /out/
+/dist/
 /cmake-build-*/
 /.qt/
 /.tools/

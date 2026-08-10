@@ -7,8 +7,73 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 
 namespace {
+
+class EmptyAudioService final : public jamlink::audio::ISoundcheckAudioService {
+public:
+    [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override { return {}; }
+    [[nodiscard]] bool start(
+        const jamlink::audio::SoundcheckAudioConfiguration&) override { return false; }
+    void stop() noexcept override {}
+    void setMonitorControls(float, bool, float, bool) noexcept override {}
+    void requestOutputTest() noexcept override {}
+    void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
+    [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
+        return {jamlink::audio::SoundcheckAudioState::NoEndpoints};
+    }
+};
+
+class DeterministicAudioService final : public jamlink::audio::ISoundcheckAudioService {
+public:
+    [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
+        const jamlink::audio::SoundcheckEndpointOption input{
+            "test:capture", "Test Capture — Input 1", 0U, 0U, false,
+            48'000U, {128U, 256U}};
+        const jamlink::audio::SoundcheckEndpointOption output{
+            "test:render", "Test Render — Output 1–2", 0U, 1U, true,
+            48'000U, {128U, 256U}};
+        return {{input}, {output}};
+    }
+    [[nodiscard]] bool start(
+        const jamlink::audio::SoundcheckAudioConfiguration& configuration) override {
+        lastConfiguration = configuration;
+        ++startCount;
+        current = {
+            jamlink::audio::SoundcheckAudioState::Running,
+            0.25F, 0.5F, 0.375F, 48'000U, configuration.requestedBufferFrames,
+            0U, 0U, false};
+        return true;
+    }
+    void stop() noexcept override {
+        current.state = jamlink::audio::SoundcheckAudioState::Stopped;
+    }
+    void setMonitorControls(
+        float instrumentGain,
+        bool instrumentEnabled,
+        float voiceGain,
+        bool voiceEnabled) noexcept override {
+        lastInstrumentGain = instrumentGain;
+        lastVoiceGain = voiceGain;
+        lastInstrumentEnabled = instrumentEnabled;
+        lastVoiceEnabled = voiceEnabled;
+    }
+    void requestOutputTest() noexcept override { ++outputTestCount; }
+    void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
+    [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
+        return current;
+    }
+
+    jamlink::audio::SoundcheckAudioConfiguration lastConfiguration;
+    jamlink::audio::SoundcheckAudioTelemetry current;
+    std::size_t startCount{0U};
+    std::size_t outputTestCount{0U};
+    float lastInstrumentGain{0.0F};
+    float lastVoiceGain{0.0F};
+    bool lastInstrumentEnabled{false};
+    bool lastVoiceEnabled{false};
+};
 
 bool near(double left, double right) {
     return std::abs(left - right) <= 1.0e-6;
@@ -94,15 +159,47 @@ int main(int argc, char* argv[]) {
 
     const auto productionPath = directory / "production-preferences.jlpf";
     jamlink::desktop::AppController productionFirst(
-        productionPath, false, QStringLiteral("auto"), 0U, 0U);
+        productionPath, false, QStringLiteral("auto"), 0U, 0U, nullptr,
+        std::make_unique<EmptyAudioService>());
     productionFirst.persistNow();
     jamlink::desktop::AppController productionSecond(
-        productionPath, false, QStringLiteral("auto"), 0U, 0U);
+        productionPath, false, QStringLiteral("auto"), 0U, 0U, nullptr,
+        std::make_unique<EmptyAudioService>());
     passed = expect(productionSecond.restoredPreferences(),
                     "production preferences restore syntactically")
         && passed;
     passed = expect(productionSecond.currentPage() == QStringLiteral("soundcheck"),
                     "unavailable production backend never skips Sound Check")
+        && passed;
+
+    const auto activePath = directory / "active-audio-preferences.jlpf";
+    auto deterministicService = std::make_unique<DeterministicAudioService>();
+    auto* deterministicServiceView = deterministicService.get();
+    jamlink::desktop::AppController active(
+        activePath, false, QStringLiteral("auto"), 0U, 0U, nullptr,
+        std::move(deterministicService));
+    passed = expect(active.devicesAvailable(), "production inventory exposes real selections")
+        && passed;
+    active.retryAudio();
+    passed = expect(active.audioActive(), "successful service start activates private monitor")
+        && passed;
+    passed = expect(deterministicServiceView->startCount == 1U,
+                    "retry starts exactly one monitor session")
+        && passed;
+    passed = expect(near(active.instrumentLevel(), 0.25)
+                        && near(active.voiceLevel(), 0.5)
+                        && near(active.outputLevel(), 0.375),
+                    "controller publishes service telemetry")
+        && passed;
+    active.setInstrumentMonitorGain(0.33);
+    active.setVoiceMonitorEnabled(false);
+    passed = expect(near(deterministicServiceView->lastInstrumentGain, 0.33)
+                        && !deterministicServiceView->lastVoiceEnabled,
+                    "monitor controls reach the service without restart")
+        && passed;
+    active.testOutput();
+    passed = expect(deterministicServiceView->outputTestCount == 1U,
+                    "output test reaches only the active local service")
         && passed;
 
     std::filesystem::remove_all(directory, cleanupError);

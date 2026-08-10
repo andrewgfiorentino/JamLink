@@ -21,7 +21,15 @@ Verified official source archives:
 | [`qtdeclarative-everywhere-src-6.10.3.zip`](https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtdeclarative-everywhere-src-6.10.3.zip) | `6fe0d0e569c53effd8c82d6f57fb54a59b4914f2e52b9713035bcd1a2ccdf4fe` |
 | [`qtsvg-everywhere-src-6.10.3.zip`](https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtsvg-everywhere-src-6.10.3.zip) | `5cf19e3d35524f17711511e5174a3b1316e60c94eeac0627a27b040c04af63c0` |
 
-The installed kit's `qtbase-6.10.3.spdx.json`, `qtdeclarative-6.10.3.spdx.json`, and `qtsvg-6.10.3.spdx.json` files were checked as the build-specific SBOMs. Qt is not committed to this repository and no redistributable application package is produced yet. Packaging remains blocked on a reviewed `windeployqt` manifest, exact binary-package identifiers/checksums, applicable post-release security patches, complete notices, the exact corresponding Qt sources, and a configuration/patch record. Installation information must also be supplied when GPLv3 section 6's User Product condition applies.
+The installed kit's `qtbase-6.10.3.spdx.json`, `qtdeclarative-6.10.3.spdx.json`, and `qtsvg-6.10.3.spdx.json` files were checked as the build-specific SBOMs. The friend-test script runs Qt 6.10.3 `windeployqt`, pins the Basic style at runtime, omits translations/debug tooling/compiler components, adds the exact Visual C++ 2022 x64 runtime, and generates a per-file SHA-256 manifest. `SOURCE_AND_LICENSES.md` records corresponding-source identities. A durable public release still requires mirroring those exact Qt sources, auditing the final deployed file/SBOM intersection and security advisories, and supplying installation information where GPLv3 section 6 requires it.
+
+## Windows platform/runtime components
+
+JamLink directly uses Windows 11 SDK/system interfaces: WASAPI/MMDevice (`IAudioClient3`, capture/render clients, endpoint properties), Multimedia Class Scheduler, Winsock, Windows CNG AES-GCM/random generation, COM automation for UPnP NAT mapping, and shell/graphics facilities used by Qt. These are operating-system interfaces, not third-party libraries vendored in this repository. The package also contains the Microsoft Visual C++ 2022 x64 redistributable files allowed by the installed Visual Studio redist list, with that list copied as `MSVC_REDISTRIBUTABLE_LICENSE.txt`.
+
+## Runtime network service
+
+The host queries Cloudflare's public STUN endpoint `stun.cloudflare.com:3478` for IPv4 public-address discovery. It sends a standard STUN binding request; no JamLink audio or invite secret is sent to STUN. Cloudflare documents this endpoint as a free public STUN service. The runtime service is not linked code and carries no source-code license into the application. Internet availability and Cloudflare's service terms/operation remain external dependencies.
 
 ### Material Design Icons
 

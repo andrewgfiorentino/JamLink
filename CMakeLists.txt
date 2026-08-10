@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
@@ -38,6 +38,30 @@ target_include_directories(jamlink_core
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
 )
 jamlink_set_warnings(jamlink_core)
+
+if(WIN32)
+    add_library(jamlink_platform_audio STATIC
+        src/platform/windows/wasapi_soundcheck_audio_service.cpp
+        src/platform/windows/windows_peer_audio_transport.cpp
+    )
+    target_link_libraries(jamlink_platform_audio
+        PUBLIC JamLink::Core
+        PRIVATE avrt bcrypt ole32 oleaut32 propsys ws2_32
+    )
+else()
+    add_library(jamlink_platform_audio STATIC
+        src/platform/null_soundcheck_audio_service.cpp
+        src/platform/null_peer_audio_transport.cpp
+    )
+    target_link_libraries(jamlink_platform_audio PUBLIC JamLink::Core)
+endif()
+add_library(JamLink::PlatformAudio ALIAS jamlink_platform_audio)
+target_compile_features(jamlink_platform_audio PUBLIC cxx_std_20)
+set_target_properties(jamlink_platform_audio PROPERTIES CXX_EXTENSIONS OFF)
+target_include_directories(jamlink_platform_audio
+    PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+)
+jamlink_set_warnings(jamlink_platform_audio)
 
 if(JAMLINK_BUILD_TESTS)
     include(CTest)

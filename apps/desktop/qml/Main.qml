@@ -37,10 +37,12 @@ ApplicationWindow {
         anchors.fill: parent
         sourceComponent: window.controller.currentPage === "soundcheck"
             ? soundCheckPage
-            : window.controller.currentPage === "settings" ? settingsPage : homePage
+            : window.controller.currentPage === "settings" ? settingsPage
+            : window.controller.currentPage === "room" ? roomPage : homePage
     }
 
     Component { id: homePage; HomePage { controller: window.controller } }
+    Component { id: roomPage; RoomPage { controller: window.controller } }
     Component { id: soundCheckPage; SoundCheckPage { controller: window.controller } }
     Component { id: settingsPage; SettingsPage { controller: window.controller } }
 }

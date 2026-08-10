@@ -1,65 +1,58 @@
 # Testing
 
-JamLink validation is automated. The current gate does not depend on live users, manual listening, physical loopback cables, attached audio devices, or Internet peers.
+JamLink's repository gate is fully automated. No test depends on live users, manual listening, physical loopback cables, attached audio hardware, or an Internet peer.
 
 ## Commands
-
-```powershell
-cmake --preset windows-vs2022
-cmake --build --preset windows-debug
-ctest --preset windows-debug
-```
-
-With the official Qt 6.10.3 MSVC 2022 x64 kit installed at `.qt/6.10.3/msvc2022_64`:
 
 ```powershell
 cmake --preset windows-gui-vs2022
 cmake --build --preset windows-gui-debug
 ctest --preset windows-gui-debug
 cmake --build build/windows-gui-vs2022 --config Debug --target jamlink_desktop_qmllint
+
+cmake --build --preset windows-gui-release
+ctest --preset windows-gui-release
 ```
 
-The equivalent Release checks use the `windows-release` and `windows-gui-release` build/test presets.
-
-For a longer accelerated processing run after a Release build:
+Long accelerated core run:
 
 ```powershell
-cmake --build --preset windows-release
-build\windows-vs2022\tools\core_stress\Release\jamlink_core_stress.exe 1350000
+build\windows-gui-vs2022\tools\core_stress\Release\jamlink_core_stress.exe 1350000
 ```
 
-At 48 kHz and 128 frames per block, `1,350,000` blocks represent one hour of simulated audio time. Simulated time is not real hardware uptime.
+At 48 kHz and 128 frames/block, 1,350,000 blocks represent one simulated hour. Simulated time is not real hardware uptime.
 
-## Current automated coverage
+## Automated coverage
 
-- SPSC wraparound, order, underflow zero-fill, and telemetry;
-- concurrent SPSC producer/consumer sequence integrity;
-- channel/polarity preservation and graph fan-out;
-- graph topological ordering, cycle rejection, and sample-shape overflow rejection;
-- gain smoothing, mute, peak/RMS, clip latch, and NaN/Inf containment;
-- structural local-only Private Soundcheck processing;
-- zero observed allocation across current real-time paths;
+- SPSC wrap, underflow zero-fill, concurrent producer/consumer order and sequence integrity;
+- route identity, fan-out, topological ordering, cycle/shape rejection;
+- smoothed gain/mute, coherent peak/RMS, clip latch, NaN/Inf containment;
+- zero observed ordinary/aligned allocation across current audited audio primitives;
+- Private Soundcheck graph rejection of all remote/network roles;
 - readiness invalidation and safe join-mute decisions;
-- simulated callback processing, device removal, enumeration change, reopen, and recovery;
-- scripted one-device, separate-microphone, and independent-output topologies with explicit channel maps;
-- bounded positive and negative clock correction;
-- known drift estimation;
-- virtual eight-hour `-100 ppm` and `+100 ppm` drift simulations;
-- callback-cadence invariance at 44.1/48/96 kHz and 64/128/512 frames;
-- accelerated core stress with deterministic synthetic signals.
-- versioned preference defaulting, stable device/channel restoration, atomic replacement, and corrupt-file recovery;
-- GUI controller navigation, selection persistence, readiness invalidation, and explicit Sound Check save;
-- sequential first-launch/second-launch Home, Sound Check, and Settings captures using the offscreen software renderer;
-- QML static lint with typed controller properties.
+- scripted device topologies, removal/reopen, format/cadence variation, and deterministic recovery;
+- clock estimation/correction matrices and virtual eight-hour +/-100 ppm simulations;
+- allocation-free 44.1-to-48 kHz conversion and capture-drift resampler simulations;
+- encrypted host/guest handshake on real loopback UDP sockets;
+- authenticated bidirectional nonzero PCM audio exchange and packet telemetry;
+- versioned preference restoration, stale-device routing, atomic replacement, and corrupt-file recovery;
+- typed QML controller, first/second launch routing, readiness, live-backend telemetry wiring, and persistence;
+- deterministic Home, Sound Check, and Settings captures, including exact 150% scaling;
+- QML static lint.
 
-The normal screenshot gate requests a 532 × 534 logical-pixel viewport. On the current Windows 125% scale it captures 665 × 668 physical pixels, which is expected high-DPI behavior. A separate test overrides the offscreen screen factor to exactly 1.5 and requires an exact 798 × 801 physical-pixel capture. Captures use deterministic fixture labels/levels and do not count as live-device, user, accessibility, or subjective visual validation.
+The peer test proves the invite parser, socket handshake, AES-GCM packet path, bidirectional audio queues, and state progression within one Windows host. It does not prove UPnP behavior on a given router, cross-home reachability, WAN jitter/loss behavior, firewall acceptance, or live-user audio quality.
 
-## Required before the local-audio gate closes
+The normal screenshot gate uses a 532 x 534 logical viewport. On the current Windows 125% host it captures 665 x 668 physical pixels. The explicit 150% test neutralizes native scaling and requires exactly 798 x 801. Fixture screenshots do not count as device or usability validation.
 
-- direct WASAPI backend contract tests with platform seams/mocks;
-- scripted shared/exclusive open failures and device-format changes;
-- non-power-of-two callback blocks and split/merged device cadence;
-- asynchronous resampler quality and long-run drift tests;
-- repeated concurrent start/stop/teardown tests;
-- automated leak and race instrumentation;
-- automated 44.1, 48, 88.2, and 96 kHz signal-integrity matrices.
+## Manual/live status
+
+A screenshot-driven automation successfully enumerated and opened a Focusrite WASAPI Shared combination at 96 kHz on the development machine after correcting the IAudioClient3 flag set. This is useful local evidence, but it is not part of the hardware-independent CTest gate and is not described as latency or stability validation.
+
+## Still required for production
+
+- direct WASAPI seam/failure injection and repeated concurrent teardown;
+- sanitizer/race/leak instrumentation and hostile packet fuzzing;
+- signal-integrity matrices at 44.1/48/88.2/96 kHz and resampler quality benchmarks;
+- controlled network loss, jitter, reorder, duplicate, and bandwidth tests;
+- automated NAT/UPnP integration lab and authenticated relay tests;
+- code signing, installer/update security, accessibility automation, and public package compliance audit.

@@ -221,11 +221,11 @@ Item {
                         width: 15
                         height: 15
                         source: Qt.resolvedUrl("../../assets/check_circle.svg")
-                        color: root.controller.devicesAvailable ? "#38d55b" : "#747c82"
+                        color: root.controller.audioActive ? "#38d55b" : "#747c82"
                     }
                     Text {
-                        text: root.controller.devicesAvailable ? "Selections available" : "Backend unavailable"
-                        color: root.controller.devicesAvailable ? "#47d969" : "#889198"
+                        text: root.controller.audioStatus
+                        color: root.controller.audioActive ? "#47d969" : "#889198"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
                     }

@@ -24,6 +24,7 @@ qt_add_qml_module(jamlink_desktop
         qml/components/JamSwitch.qml
         qml/components/LevelBar.qml
         qml/pages/HomePage.qml
+        qml/pages/RoomPage.qml
         qml/pages/SettingsPage.qml
         qml/pages/SoundCheckPage.qml
     RESOURCES
@@ -42,13 +43,17 @@ qt_add_qml_module(jamlink_desktop
 target_link_libraries(jamlink_desktop
     PRIVATE
         JamLink::Core
+        JamLink::PlatformAudio
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
 )
 target_compile_features(jamlink_desktop PRIVATE cxx_std_20)
-set_target_properties(jamlink_desktop PROPERTIES CXX_EXTENSIONS OFF)
+set_target_properties(jamlink_desktop PROPERTIES
+    CXX_EXTENSIONS OFF
+    OUTPUT_NAME JamLink
+)
 jamlink_set_warnings(jamlink_desktop)
 if(MSVC)
     # Keep /W4 /WX for JamLink sources. Qt's generated QML cache translation
@@ -64,7 +69,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(
         jamlink_desktop_controller_tests
-        PRIVATE JamLink::Core Qt6::Core Qt6::Qml)
+        PRIVATE JamLink::Core JamLink::PlatformAudio Qt6::Core Qt6::Gui Qt6::Qml)
     target_compile_features(jamlink_desktop_controller_tests PRIVATE cxx_std_20)
     set_target_properties(jamlink_desktop_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_desktop_controller_tests)

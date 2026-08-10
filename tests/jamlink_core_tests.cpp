@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "jamlink/audio/audio_route_graph.hpp"
+#include "jamlink/audio/async_mono_resampler.hpp"
 #include "jamlink/audio/gain_stage.hpp"
 #include "jamlink/audio/level_meter.hpp"
 #include "jamlink/audio/private_soundcheck_processor.hpp"
@@ -714,6 +715,65 @@ JAMLINK_TEST(clock_controller_is_bounded_and_corrects_fill_direction) {
     }
     EXPECT_TRUE(controller.correctionPpm() < 0.0);
     EXPECT_TRUE(controller.correctionPpm() >= -200.0 - 1.0e-6);
+}
+
+JAMLINK_TEST(async_resampler_is_bounded_allocation_free_and_rate_aware) {
+    jamlink::audio::AsyncMonoResampler resampler(4'096U);
+    resampler.configure(44'100U, 48'000U);
+    std::vector<float> input(441U, 0.0F);
+    std::vector<float> output(480U, 0.0F);
+    double phase = 0.0;
+    constexpr double phaseStep = 6.28318530717958647692 * 997.0 / 44'100.0;
+
+    trackedAllocationCount.store(0U, std::memory_order_relaxed);
+    allocationTrackingEnabled.store(true, std::memory_order_release);
+    for (std::size_t block = 0U; block < 2'000U; ++block) {
+        for (auto& sample : input) {
+            sample = static_cast<float>(std::sin(phase) * 0.5);
+            phase += phaseStep;
+            if (phase >= 6.28318530717958647692) {
+                phase -= 6.28318530717958647692;
+            }
+        }
+        EXPECT_TRUE(resampler.write(input) == input.size());
+        static_cast<void>(resampler.read(output));
+        EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float sample) {
+            return std::isfinite(sample) && std::abs(sample) <= 0.51F;
+        }));
+    }
+    allocationTrackingEnabled.store(false, std::memory_order_release);
+
+    EXPECT_TRUE(trackedAllocationCount.load(std::memory_order_relaxed) == 0U);
+    EXPECT_TRUE(resampler.availableFrames() < resampler.capacityFrames() / 2U);
+    EXPECT_TRUE(resampler.overrunCount() == 0U);
+    EXPECT_TRUE(std::abs(resampler.lastCorrectionPpm()) <= 500.0);
+}
+
+JAMLINK_TEST(async_resampler_absorbs_virtual_capture_clock_drift) {
+    jamlink::audio::AsyncMonoResampler resampler(8'192U);
+    resampler.configure(48'000U, 48'000U);
+    std::vector<float> input(481U, 0.25F);
+    std::vector<float> output(480U, 0.0F);
+    double producedRemainder = 0.0;
+    std::size_t maximumFill = 0U;
+
+    for (std::size_t block = 0U; block < 36'000U; ++block) {
+        producedRemainder += 480.0 * 100.0e-6;
+        const std::size_t frames = producedRemainder >= 1.0 ? 481U : 480U;
+        if (frames == 481U) {
+            producedRemainder -= 1.0;
+        }
+        EXPECT_TRUE(resampler.write(std::span<const float>(input.data(), frames)) == frames);
+        static_cast<void>(resampler.read(output));
+        maximumFill = std::max(maximumFill, resampler.availableFrames());
+    }
+
+    EXPECT_TRUE(maximumFill < 2'000U);
+    EXPECT_TRUE(resampler.overrunCount() == 0U);
+    EXPECT_TRUE(std::abs(resampler.lastCorrectionPpm()) <= 500.0);
+    EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float sample) {
+        return std::isfinite(sample) && std::abs(sample) <= 0.26F;
+    }));
 }
 
 JAMLINK_TEST(clock_drift_estimator_tracks_known_rate_offset) {

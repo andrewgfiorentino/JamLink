@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick
+import QtQuick.Controls.Basic
 import "../components"
 
 Item {
@@ -162,33 +163,73 @@ Item {
 
         JamCard {
             width: parent.width
-            height: 74
-            Row {
+            height: 116
+            Column {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 12
-                JamIcon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 24
-                    height: 24
-                    source: Qt.resolvedUrl("../../assets/headphones.svg")
-                    color: "#8a55d9"
-                }
-                Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 4
+                anchors.margins: 12
+                spacing: 7
+                Row {
+                    width: parent.width
+                    height: 30
+                    spacing: 10
+                    JamIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 20
+                        height: 20
+                        source: Qt.resolvedUrl("../../assets/headphones.svg")
+                        color: "#8a55d9"
+                    }
                     Text {
-                        text: "Room sessions are not enabled yet"
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - hostButton.width - 40
+                        text: "Two-person private room"
                         color: "#e8ebed"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 12
                         font.weight: Font.Medium
                     }
-                    Text {
-                        text: "Secure transport and real audio backends must pass QA first."
-                        color: "#89939a"
+                    JamButton {
+                        id: hostButton
+                        width: 118
+                        height: 30
+                        text: "Create Invite"
+                        enabled: root.controller.audioActive && root.controller.allReady
+                        Accessible.name: "Host an encrypted room and create invite code"
+                        onClicked: root.controller.hostSession()
+                    }
+                }
+                Row {
+                    width: parent.width
+                    height: 34
+                    spacing: 8
+                    TextField {
+                        id: inviteField
+                        width: parent.width - joinButton.width - 8
+                        height: 34
+                        placeholderText: "Paste your friend's JL1 invite code"
+                        color: "#e9edf0"
+                        placeholderTextColor: "#68737a"
+                        selectionColor: "#6938c5"
+                        selectedTextColor: "#ffffff"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
+                        background: Rectangle {
+                            radius: 6
+                            color: "#182127"
+                            border.color: inviteField.activeFocus ? "#3bbfe9" : "#28343b"
+                        }
+                        Accessible.name: "Invite code"
+                    }
+                    JamButton {
+                        id: joinButton
+                        width: 96
+                        height: 34
+                        primary: true
+                        text: "Join"
+                        enabled: root.controller.audioActive && root.controller.allReady
+                            && inviteField.text.length > 0
+                        Accessible.name: "Join encrypted room"
+                        onClicked: root.controller.joinSession(inviteField.text)
                     }
                 }
             }
@@ -197,8 +238,10 @@ Item {
         Item { width: 1; height: 1 }
         Text {
             width: parent.width
-            text: root.controller.saveMessage.length > 0
-                ? root.controller.saveMessage
+            text: root.controller.setupMessage.length > 0
+                ? root.controller.setupMessage
+                : root.controller.saveMessage.length > 0
+                    ? root.controller.saveMessage
                 : "Settings save automatically"
             color: "#667178"
             horizontalAlignment: Text.AlignHCenter

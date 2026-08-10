@@ -38,8 +38,8 @@ struct UserPreferences final {
     std::uint32_t bufferFrames{128U};
     float instrumentMonitorGain{0.72F};
     float voiceMonitorGain{0.55F};
-    bool instrumentMonitorEnabled{true};
-    bool voiceMonitorEnabled{true};
+    bool instrumentMonitorEnabled{false};
+    bool voiceMonitorEnabled{false};
     WindowPlacement window;
 
     bool operator==(const UserPreferences&) const = default;

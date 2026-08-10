@@ -10,7 +10,7 @@ Item {
     required property AppController controller
 
     function linearGainText(gain, enabled) {
-        if (!root.controller.devicesAvailable)
+        if (!root.controller.audioActive)
             return "N/A"
         if (!enabled || gain <= 0.000001)
             return "Muted"
@@ -18,8 +18,10 @@ Item {
     }
 
     function levelText(level) {
-        if (!root.controller.devicesAvailable || level <= 0.000001)
+        if (!root.controller.audioActive)
             return "N/A"
+        if (level <= 0.000001)
+            return "No signal"
         return (20 * Math.log(level) / Math.LN10).toFixed(1) + " dBFS"
     }
 
@@ -149,11 +151,13 @@ Item {
                         width: 15
                         height: 15
                         source: Qt.resolvedUrl("../../assets/check_circle.svg")
-                        color: root.controller.devicesAvailable ? "#35d75b" : "#687178"
+                        color: root.controller.audioActive ? "#35d75b" : "#687178"
                     }
                     Text {
-                        text: root.controller.devicesAvailable ? "Signal available" : "Backend unavailable"
-                        color: root.controller.devicesAvailable ? "#aeb9b1" : "#757e84"
+                        text: root.controller.audioActive ? "Live input" : root.controller.audioStatus
+                        color: root.controller.audioActive ? "#aeb9b1" : "#757e84"
+                        elide: Text.ElideRight
+                        width: parent.width - 22
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
                     }
@@ -242,8 +246,12 @@ Item {
                         color: root.controller.devicesAvailable ? "#d3d8dc" : "#687178"
                     }
                     Text {
-                        text: root.controller.voiceMonitorEnabled ? "Local monitor on" : "Local monitor muted"
+                        text: root.controller.audioActive
+                            ? (root.controller.voiceMonitorEnabled ? "Local monitor on" : "Local monitor muted")
+                            : root.controller.audioStatus
                         color: "#aeb5ba"
+                        elide: Text.ElideRight
+                        width: parent.width - 22
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
                     }
@@ -327,29 +335,47 @@ Item {
     }
 
     Row {
+        id: statusRow
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: outputCard.bottom
         anchors.topMargin: 11
         anchors.leftMargin: 25
         anchors.rightMargin: 25
-        height: 22
+        height: 32
         spacing: 7
         JamIcon {
             anchors.verticalCenter: parent.verticalCenter
             width: 14
             height: 14
             source: Qt.resolvedUrl("../../assets/headphones.svg")
-            color: "#42d7b3"
+            color: root.controller.audioActive ? "#42d7b3" : "#687178"
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: root.controller.setupMessage
             color: "#89949a"
             elide: Text.ElideRight
-            width: parent.width - 22
+            width: parent.width - outputTest.width - 32
             font.family: "Segoe UI Variable Text"
             font.pixelSize: 10
+        }
+        JamButton {
+            id: outputTest
+            width: 112
+            height: 30
+            text: root.controller.audioActive ? "Test Output" : "Retry Audio"
+            iconSource: Qt.resolvedUrl("../../assets/volume_up.svg")
+            enabled: true
+            Accessible.name: root.controller.audioActive
+                ? "Play quiet output test tone"
+                : "Retry Windows audio devices"
+            onClicked: {
+                if (root.controller.audioActive)
+                    root.controller.testOutput()
+                else
+                    root.controller.retryAudio()
+            }
         }
     }
 
@@ -362,7 +388,7 @@ Item {
         anchors.bottomMargin: 8
         height: 36
         primary: true
-        enabled: root.controller.devicesAvailable
+        enabled: root.controller.audioActive
         text: root.controller.allReady ? "Save Sound Check" : "Verify & Save Sound Check"
         iconSource: Qt.resolvedUrl("../../assets/headphones.svg")
         Accessible.name: "Save private sound check"
