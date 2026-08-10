@@ -126,6 +126,15 @@ if(BUILD_TESTING)
     )
     get_target_property(_jamlink_qmake Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_jamlink_qt_bin "${_jamlink_qmake}" DIRECTORY)
+    # ENVIRONMENT_MODIFICATION takes one list value. Passing the entries as
+    # separate arguments makes set_tests_properties read the second entry as the
+    # next property name, which silently drops the offscreen/software settings
+    # and leaves the captures dependent on the developer's real display.
+    set(_jamlink_visual_environment
+        "PATH=path_list_prepend:${_jamlink_qt_bin}"
+        "QT_QPA_PLATFORM=set:offscreen"
+        "QSG_RHI_BACKEND=set:software"
+    )
     set_tests_properties(
         jamlink_desktop_visual_first_launch
         jamlink_desktop_visual_second_launch
@@ -134,10 +143,7 @@ if(BUILD_TESTING)
         PROPERTIES
         TIMEOUT 30
         LABELS "gui;visual"
-        ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_jamlink_qt_bin}"
-            "QT_QPA_PLATFORM=set:offscreen"
-            "QSG_RHI_BACKEND=set:software"
+        ENVIRONMENT_MODIFICATION "${_jamlink_visual_environment}"
     )
     set_tests_properties(jamlink_desktop_controller_tests PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
