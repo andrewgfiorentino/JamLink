@@ -193,7 +193,7 @@ Item {
                         {
                             label: "Their voice",
                             icon: "mic.svg",
-                            tint: "#3bc8ee"
+                            tint: "#42d97a"
                         }
                     ]
                     Row {
@@ -312,7 +312,7 @@ Item {
                     width: 22
                     height: 22
                     source: Qt.resolvedUrl("../../assets/headphones.svg")
-                    color: "#3bc8ee"
+                    color: "#8b56df"
                 }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter

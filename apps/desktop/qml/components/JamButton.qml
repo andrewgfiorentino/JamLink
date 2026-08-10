@@ -21,7 +21,7 @@ Button {
     background: Rectangle {
         radius: 7
         border.width: control.primary ? 0 : 1
-        border.color: control.activeFocus ? "#3bc9ff" : "#313b42"
+        border.color: control.activeFocus ? "#8b56df" : "#313b42"
         gradient: control.primary && control.enabled ? control.primaryGradient : null
         color: control.primary
             ? (control.down ? "#5729a8" : control.hovered ? "#7d40d0" : "#6a35bd")

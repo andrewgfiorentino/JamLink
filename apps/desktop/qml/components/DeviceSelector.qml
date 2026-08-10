@@ -24,7 +24,7 @@ ComboBox {
     background: Rectangle {
         radius: 6
         color: control.enabled ? (control.down ? "#202930" : "#192127") : "#151b20"
-        border.color: control.activeFocus ? "#37c9ff" : "#202a30"
+        border.color: control.activeFocus ? "#8b56df" : "#202a30"
     }
 
     contentItem: Text {

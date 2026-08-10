@@ -14,7 +14,7 @@ Button {
     background: Rectangle {
         radius: 8
         color: control.down ? "#202a31" : control.hovered ? "#172027" : "transparent"
-        border.color: control.activeFocus ? "#37c9ff" : "transparent"
+        border.color: control.activeFocus ? "#8b56df" : "transparent"
     }
 
     contentItem: JamIcon {

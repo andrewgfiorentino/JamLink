@@ -316,7 +316,7 @@ Item {
                 width: parent.width * root.controller.outputLevel
                 height: parent.height
                 radius: parent.radius
-                color: "#31bdf4"
+                color: "#31d052"
             }
         }
         Text {
@@ -349,7 +349,7 @@ Item {
             width: 14
             height: 14
             source: Qt.resolvedUrl("../../assets/headphones.svg")
-            color: root.controller.audioActive ? "#42d7b3" : "#687178"
+            color: root.controller.audioActive ? "#42d97a" : "#687178"
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter

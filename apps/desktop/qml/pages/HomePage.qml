@@ -216,7 +216,7 @@ Item {
                         background: Rectangle {
                             radius: 6
                             color: "#182127"
-                            border.color: inviteField.activeFocus ? "#3bbfe9" : "#28343b"
+                            border.color: inviteField.activeFocus ? "#8b56df" : "#28343b"
                         }
                         Accessible.name: "Invite code"
                     }
