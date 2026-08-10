@@ -9,7 +9,7 @@ Version 0.2.0 is an early Windows 11 x64 test build, not a production release. T
 - real WASAPI Shared capture and output with independent guitar, microphone, and output selection;
 - asynchronous conversion between independent input and output clock domains;
 - low-latency local monitoring, live meters, gain/mute, and a quiet output test;
-- fail-safe Private Soundcheck that constructs no transport or socket;
+- local-only Private Soundcheck before hosting or joining;
 - a working `JL1` invite code containing a public IPv4 address, UDP port, and random 256-bit room secret;
 - automatic UPnP port mapping, public-address discovery through Cloudflare's public STUN endpoint, and a displayed manual UDP-port fallback;
 - authenticated AES-256-GCM direct peer handshake and bidirectional 48 kHz mono PCM audio;
@@ -41,16 +41,6 @@ powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 ```
 
 The final command writes the untracked friend-test folder and ZIP under `dist/`.
-
-## Project principles
-
-1. Real-time audio stability comes first.
-2. Private Soundcheck remains structurally local-only.
-3. Independent devices are independent clock domains.
-4. User-facing measurements distinguish measured, estimated, and simulated values.
-5. Planned features are never presented as working controls.
-6. Qt stays on GUI/control threads and never enters the audio processing path.
-7. Network sockets and cryptography stay on the network worker, never on the audio thread.
 
 ## License
 

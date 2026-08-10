@@ -13,7 +13,6 @@
 - Reproducible self-contained Windows friend-test package script, SHA-256 manifest, test guide, and source/license handoff.
 
 - GPL-3.0-or-later project license, SPDX source notices, and separable interoperability licensing policy.
-- Direct-ASIO and Qt 6 GPLv3 dependency directions with exact-ingestion gates.
 - Pinned Qt 6.10.3/QML desktop shell under Qt's GPL-3.0-only option.
 - Native Home, Private Sound Check, Audio Settings, and functional two-person Room screens aligned to the approved visual reference; tuner/record/chat controls remain absent until implemented.
 - Versioned, validated, atomically replaced preferences with first/second-launch restoration by stable device/channel identifiers.
@@ -28,4 +27,4 @@
 - Readiness invalidation and safe join-mute decisions.
 - Clock-drift estimator and bounded occupancy controller.
 - Deterministic simulated-device, integrity, allocation, hot-plug, virtual-time, and stress tests.
-- Project status, architecture, real-time, test, benchmark, dependency, security, and limitation documentation.
+- User-facing build, test-session, dependency, licensing, and release documentation.

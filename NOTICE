@@ -28,6 +28,3 @@ Qt and the Qt logo are trademarks of The Qt Company Ltd.
 The Windows test ZIP contains Microsoft Visual C++ 2022 x64 redistributable
 runtime files under Microsoft's installed Visual Studio redist terms. The
 package includes MSVC_REDISTRIBUTABLE_LICENSE.txt.
-
-ASIO is a trademark of Steinberg Media Technologies GmbH. The ASIO SDK
-is not currently present in this repository.

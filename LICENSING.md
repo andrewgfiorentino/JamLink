@@ -8,9 +8,7 @@ Contributions to GPL-covered files are expected to be provided under `GPL-3.0-or
 
 ## Separable interoperability work
 
-Protocol specifications, public interoperability headers, SDKs, IPC/bridge libraries, and compatibility tools should be designed as narrow, reusable boundaries with minimal application dependencies. When third-party adoption would benefit, a future component may be placed in a clearly separate directory or repository and explicitly licensed under a permissive license such as MIT or Apache-2.0.
-
-No component becomes permissively licensed merely because it is reusable. A different license requires an explicit SPDX identifier, complete license text/notice, and confirmation that every contributor and included dependency permits that choice. The primary JamLink application remains `GPL-3.0-or-later`.
+Separately identified protocol specifications, public interoperability headers, SDKs, or IPC libraries may use an explicit permissive license such as MIT or Apache-2.0 only when every contributor and included dependency permits it. No component becomes permissively licensed merely because it is reusable. The primary JamLink application remains `GPL-3.0-or-later`.
 
 JamLink-owned files retain their `GPL-3.0-or-later` grant. A distributed combined binary may have to be conveyed under GPL version 3 only when it incorporates a dependency offered under `GPL-3.0-only`; that narrower combined-work condition does not relicense the original JamLink files.
 

@@ -85,8 +85,7 @@ $documents = @(
     "NOTICE",
     "THIRD_PARTY_LICENSES.md",
     "TONIGHT_TEST.md",
-    "SOURCE_AND_LICENSES.md",
-    "KNOWN_LIMITATIONS.md"
+    "SOURCE_AND_LICENSES.md"
 )
 foreach ($document in $documents) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $document) -Destination $packageDirectory

@@ -36,7 +36,7 @@ This is an early Windows 11 x64 Internet test build for exactly two people. It u
 - There is no relay server. If the host is behind carrier-grade NAT, symmetric NAT, or a router/firewall that cannot accept a UDP mapping, the direct connection may fail even with a valid invite.
 - This test format is uncompressed 48 kHz mono PCM and uses about 0.8 Mbit/s upstream in each direction.
 - There is no packet-loss concealment or adaptive jitter buffer yet. Internet jitter or loss can cause gaps.
-- Voice and instrument are combined for transmission. Independent remote controls, chat, recording, tuner, ASIO, echo cancellation, and speaker protection are not implemented.
+- Voice and instrument are combined for transmission. Independent remote controls, chat, recording, tuner, echo cancellation, and speaker protection are not implemented.
 - No live-user or cross-home-network validation had been performed before this build. The encrypted two-peer path was verified automatically on real loopback sockets, and the Windows device path was automatically opened on development hardware.
 
 If joining fails, record the exact room status, whether automatic router mapping was ready, the shown UDP port, and whether Windows Firewall permission was accepted.

@@ -23,7 +23,7 @@ Official source archive identities and hashes are recorded in [`DEPENDENCIES.md`
 - Qt Quick Layouts: Yoga 2.0.1 under MIT;
 - Qt SVG: XSVG material under `HPND-sell-variant`.
 
-The friend-test script deploys the Qt files selected by Qt 6.10.3 `windeployqt` from these imports, skips generic/qmltooling plugins and translations, and records every packaged file in `PACKAGE_MANIFEST.sha256`. The archive includes this notice and `SOURCE_AND_LICENSES.md`. A durable public release must still mirror exact Qt corresponding sources, reduce/review the final deploy set against the installed SBOMs and applicable security advisories, preserve all component notices, and supply installation information when GPLv3 section 6's User Product condition applies.
+The package script deploys the Qt files selected by Qt 6.10.3 `windeployqt`, skips generic/qmltooling plugins and translations, and records every packaged file in `PACKAGE_MANIFEST.sha256`. The archive includes this notice and `SOURCE_AND_LICENSES.md`. Distributions must preserve applicable component notices and provide corresponding source and installation information as required by GPLv3.
 
 Qt and the Qt logo are trademarks of The Qt Company Ltd. JamLink does not use the Qt logo.
 
@@ -40,7 +40,3 @@ The friend-test ZIP does redistribute the exact Microsoft Visual C++ 2022 x64 ru
 ## Runtime service
 
 Cloudflare's public STUN endpoint is queried for public IPv4 address discovery when hosting. It is an external network service, not bundled software. No JamLink audio or invite secret is sent to it.
-
-## ASIO notice
-
-The ASIO SDK is not present, linked, or distributed yet. Its GPL-3.0-only path is an approved direction with an exact-archive ingestion gate. ASIO is a trademark of Steinberg Media Technologies GmbH.

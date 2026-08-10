@@ -6,7 +6,7 @@ The exact JamLink corresponding source and build scripts are included beside the
 
 <https://github.com/andrewgfiorentino/JamLink>
 
-Use the `v0.2.0-test` source tag after it is published. The package manifest allows every distributed file, including the source archive, to be verified without relying on the remote repository.
+Use the `v0.2.0-test` source tag. The package manifest allows every distributed file, including the source archive, to be verified without relying on the remote repository.
 
 Official Qt 6.10.3 corresponding source archives used by this build:
 
@@ -18,5 +18,3 @@ Official Qt 6.10.3 corresponding source archives used by this build:
   <https://download.qt.io/official_releases/qt/6.10/6.10.3/submodules/qtsvg-everywhere-src-6.10.3.zip>
 
 JamLink does not modify Qt. The package is built from the official Qt 6.10.3 MSVC 2022 x64 binary kit with Qt Quick Basic controls and software rendering. Material Design Icons source provenance and Apache-2.0 notices are recorded in `THIRD_PARTY_LICENSES.md`; the full icon license is included as `MATERIAL_DESIGN_ICONS_LICENSE.txt`.
-
-For a durable public release, JamLink will mirror complete corresponding Qt sources alongside the binary rather than relying only on upstream availability. This friend-test package is not represented as that final public release.
