@@ -14,7 +14,7 @@ Version 0.2.0 is an early Windows 11 x64 test build, not a production release. T
 - automatic UPnP port mapping, public-address discovery through Cloudflare's public STUN endpoint, and a displayed manual UDP-port fallback;
 - authenticated AES-256-GCM direct peer handshake and bidirectional 48 kHz mono PCM audio;
 - replay rejection, endpoint pinning, room mute, packet counters, remote meter, and network round-trip display;
-- a self-contained Windows ZIP produced by `scripts/package_windows.ps1`.
+- a self-contained Windows ZIP, including its exact JamLink source archive, produced by `scripts/package_windows.ps1`.
 
 The invite system is functional, not a visual placeholder. Automated tests create a host and guest on real loopback UDP sockets, complete the encrypted handshake, and exchange nonzero audio in both directions. A development-machine automation also opened a real Focusrite WASAPI combination. Those checks are not live-user, cross-home-network, subjective, or hardware-compatibility validation.
 

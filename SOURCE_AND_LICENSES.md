@@ -2,11 +2,11 @@
 
 JamLink-owned code is licensed under GPL-3.0-or-later. This Windows test package combines it with Qt 6.10.3 selected under GPL-3.0-only, so the combined executable is conveyed under GNU GPL version 3. `LICENSE`, `NOTICE`, and `THIRD_PARTY_LICENSES.md` are included beside the executable.
 
-The exact JamLink corresponding source and build scripts are available at:
+The exact JamLink corresponding source and build scripts are included beside the executable as `JamLink-0.2.0-source.zip`. `SOURCE_COMMIT.txt` identifies the Git commit used to generate it. They are also available at:
 
 <https://github.com/andrewgfiorentino/JamLink>
 
-Use the `v0.2.0-test` source tag. The package manifest allows the exact distributed files to be verified.
+Use the `v0.2.0-test` source tag after it is published. The package manifest allows every distributed file, including the source archive, to be verified without relying on the remote repository.
 
 Official Qt 6.10.3 corresponding source archives used by this build:
 

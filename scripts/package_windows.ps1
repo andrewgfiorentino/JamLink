@@ -94,6 +94,23 @@ foreach ($document in $documents) {
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\material-design-icons\LICENSE") `
     -Destination (Join-Path $packageDirectory "MATERIAL_DESIGN_ICONS_LICENSE.txt")
 
+& git -C $repositoryRoot diff --quiet
+if ($LASTEXITCODE -ne 0) {
+    throw "Commit JamLink source changes before creating a distributable package"
+}
+& git -C $repositoryRoot diff --cached --quiet
+if ($LASTEXITCODE -ne 0) {
+    throw "Commit staged JamLink source changes before creating a distributable package"
+}
+$sourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+$sourceArchive = Join-Path $packageDirectory "JamLink-0.2.0-source.zip"
+& git -C $repositoryRoot archive --format=zip --output=$sourceArchive HEAD
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not create the exact JamLink corresponding-source archive"
+}
+Set-Content -LiteralPath (Join-Path $packageDirectory "SOURCE_COMMIT.txt") `
+    -Value ($sourceCommit + "`n") -Encoding ascii
+
 $manifestPath = Join-Path $packageDirectory "PACKAGE_MANIFEST.sha256"
 $packageUri = [Uri]($packageDirectory.TrimEnd("\") + "\")
 $manifestLines = Get-ChildItem -LiteralPath $packageDirectory -Recurse -File |
