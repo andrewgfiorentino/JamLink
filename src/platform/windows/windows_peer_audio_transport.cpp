@@ -4,7 +4,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #include <Windows.h>
+
+#ifndef SIO_UDP_CONNRESET
+// Documented Winsock control code that is absent from some SDK header sets.
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 
 #include "jamlink/audio/async_mono_resampler.hpp"
 #include "jamlink/audio/realtime_atomic.hpp"
@@ -43,9 +49,11 @@ constexpr std::size_t tagBytes = 16U;
 constexpr std::size_t maximumPlaintextBytes = 960U;
 constexpr std::size_t maximumDatagramBytes = headerBytes + maximumPlaintextBytes + tagBytes;
 constexpr std::uint32_t protocolMagic = 0x4A4C4B31U; // JLK1
-constexpr std::uint8_t protocolVersion = 1U;
+constexpr std::uint8_t protocolVersion = 2U;
 constexpr std::uint32_t networkSampleRate = 48'000U;
 constexpr std::size_t networkPacketFrames = 240U;
+constexpr std::size_t noncePrefixBytes = 8U;
+constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 
 enum class PacketType : std::uint8_t {
     Hello = 1U,
@@ -53,6 +61,97 @@ enum class PacketType : std::uint8_t {
     Audio = 3U,
     Ping = 4U,
     Pong = 5U
+};
+
+// Both peers know the same room secret, so a single key would let an attacker
+// reflect a peer's own authenticated packets back at it, and would leave two
+// independent nonce sequences under one key. Each direction gets its own key
+// derived from the secret instead.
+enum class Direction : std::uint8_t {
+    HostToGuest = 1U,
+    GuestToHost = 2U
+};
+
+[[nodiscard]] bool hmacSha256(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> message,
+    std::span<std::uint8_t, 32U> digest) noexcept {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(
+            &algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG))) {
+        return false;
+    }
+    const bool succeeded = BCRYPT_SUCCESS(BCryptHash(
+        algorithm,
+        const_cast<PUCHAR>(key.data()), static_cast<ULONG>(key.size()),
+        const_cast<PUCHAR>(message.data()), static_cast<ULONG>(message.size()),
+        digest.data(), static_cast<ULONG>(digest.size())));
+    static_cast<void>(BCryptCloseAlgorithmProvider(algorithm, 0U));
+    return succeeded;
+}
+
+// One HMAC-SHA256 invocation with a distinct label per direction. This is
+// HKDF-Expand with a single output block, not a bespoke construction.
+[[nodiscard]] bool deriveDirectionKey(
+    std::span<const std::uint8_t, 32U> secret,
+    Direction direction,
+    std::span<std::uint8_t, 32U> key) noexcept {
+    static constexpr char hostToGuest[] = "JamLink JL1 protocol 2 host-to-guest audio key";
+    static constexpr char guestToHost[] = "JamLink JL1 protocol 2 guest-to-host audio key";
+    const char* label = direction == Direction::HostToGuest ? hostToGuest : guestToHost;
+    const std::size_t labelBytes = direction == Direction::HostToGuest
+        ? sizeof(hostToGuest) - 1U
+        : sizeof(guestToHost) - 1U;
+    return hmacSha256(
+        secret,
+        std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(label), labelBytes),
+        key);
+}
+
+// Sliding replay window. A strictly increasing counter would also reject every
+// reordered packet, which the network genuinely produces and the receive
+// jitter buffer is able to use.
+class ReplayWindow final {
+public:
+    [[nodiscard]] bool accept(std::uint32_t sequence) noexcept {
+        if (!started_) {
+            started_ = true;
+            highest_ = sequence;
+            bitmap_ = 1U;
+            return true;
+        }
+        const auto delta = static_cast<std::int32_t>(sequence - highest_);
+        if (delta > 0) {
+            bitmap_ = delta >= static_cast<std::int32_t>(windowBits)
+                ? 1U
+                : ((bitmap_ << static_cast<unsigned>(delta)) | 1U);
+            highest_ = sequence;
+            return true;
+        }
+        const auto behind = static_cast<std::uint32_t>(-delta);
+        if (behind >= windowBits) {
+            return false;
+        }
+        const std::uint64_t mask = std::uint64_t{1} << behind;
+        if ((bitmap_ & mask) != 0U) {
+            return false;
+        }
+        bitmap_ |= mask;
+        return true;
+    }
+
+    void reset() noexcept {
+        started_ = false;
+        highest_ = 0U;
+        bitmap_ = 0U;
+    }
+
+private:
+    static constexpr std::uint32_t windowBits = 64U;
+    std::uint32_t highest_{0U};
+    std::uint64_t bitmap_{0U};
+    bool started_{false};
 };
 
 class WinsockLifetime final {
@@ -682,6 +781,13 @@ private:
         localPort_ = ntohs(local.sin_port);
         u_long nonBlocking = 1UL;
         static_cast<void>(ioctlsocket(socket_.get(), FIONBIO, &nonBlocking));
+        // Without this, an ICMP port-unreachable from any probed address makes
+        // the next recvfrom fail with WSAECONNRESET on Windows.
+        BOOL reportConnectionReset = FALSE;
+        DWORD returned = 0U;
+        static_cast<void>(WSAIoctl(
+            socket_.get(), SIO_UDP_CONNRESET, &reportConnectionReset,
+            sizeof(reportConnectionReset), nullptr, 0U, &returned, nullptr, nullptr));
         return true;
     }
 
@@ -713,14 +819,17 @@ private:
         writeU32(destination.data() + 8U, sequence);
         writeU32(destination.data() + 12U, sampleRate);
         writeU16(destination.data() + 16U, frameCount);
-        destination[18U] = 0U;
+        destination[18U] = static_cast<std::uint8_t>(sendDirection_);
+        // Stream identifier. Only the combined stream exists today; the field
+        // is validated so a future stream cannot be misread by an old build.
         destination[19U] = 0U;
-        std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefix_.size());
-        const std::uint64_t nonceCounter = ++nonceCounter_;
-        for (std::size_t index = 0U; index < 8U; ++index) {
-            destination[24U + index] = static_cast<std::uint8_t>(
-                nonceCounter >> ((7U - index) * 8U));
+        std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefixBytes);
+        const std::uint32_t nonceCounter = ++nonceCounter_;
+        if (nonceCounter >= maximumNonceCounter) {
+            // Never reuse a nonce. Refusing to send is the only safe response.
+            return 0U;
         }
+        writeU32(destination.data() + 20U + noncePrefixBytes, nonceCounter);
         auto ciphertext = destination.subspan(headerBytes, plaintext.size());
         auto tag = std::span<std::uint8_t, tagBytes>(
             destination.data() + headerBytes + plaintext.size(), tagBytes);
@@ -755,8 +864,23 @@ private:
 
     void run() noexcept {
         try {
-            AesGcmCipher cipher(secret_);
-            if (!cipher.valid() || !BCRYPT_SUCCESS(BCryptGenRandom(
+            sendDirection_ = hostMode_ ? Direction::HostToGuest : Direction::GuestToHost;
+            receiveDirection_ = hostMode_ ? Direction::GuestToHost : Direction::HostToGuest;
+            std::array<std::uint8_t, 32U> sendKey{};
+            std::array<std::uint8_t, 32U> receiveKey{};
+            if (!deriveDirectionKey(secret_, sendDirection_, sendKey)
+                || !deriveDirectionKey(secret_, receiveDirection_, receiveKey)) {
+                state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
+                return;
+            }
+            AesGcmCipher sendCipher(sendKey);
+            AesGcmCipher receiveCipher(receiveKey);
+            SecureZeroMemory(sendKey.data(), sendKey.size());
+            SecureZeroMemory(receiveKey.data(), receiveKey.size());
+            replayWindow_.reset();
+            nonceCounter_ = 0U;
+            if (!sendCipher.valid() || !receiveCipher.valid()
+                || !BCRYPT_SUCCESS(BCryptGenRandom(
                     nullptr, noncePrefix_.data(), static_cast<ULONG>(noncePrefix_.size()),
                     BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
                 state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
@@ -783,19 +907,20 @@ private:
                 const ULONGLONG now = GetTickCount64();
                 if (!hostMode_ && !connected && now - lastHello >= 250U) {
                     constexpr std::array<std::uint8_t, 4U> hello{{'J', 'O', 'I', 'N'}};
-                    static_cast<void>(sendPacket(cipher, PacketType::Hello, 0U, 0U, hello));
+                    static_cast<void>(sendPacket(
+                        sendCipher, PacketType::Hello, 0U, 0U, hello));
                     lastHello = now;
                 }
                 if (connected && now - lastPing >= 500U) {
                     const std::uint64_t stamp = now;
                     std::memcpy(controlPayload.data(), &stamp, sizeof(stamp));
                     static_cast<void>(sendPacket(
-                        cipher, PacketType::Ping, 0U, 0U, controlPayload));
+                        sendCipher, PacketType::Ping, 0U, 0U, controlPayload));
                     lastPing = now;
                 }
 
                 drainOutgoingAudio(
-                    cipher, outgoingResampler, outgoingRate,
+                    sendCipher, outgoingResampler, outgoingRate,
                     localScratch, networkFloat, networkPcm, connected);
 
                 fd_set readSet;
@@ -812,14 +937,27 @@ private:
                             static_cast<int>(receivedPacket.size()), 0,
                             reinterpret_cast<sockaddr*>(&source), &sourceBytes);
                         if (bytes < 0) {
-                            if (WSAGetLastError() != WSAEWOULDBLOCK) {
-                                state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
-                                return;
+                            const int error = WSAGetLastError();
+                            if (error == WSAEWOULDBLOCK) {
+                                break;
                             }
-                            break;
+                            // These are per-datagram conditions, not socket
+                            // failures. WSAEMSGSIZE in particular means a
+                            // datagram larger than any JamLink packet arrived,
+                            // which anyone who knows the port can send;
+                            // treating it as fatal made the session remotely
+                            // killable without the room secret.
+                            if (error == WSAEMSGSIZE || error == WSAECONNRESET
+                                || error == WSAENETRESET || error == WSAEINTR) {
+                                packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
+                                continue;
+                            }
+                            state_.store(
+                                PeerConnectionState::SocketFailed, std::memory_order_release);
+                            return;
                         }
                         if (handlePacket(
-                                cipher,
+                                sendCipher, receiveCipher,
                                 std::span<const std::uint8_t>(receivedPacket.data(),
                                     static_cast<std::size_t>(bytes)),
                                 decrypted, source, connected, lastReceive,
@@ -888,7 +1026,8 @@ private:
     }
 
     [[nodiscard]] bool handlePacket(
-        AesGcmCipher& cipher,
+        AesGcmCipher& sendCipher,
+        AesGcmCipher& receiveCipher,
         std::span<const std::uint8_t> packet,
         std::array<std::uint8_t, maximumPlaintextBytes>& plaintext,
         const sockaddr_in& source,
@@ -899,7 +1038,12 @@ private:
         std::array<float, networkPacketFrames>& networkFloat) noexcept {
         if (packet.size() < headerBytes + tagBytes
             || readU32(packet.data()) != protocolMagic
-            || packet[4U] != protocolVersion) {
+            || packet[4U] != protocolVersion
+            // Reject a peer's own traffic reflected back before spending any
+            // work on it. The per-direction key makes this authoritative, but
+            // checking the field first keeps the rejection cheap.
+            || packet[18U] != static_cast<std::uint8_t>(receiveDirection_)
+            || packet[19U] != 0U) {
             return false;
         }
         const std::size_t payloadBytes = readU16(packet.data() + 6U);
@@ -910,7 +1054,7 @@ private:
         const auto ciphertext = packet.subspan(headerBytes, payloadBytes);
         const auto tag = std::span<const std::uint8_t, tagBytes>(
             packet.data() + headerBytes + payloadBytes, tagBytes);
-        if (!cipher.decrypt(
+        if (!receiveCipher.decrypt(
                 packet.first(headerBytes), ciphertext, tag,
                 std::span<std::uint8_t>(plaintext.data(), payloadBytes))) {
             return false;
@@ -920,10 +1064,9 @@ private:
         if (type != PacketType::Hello && !sameEndpoint(source, remoteAddress_)) {
             return false;
         }
-        if (connected && sequence <= lastReceiveSequence_) {
+        if (!replayWindow_.accept(sequence)) {
             return false;
         }
-        lastReceiveSequence_ = sequence;
         lastReceive = GetTickCount64();
 
         if (type == PacketType::Hello && hostMode_) {
@@ -931,7 +1074,7 @@ private:
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             constexpr std::array<std::uint8_t, 2U> ack{{'O', 'K'}};
-            static_cast<void>(sendPacket(cipher, PacketType::HelloAck, 0U, 0U, ack));
+            static_cast<void>(sendPacket(sendCipher, PacketType::HelloAck, 0U, 0U, ack));
             return true;
         }
         if (type == PacketType::HelloAck && !hostMode_) {
@@ -941,7 +1084,7 @@ private:
         }
         if (type == PacketType::Ping && payloadBytes == sizeof(std::uint64_t)) {
             static_cast<void>(sendPacket(
-                cipher, PacketType::Pong, 0U, 0U,
+                sendCipher, PacketType::Pong, 0U, 0U,
                 std::span<const std::uint8_t>(plaintext.data(), payloadBytes)));
             return true;
         }
@@ -994,15 +1137,17 @@ private:
     audio::SpscAudioRing localAudio_;
     audio::SpscAudioRing remoteAudio_;
     std::array<std::uint8_t, 32U> secret_{};
-    std::array<std::uint8_t, 4U> noncePrefix_{};
+    std::array<std::uint8_t, noncePrefixBytes> noncePrefix_{};
     sockaddr_in remoteAddress_{};
     std::string inviteCode_;
     std::uint16_t localPort_{0U};
     bool hostMode_{false};
     bool mappedPort_{false};
-    std::uint64_t nonceCounter_{0U};
+    Direction sendDirection_{Direction::HostToGuest};
+    Direction receiveDirection_{Direction::GuestToHost};
+    ReplayWindow replayWindow_;
+    std::uint32_t nonceCounter_{0U};
     std::uint32_t sendSequence_{0U};
-    std::uint32_t lastReceiveSequence_{0U};
     std::atomic<bool> stopRequested_{false};
     std::atomic<PeerConnectionState> state_{PeerConnectionState::Idle};
     std::atomic<std::uint32_t> sendMuted_{0U};
