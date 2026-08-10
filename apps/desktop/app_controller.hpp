@@ -62,6 +62,14 @@ class AppController final : public QObject {
     Q_PROPERTY(int roomPort READ roomPort NOTIFY roomChanged)
     Q_PROPERTY(int roundTripMilliseconds READ roundTripMilliseconds NOTIFY roomChanged)
     Q_PROPERTY(double remoteLevel READ remoteLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteInstrumentLevel READ remoteInstrumentLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteVoiceLevel READ remoteVoiceLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteInstrumentGain READ remoteInstrumentGain WRITE setRemoteInstrumentGain NOTIFY roomChanged)
+    Q_PROPERTY(double remoteVoiceGain READ remoteVoiceGain WRITE setRemoteVoiceGain NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteInstrumentMuted READ remoteInstrumentMuted WRITE setRemoteInstrumentMuted NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteVoiceMuted READ remoteVoiceMuted WRITE setRemoteVoiceMuted NOTIFY roomChanged)
+    Q_PROPERTY(QString connectionQuality READ connectionQuality NOTIFY roomChanged)
+    Q_PROPERTY(QString networkDiagnostics READ networkDiagnostics NOTIFY roomChanged)
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
 
@@ -131,6 +139,18 @@ public:
     [[nodiscard]] int roomPort() const noexcept;
     [[nodiscard]] int roundTripMilliseconds() const noexcept;
     [[nodiscard]] double remoteLevel() const noexcept;
+    [[nodiscard]] double remoteInstrumentLevel() const noexcept;
+    [[nodiscard]] double remoteVoiceLevel() const noexcept;
+    [[nodiscard]] double remoteInstrumentGain() const noexcept;
+    [[nodiscard]] double remoteVoiceGain() const noexcept;
+    [[nodiscard]] bool remoteInstrumentMuted() const noexcept;
+    [[nodiscard]] bool remoteVoiceMuted() const noexcept;
+    void setRemoteInstrumentGain(double gain);
+    void setRemoteVoiceGain(double gain);
+    void setRemoteInstrumentMuted(bool muted);
+    void setRemoteVoiceMuted(bool muted);
+    [[nodiscard]] QString connectionQuality() const;
+    [[nodiscard]] QString networkDiagnostics() const;
     [[nodiscard]] QString packetSummary() const;
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
@@ -199,6 +219,15 @@ private:
         jamlink::audio::SoundcheckAudioState state);
     [[nodiscard]] static QString peerStateText(
         jamlink::network::PeerConnectionState state);
+    void applyRemoteStream(
+        jamlink::network::AudioStreamId stream,
+        double& stored,
+        double gain);
+
+    static constexpr std::size_t instrumentStream =
+        static_cast<std::size_t>(jamlink::network::AudioStreamId::Instrument);
+    static constexpr std::size_t voiceStream =
+        static_cast<std::size_t>(jamlink::network::AudioStreamId::Voice);
 
     jamlink::preferences::PreferencesStore store_;
     jamlink::preferences::UserPreferences preferences_;
@@ -219,6 +248,10 @@ private:
     jamlink::network::PeerTransportTelemetry peerTelemetry_;
     QString inviteCode_;
     bool sendMuted_{false};
+    double remoteInstrumentGain_{1.0};
+    double remoteVoiceGain_{1.0};
+    bool remoteInstrumentMuted_{false};
+    bool remoteVoiceMuted_{false};
 
     std::vector<DeviceOption> instrumentOptions_;
     std::vector<DeviceOption> voiceOptions_;

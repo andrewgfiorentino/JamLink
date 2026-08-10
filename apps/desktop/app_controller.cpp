@@ -323,8 +323,8 @@ QString AppController::roomStatus() const {
         return QStringLiteral("No room session");
     }
     if (peerConnected()) {
-        return QStringLiteral("Connected · encrypted direct audio · %1 ms")
-            .arg(peerTelemetry_.roundTripMilliseconds);
+        return QStringLiteral("Connected · encrypted direct audio · %1")
+            .arg(connectionQuality());
     }
     if (peerTelemetry_.state == jamlink::network::PeerConnectionState::WaitingForPeer
         && !peerTelemetry_.automaticPortMapping) {
@@ -341,9 +341,126 @@ int AppController::roomPort() const noexcept {
     return peerTransport_ ? static_cast<int>(peerTransport_->localPort()) : 0;
 }
 int AppController::roundTripMilliseconds() const noexcept {
-    return static_cast<int>(peerTelemetry_.roundTripMilliseconds);
+    return static_cast<int>((peerTelemetry_.roundTripMicroseconds + 500U) / 1'000U);
 }
-double AppController::remoteLevel() const noexcept { return peerTelemetry_.remotePeak; }
+double AppController::remoteLevel() const noexcept {
+    return std::max(
+        peerTelemetry_.streams[instrumentStream].peak,
+        peerTelemetry_.streams[voiceStream].peak);
+}
+double AppController::remoteInstrumentLevel() const noexcept {
+    return peerTelemetry_.streams[instrumentStream].peak;
+}
+double AppController::remoteVoiceLevel() const noexcept {
+    return peerTelemetry_.streams[voiceStream].peak;
+}
+
+double AppController::remoteInstrumentGain() const noexcept { return remoteInstrumentGain_; }
+double AppController::remoteVoiceGain() const noexcept { return remoteVoiceGain_; }
+bool AppController::remoteInstrumentMuted() const noexcept { return remoteInstrumentMuted_; }
+bool AppController::remoteVoiceMuted() const noexcept { return remoteVoiceMuted_; }
+
+void AppController::setRemoteInstrumentGain(double gain) {
+    applyRemoteStream(
+        jamlink::network::AudioStreamId::Instrument, remoteInstrumentGain_, gain);
+}
+void AppController::setRemoteVoiceGain(double gain) {
+    applyRemoteStream(jamlink::network::AudioStreamId::Voice, remoteVoiceGain_, gain);
+}
+void AppController::setRemoteInstrumentMuted(bool muted) {
+    if (remoteInstrumentMuted_ == muted) {
+        return;
+    }
+    remoteInstrumentMuted_ = muted;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamMuted(
+            jamlink::network::AudioStreamId::Instrument, muted);
+    }
+    emit roomChanged();
+}
+void AppController::setRemoteVoiceMuted(bool muted) {
+    if (remoteVoiceMuted_ == muted) {
+        return;
+    }
+    remoteVoiceMuted_ = muted;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamMuted(jamlink::network::AudioStreamId::Voice, muted);
+    }
+    emit roomChanged();
+}
+
+void AppController::applyRemoteStream(
+    jamlink::network::AudioStreamId stream,
+    double& stored,
+    double gain) {
+    const double bounded = std::clamp(gain, 0.0, 1.0);
+    if (std::abs(stored - bounded) < 0.0005) {
+        return;
+    }
+    stored = bounded;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamGain(stream, static_cast<float>(bounded));
+    }
+    emit roomChanged();
+}
+
+// Buffering latency is measured; one-way delay is estimated from half the
+// round trip. The two are reported separately so an estimate is never shown as
+// a measurement.
+QString AppController::connectionQuality() const {
+    if (!peerConnected()) {
+        return QStringLiteral("Not connected");
+    }
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    const double oneWayMilliseconds =
+        static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 2'000.0;
+    const double bufferMilliseconds = instrument.bufferedFrames == 0U
+        ? 0.0
+        : static_cast<double>(instrument.bufferedFrames) / 48.0;
+    const double playableMilliseconds = oneWayMilliseconds + bufferMilliseconds;
+    const double concealRatio = peerTelemetry_.packetsReceived == 0U
+        ? 0.0
+        : static_cast<double>(instrument.packetsConcealed)
+            / static_cast<double>(peerTelemetry_.packetsReceived);
+
+    QString grade;
+    if (concealRatio > 0.05 || playableMilliseconds > 60.0) {
+        grade = QStringLiteral("Conversation only");
+    } else if (concealRatio > 0.02 || playableMilliseconds > 40.0) {
+        grade = QStringLiteral("Poor");
+    } else if (concealRatio > 0.005 || playableMilliseconds > 25.0) {
+        grade = QStringLiteral("Playable");
+    } else if (playableMilliseconds > 15.0) {
+        grade = QStringLiteral("Good");
+    } else {
+        grade = QStringLiteral("Excellent");
+    }
+    return QStringLiteral("%1 · about %2 ms one way · %3 ms buffer")
+        .arg(grade)
+        .arg(oneWayMilliseconds, 0, 'f', 1)
+        .arg(bufferMilliseconds, 0, 'f', 1);
+}
+
+QString AppController::networkDiagnostics() const {
+    if (!peerTransport_) {
+        return QStringLiteral("No room session");
+    }
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    const auto& voice = peerTelemetry_.streams[voiceStream];
+    return QStringLiteral(
+               "round trip %1 ms measured · jitter %2 ms\n"
+               "instrument concealed %3 · late %4 · buffer %5 ms\n"
+               "voice concealed %6 · late %7 · buffer %8 ms")
+        .arg(static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 1'000.0, 0, 'f', 1)
+        .arg(static_cast<double>(instrument.jitterMicroseconds) / 1'000.0, 0, 'f', 1)
+        .arg(instrument.packetsConcealed)
+        .arg(instrument.packetsLate)
+        .arg(static_cast<double>(instrument.bufferedFrames) / 48.0, 0, 'f', 1)
+        .arg(voice.packetsConcealed)
+        .arg(voice.packetsLate)
+        .arg(static_cast<double>(voice.bufferedFrames) / 48.0, 0, 'f', 1);
+}
+
 QString AppController::packetSummary() const {
     return QStringLiteral("%1 received · %2 sent · %3 rejected")
         .arg(peerTelemetry_.packetsReceived)
@@ -461,6 +578,17 @@ void AppController::hostSession() {
     }
     audioService_->stop();
     audioService_->setPeerAudioExchange(transport.get());
+    // Carry the listener's remote mix preferences into the new session rather
+    // than silently resetting them on every join.
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Instrument,
+        static_cast<float>(remoteInstrumentGain_));
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Voice, static_cast<float>(remoteVoiceGain_));
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
     inviteCode_ = QString::fromStdString(invite);
     sendMuted_ = false;
@@ -490,6 +618,17 @@ void AppController::joinSession(const QString& inviteCode) {
     }
     audioService_->stop();
     audioService_->setPeerAudioExchange(transport.get());
+    // Carry the listener's remote mix preferences into the new session rather
+    // than silently resetting them on every join.
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Instrument,
+        static_cast<float>(remoteInstrumentGain_));
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Voice, static_cast<float>(remoteVoiceGain_));
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
     inviteCode_.clear();
     sendMuted_ = false;

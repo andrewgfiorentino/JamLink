@@ -112,6 +112,18 @@ if(BUILD_TESTING)
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-settings.png"
     )
     add_test(
+        NAME jamlink_desktop_visual_room
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page room
+            --width 532
+            --height 700
+            --minimum-capture-height 700
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room.png"
+    )
+    add_test(
         NAME jamlink_desktop_visual_high_dpi
         COMMAND jamlink_desktop
             --visual-fixture
@@ -139,6 +151,7 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_first_launch
         jamlink_desktop_visual_second_launch
         jamlink_desktop_visual_settings
+        jamlink_desktop_visual_room
         jamlink_desktop_visual_high_dpi
         PROPERTIES
         TIMEOUT 30
@@ -154,8 +167,11 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_settings
         PROPERTIES DEPENDS jamlink_desktop_visual_second_launch)
     set_tests_properties(
-        jamlink_desktop_visual_high_dpi
+        jamlink_desktop_visual_room
         PROPERTIES DEPENDS jamlink_desktop_visual_settings)
+    set_tests_properties(
+        jamlink_desktop_visual_high_dpi
+        PROPERTIES DEPENDS jamlink_desktop_visual_room)
     set_property(
         TEST jamlink_desktop_visual_high_dpi APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "QT_SCREEN_SCALE_FACTORS=set:1.5")

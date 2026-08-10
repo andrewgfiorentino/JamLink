@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -73,33 +74,100 @@ std::array<float, 128U> makeTone(double increment, double amplitude) {
     return samples;
 }
 
-bool hasSignal(std::span<const float> samples) {
-    return std::any_of(samples.begin(), samples.end(), [](float sample) {
-        return std::isfinite(sample) && std::abs(sample) > 0.01F;
-    });
+struct StreamPeaks final {
+    float hostInstrument{0.0F};
+    float hostVoice{0.0F};
+    float guestInstrument{0.0F};
+    float guestVoice{0.0F};
+};
+
+float peakOf(std::span<const float> samples) {
+    float peak = 0.0F;
+    for (const float sample : samples) {
+        if (std::isfinite(sample)) {
+            peak = std::max(peak, std::abs(sample));
+        }
+    }
+    return peak;
 }
 
-// Pumps audio in both directions until both peers hold a full network packet.
-bool exchangeAudio(IPeerAudioTransport& host, IPeerAudioTransport& guest) {
-    const auto hostTone = makeTone(0.07, 0.4);
-    const auto guestTone = makeTone(0.11, 0.3);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (std::chrono::steady_clock::now() < deadline
-           && (host.availableRemote48k() < 240U || guest.availableRemote48k() < 240U)) {
-        host.pushLocalAudio(hostTone, 48'000U);
-        guest.pushLocalAudio(guestTone, 48'000U);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
+// Drives both peers against the wall clock, because the receive jitter buffer
+// takes its playout clock from pullRemote48k. Pulling faster than real time
+// would starve it permanently and pulling slower would overflow it, so a test
+// that ignores pacing measures nothing useful.
+//
+// Instrument and voice carry different tones, so a transport that merged or
+// crossed them would fail the separation checks.
+StreamPeaks pump(
+    IPeerAudioTransport& host,
+    IPeerAudioTransport& guest,
+    std::chrono::milliseconds duration,
+    std::chrono::milliseconds measureLast) {
+    using jamlink::network::AudioStreamId;
+    using Clock = std::chrono::steady_clock;
 
-    std::array<float, 240U> atHost{};
-    std::array<float, 240U> atGuest{};
-    if (host.availableRemote48k() < atHost.size()
-        || guest.availableRemote48k() < atGuest.size()) {
-        return false;
+    const auto hostInstrument = makeTone(0.07, 0.4);
+    const auto hostVoice = makeTone(0.23, 0.35);
+    const auto guestInstrument = makeTone(0.11, 0.3);
+    const auto guestVoice = makeTone(0.31, 0.28);
+
+    const auto start = Clock::now();
+    const auto finish = start + duration;
+    const auto measureFrom = finish - measureLast;
+    std::size_t pushedFrames = 0U;
+    std::size_t pulledFrames = 0U;
+    StreamPeaks peaks;
+    std::array<float, 240U> block{};
+
+    while (Clock::now() < finish) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now() - start).count();
+        const auto dueFrames = static_cast<std::size_t>(
+            std::max<std::int64_t>(elapsed, 0) * 48 / 1'000);
+
+        while (pushedFrames + hostInstrument.size() <= dueFrames) {
+            host.pushLocalAudio(AudioStreamId::Instrument, hostInstrument, 48'000U);
+            host.pushLocalAudio(AudioStreamId::Voice, hostVoice, 48'000U);
+            guest.pushLocalAudio(AudioStreamId::Instrument, guestInstrument, 48'000U);
+            guest.pushLocalAudio(AudioStreamId::Voice, guestVoice, 48'000U);
+            pushedFrames += hostInstrument.size();
+        }
+
+        const bool measuring = Clock::now() >= measureFrom;
+        while (pulledFrames + block.size() <= dueFrames) {
+            static_cast<void>(host.pullRemote48k(AudioStreamId::Instrument, block));
+            if (measuring) {
+                peaks.hostInstrument = std::max(peaks.hostInstrument, peakOf(block));
+            }
+            static_cast<void>(host.pullRemote48k(AudioStreamId::Voice, block));
+            if (measuring) {
+                peaks.hostVoice = std::max(peaks.hostVoice, peakOf(block));
+            }
+            static_cast<void>(guest.pullRemote48k(AudioStreamId::Instrument, block));
+            if (measuring) {
+                peaks.guestInstrument = std::max(peaks.guestInstrument, peakOf(block));
+            }
+            static_cast<void>(guest.pullRemote48k(AudioStreamId::Voice, block));
+            if (measuring) {
+                peaks.guestVoice = std::max(peaks.guestVoice, peakOf(block));
+            }
+            pulledFrames += block.size();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    return host.pullRemote48k(atHost) == atHost.size()
-        && guest.pullRemote48k(atGuest) == atGuest.size()
-        && hasSignal(atHost) && hasSignal(atGuest)
+    return peaks;
+}
+
+constexpr float audibleThreshold = 0.05F;
+constexpr float silentThreshold = 0.01F;
+
+bool exchangeAudio(IPeerAudioTransport& host, IPeerAudioTransport& guest) {
+    const StreamPeaks peaks = pump(
+        host, guest, std::chrono::milliseconds(900), std::chrono::milliseconds(400));
+    return peaks.hostInstrument > audibleThreshold
+        && peaks.hostVoice > audibleThreshold
+        && peaks.guestInstrument > audibleThreshold
+        && peaks.guestVoice > audibleThreshold
         && host.telemetry().packetsReceived > 0U
         && guest.telemetry().packetsReceived > 0U;
 }
@@ -343,6 +411,55 @@ void survivesHostileDatagrams() {
     guest->stop();
 }
 
+// A listener must be able to turn a friend's guitar down without touching
+// their voice, which is only possible if the two never share a stream.
+void remoteStreamsAreIndependentlyControllable() {
+    using jamlink::network::AudioStreamId;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "stream independence harness setup");
+        return;
+    }
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty() || !guest->join(invite) || !waitForConnected(*host, *guest)
+        || !exchangeAudio(*host, *guest)) {
+        check(false, "stream independence harness handshake");
+        return;
+    }
+
+    // Measure only the tail of each window so the previous setting's audio has
+    // fully drained out of the receive buffer first.
+    const auto settle = [&](bool wantInstrument, bool wantVoice) {
+        const StreamPeaks peaks = pump(
+            *host, *guest, std::chrono::milliseconds(900), std::chrono::milliseconds(300));
+        const bool instrumentOk = wantInstrument
+            ? peaks.hostInstrument > audibleThreshold
+            : peaks.hostInstrument < silentThreshold;
+        const bool voiceOk = wantVoice
+            ? peaks.hostVoice > audibleThreshold
+            : peaks.hostVoice < silentThreshold;
+        return instrumentOk && voiceOk;
+    };
+
+    host->setRemoteStreamMuted(AudioStreamId::Instrument, true);
+    check(settle(false, true), "muting the remote instrument leaves voice audible");
+
+    host->setRemoteStreamMuted(AudioStreamId::Instrument, false);
+    host->setRemoteStreamMuted(AudioStreamId::Voice, true);
+    check(settle(true, false), "muting the remote voice leaves the instrument audible");
+
+    host->setRemoteStreamMuted(AudioStreamId::Voice, false);
+    check(settle(true, true), "unmuting restores both remote streams");
+
+    // Muting an outgoing stream must not silence the other direction's pair.
+    guest->setLocalStreamMuted(AudioStreamId::Instrument, true);
+    check(settle(false, true), "muting a sender's instrument leaves its voice flowing");
+
+    host->stop();
+    guest->stop();
+}
+
 void reconnectsAfterGuestRestart() {
     auto host = jamlink::network::createPlatformPeerAudioTransport();
     auto guest = jamlink::network::createPlatformPeerAudioTransport();
@@ -380,6 +497,7 @@ int main() {
     exchangesEncryptedAudioOnLoopback();
     rejectsReflectedOwnTraffic();
     survivesHostileDatagrams();
+    remoteStreamsAreIndependentlyControllable();
     reconnectsAfterGuestRestart();
 
     static_cast<void>(WSACleanup());
