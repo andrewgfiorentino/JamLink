@@ -909,9 +909,16 @@ private:
         destination[18U] = static_cast<std::uint8_t>(sendDirection_);
         destination[19U] = stream;
         std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefixBytes);
+        if (nonceExhausted_) {
+            return 0U;
+        }
         const std::uint32_t nonceCounter = ++nonceCounter_;
         if (nonceCounter >= maximumNonceCounter) {
-            // Never reuse a nonce. Refusing to send is the only safe response.
+            // Never reuse a nonce. Refusing to send is the only safe response,
+            // and it has to latch: without the flag the counter keeps climbing
+            // on every refused attempt, wraps past 2^32, and starts handing out
+            // nonces that have already been used under this key.
+            nonceExhausted_ = true;
             return 0U;
         }
         writeU32(destination.data() + 20U + noncePrefixBytes, nonceCounter);
@@ -973,6 +980,7 @@ private:
             SecureZeroMemory(receiveKey.data(), receiveKey.size());
             replayWindow_.reset();
             nonceCounter_ = 0U;
+            nonceExhausted_ = false;
             if (!sendCipher.valid() || !receiveCipher.valid()
                 || !BCRYPT_SUCCESS(BCryptGenRandom(
                     nullptr, noncePrefix_.data(), static_cast<ULONG>(noncePrefix_.size()),
@@ -1166,6 +1174,14 @@ private:
         if (type != PacketType::Hello && !sameEndpoint(source, remoteAddress_)) {
             return false;
         }
+        // A peer that leaves and rejoins the same room restarts its nonce
+        // counter from zero while this host keeps running, so its first packets
+        // look far older than the window's high water mark and every one of
+        // them would be rejected forever. An authenticated Hello marks the
+        // start of a new session, so re-arm the window there.
+        if (type == PacketType::Hello && hostMode_) {
+            replayWindow_.reset();
+        }
         // The nonce counter is unique for every packet in this direction, so it
         // is the right anti-replay identity. Media sequences restart per stream
         // and cannot serve that purpose.
@@ -1249,6 +1265,7 @@ private:
     Direction receiveDirection_{Direction::GuestToHost};
     ReplayWindow replayWindow_;
     std::uint32_t nonceCounter_{0U};
+    bool nonceExhausted_{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence_{};
     std::atomic<bool> stopRequested_{false};
     std::atomic<PeerConnectionState> state_{PeerConnectionState::Idle};

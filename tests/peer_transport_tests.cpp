@@ -455,6 +455,13 @@ void remoteStreamsAreIndependentlyControllable() {
         const bool voiceOk = wantVoice
             ? peaks.hostVoice > audibleThreshold
             : peaks.hostVoice < silentThreshold;
+        if (!instrumentOk || !voiceOk) {
+            std::cout << "    wanted instrument "
+                      << (wantInstrument ? "audible" : "silent") << ", voice "
+                      << (wantVoice ? "audible" : "silent")
+                      << "; measured instrument " << peaks.hostInstrument
+                      << ", voice " << peaks.hostVoice << "\n";
+        }
         return instrumentOk && voiceOk;
     };
 
@@ -488,6 +495,15 @@ void reconnectsAfterGuestRestart() {
         check(false, "reconnect harness handshake");
         return;
     }
+    // Play for a while before leaving. A handshake-only first session sends so
+    // few packets that the host's replay window still accepts the rejoining
+    // guest's restarted counter by accident, which hid a real reconnect bug.
+    if (!exchangeAudio(*host, *guest)) {
+        check(false, "reconnect harness first session audio");
+        return;
+    }
+    const std::uint64_t firstSessionPackets = guest->telemetry().packetsSent;
+    check(firstSessionPackets > 64U, "first session outlives the replay window");
     guest->stop();
 
     // Rejoining reuses the room secret, so the derived keys and nonce prefixes

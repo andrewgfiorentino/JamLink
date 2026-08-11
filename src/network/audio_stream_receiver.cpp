@@ -27,6 +27,10 @@ constexpr float silenceEnergy = 1.0e-9F;
 // jitter never provokes a correction.
 constexpr std::int32_t trimSlackPackets = 2;
 constexpr std::int32_t stretchSlackPackets = 1;
+// Consecutive playout packets with no new arrival before a stream counts as
+// stopped. The render callback can run several times per packet period, so a
+// small count here is still only a few tens of milliseconds.
+constexpr std::size_t stallLimitPackets = 4U;
 
 [[nodiscard]] std::size_t validateSettings(const AudioStreamReceiverSettings& settings) {
     if (settings.packetFrames == 0U || settings.packetFrames > 4'096U) {
@@ -227,6 +231,7 @@ bool AudioStreamReceiver::beginPacket() noexcept {
         observedEpoch_ = epoch;
         primed_.store(false, std::memory_order_release);
         concealBurst_ = 0U;
+        lossBurst_ = 0U;
         recoveryPending_ = false;
     }
 
@@ -242,12 +247,28 @@ bool AudioStreamReceiver::beginPacket() noexcept {
     // moves the observed depth by a packet or two every cycle, so correcting on
     // any deviation makes playout hunt: it inserts and removes audio several
     // times a second, which is audible as warble even when nothing is lost.
+    // Whether the peer is still delivering. Depth cannot answer this: a stretch
+    // freezes playout, so when a stream stops the depth freezes too and stays
+    // wherever it was. Only the arrival of new sequences distinguishes "waiting
+    // for the buffer to grow" from "this stream has gone away".
+    if (highest != previousHighest_) {
+        previousHighest_ = highest;
+        stalledPackets_ = 0U;
+    } else if (stalledPackets_ < stallLimitPackets) {
+        ++stalledPackets_;
+    }
+    const bool arriving = stalledPackets_ < stallLimitPackets;
+
     if (depth <= 0 || depth < static_cast<std::int32_t>(target) - stretchSlackPackets) {
         // The target grew, or arrivals fell behind the playout clock. Emit one
         // concealed packet without consuming a sequence so the backlog rebuilds
         // towards the target. Without this the adaptive target is advisory only
         // and the buffer stays stuck at whatever depth it primed with.
-        concealPacket(false);
+        //
+        // A stretch over a stream that is still delivering plays at full level.
+        // A stretch over one that has stopped must fade out rather than
+        // extrapolate the last note indefinitely.
+        concealPacket(false, !arriving);
         bufferStretches_.fetch_add(1U, std::memory_order_relaxed);
         return true;
     }
@@ -273,7 +294,7 @@ bool AudioStreamReceiver::beginPacket() noexcept {
         == static_cast<std::uint64_t>(playout) + 1U) {
         takeRealPacket(slotIndex);
     } else {
-        concealPacket(true);
+        concealPacket(true, true);
     }
     return true;
 }
@@ -314,6 +335,7 @@ void AudioStreamReceiver::takeRealPacket(std::size_t slotIndex) noexcept {
         std::memcpy(rawHead_.data(), currentPacket_.data(), fade * sizeof(float));
         blendRecoveryInto(currentPacket_);
         concealBurst_ = 0U;
+        lossBurst_ = 0U;
         recoveryPending_ = false;
         appendHistory(std::span<const float>(rawHead_.data(), fade));
         appendHistory(std::span<const float>(
@@ -323,15 +345,22 @@ void AudioStreamReceiver::takeRealPacket(std::size_t slotIndex) noexcept {
     appendHistory(currentPacket_);
 }
 
-void AudioStreamReceiver::concealPacket(bool advancePlayout) noexcept {
+void AudioStreamReceiver::concealPacket(bool advancePlayout, bool decay) noexcept {
     const bool enteringBurst = concealBurst_ == 0U;
     if (enteringBurst) {
         concealPeriod_ = refreshPeriod();
         synthesisOffset_ = 0U;
     }
 
-    const float startGain = std::pow(decayPerPacket, static_cast<float>(concealBurst_));
-    const float endGain = startGain * decayPerPacket;
+    // Only missing audio decays. A stretch over a healthy stream is a
+    // deliberate time-stretch and plays at full level: sharing the loss decay
+    // made a growing target fade a lossless stream towards silence, because the
+    // target can grow by several packets and each consecutive stretch would
+    // halve the output again.
+    const float startGain = decay
+        ? std::pow(decayPerPacket, static_cast<float>(lossBurst_))
+        : 1.0F;
+    const float endGain = decay ? startGain * decayPerPacket : 1.0F;
     const auto frames = static_cast<float>(packetFrames_);
 
     for (std::size_t index = 0U; index < packetFrames_; ++index) {
@@ -360,7 +389,12 @@ void AudioStreamReceiver::concealPacket(bool advancePlayout) noexcept {
         const float residual = historyAt(historyWrite_ - 1U) - currentPacket_[0];
         const std::size_t fade = std::min(crossFadeFrames, packetFrames_);
         for (std::size_t index = 0U; index < fade; ++index) {
-            currentPacket_[index] += residual * (1.0F - fadeWindow_[index]);
+            // The residual can be nearly two full amplitudes when the chosen
+            // period lands anti-phase, so bound the sum. Concealment must never
+            // be louder than the audio it stands in for.
+            currentPacket_[index] = std::clamp(
+                currentPacket_[index] + residual * (1.0F - fadeWindow_[index]),
+                -1.0F, 1.0F);
         }
     }
     realRunLength_ = 0U;
@@ -371,6 +405,9 @@ void AudioStreamReceiver::concealPacket(bool advancePlayout) noexcept {
         // Only a real gap counts as concealed loss; a deliberate stretch is
         // reported separately so telemetry never overstates network damage.
         packetsConcealed_.fetch_add(1U, std::memory_order_relaxed);
+    }
+    if (decay) {
+        ++lossBurst_;
     }
     ++concealBurst_;
     recoveryPending_ = true;
@@ -384,17 +421,19 @@ void AudioStreamReceiver::blendRecoveryInto(std::span<float> packet) noexcept {
     }
 
     if (concealBurst_ == 0U) {
-        // Priming and latency trims also splice the signal, so they need a
-        // continuation estimate of their own rather than a stale burst period.
-        concealPeriod_ = refreshPeriod();
+        // Priming and latency trims splice the signal too, but they can reuse
+        // the last measured period. Running the full correlation search here
+        // would put it in the render callback on every trim, which is once per
+        // packet whenever the buffer sits above target.
+        concealPeriod_ = cachedPeriod_;
         synthesisOffset_ = 0U;
     }
 
     // Continue the extrapolation the listener was already hearing, then raise
     // the real packet over it so recovery does not click.
-    const float gain = concealBurst_ == 0U
+    const float gain = lossBurst_ == 0U
         ? 1.0F
-        : std::pow(decayPerPacket, static_cast<float>(concealBurst_));
+        : std::pow(decayPerPacket, static_cast<float>(lossBurst_));
     for (std::size_t index = 0U; index < fade; ++index) {
         float continued = 0.0F;
         if (concealPeriod_ != 0U) {
@@ -527,10 +566,13 @@ void AudioStreamReceiver::reset() noexcept {
     currentOffset_ = packetFrames_;
     observedEpoch_ = 0U;
     concealBurst_ = 0U;
+    lossBurst_ = 0U;
     concealPeriod_ = 0U;
     cachedPeriod_ = 0U;
     realRunLength_ = 0U;
     synthesisOffset_ = 0U;
+    previousHighest_ = 0U;
+    stalledPackets_ = 0U;
     recoveryPending_ = false;
     previousSequence_ = 0U;
     previousArrival_ = 0U;

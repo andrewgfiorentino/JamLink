@@ -101,8 +101,10 @@ private:
     [[nodiscard]] bool tryPrime() noexcept;
     void takeRealPacket(std::size_t slotIndex) noexcept;
     // advancePlayout distinguishes covering a real gap from deliberately
-    // stretching playout to rebuild the target backlog.
-    void concealPacket(bool advancePlayout) noexcept;
+    // stretching playout to rebuild the target backlog. decay says whether the
+    // audio is genuinely missing, which is what fades the output out; a stretch
+    // over a healthy stream must not fade.
+    void concealPacket(bool advancePlayout, bool decay) noexcept;
     void blendRecoveryInto(std::span<float> packet) noexcept;
     void appendHistory(std::span<const float> block) noexcept;
     // Re-estimates the pitch period from contiguous real history, falling back
@@ -138,6 +140,9 @@ private:
     std::size_t currentOffset_;
     std::uint32_t observedEpoch_{0U};
     std::size_t concealBurst_{0U};
+    // Consecutive concealed packets that covered real loss. Drives the decay;
+    // deliberate stretches deliberately do not.
+    std::size_t lossBurst_{0U};
     std::size_t concealPeriod_{0U};
     std::size_t cachedPeriod_{0U};
     // Contiguous real frames at the end of the history, which bounds how far
@@ -146,6 +151,11 @@ private:
     // Frames synthesised since the last real audio, so a burst extrapolates
     // continuously instead of restarting the period every packet.
     std::size_t synthesisOffset_{0U};
+    // Highest sequence observed on the previous playout packet, and how many
+    // playout packets have passed without a new one. Together they say whether
+    // the peer is still delivering.
+    std::uint32_t previousHighest_{0U};
+    std::size_t stalledPackets_{0U};
     bool recoveryPending_{false};
 
     // Producer-owned estimation state.
