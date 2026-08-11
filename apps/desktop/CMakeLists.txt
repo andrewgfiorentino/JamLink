@@ -51,6 +51,8 @@ target_link_libraries(jamlink_desktop
         Qt6::Quick
 )
 target_compile_features(jamlink_desktop PRIVATE cxx_std_20)
+target_compile_definitions(jamlink_desktop
+    PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
 set_target_properties(jamlink_desktop PROPERTIES
     CXX_EXTENSIONS OFF
     OUTPUT_NAME JamLink
@@ -72,6 +74,8 @@ if(BUILD_TESTING)
         jamlink_desktop_controller_tests
         PRIVATE JamLink::Core JamLink::PlatformAudio Qt6::Core Qt6::Gui Qt6::Qml)
     target_compile_features(jamlink_desktop_controller_tests PRIVATE cxx_std_20)
+    target_compile_definitions(jamlink_desktop_controller_tests
+        PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
     set_target_properties(jamlink_desktop_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_desktop_controller_tests)
     if(MSVC)

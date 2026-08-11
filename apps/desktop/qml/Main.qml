@@ -28,9 +28,34 @@ ApplicationWindow {
 
     background: Rectangle {
         color: "#070b0e"
-        radius: 15
+        radius: 18
         border.color: "#303940"
         border.width: 1
+    }
+
+    // Documented in Settings > Shortcuts. Anything listed there works here.
+    Shortcut {
+        sequences: ["T"]
+        onActivated: window.controller.navigate(
+            window.controller.currentPage === "tuner" ? "home" : "tuner")
+    }
+    Shortcut {
+        sequences: ["R"]
+        onActivated: window.controller.toggleRecording()
+    }
+    Shortcut {
+        sequences: ["M"]
+        enabled: window.controller.roomActive
+        onActivated: window.controller.sendMuted = !window.controller.sendMuted
+    }
+    Shortcut {
+        sequences: [StandardKey.Preferences, "Ctrl+,"]
+        onActivated: window.controller.navigate("settings")
+    }
+    Shortcut {
+        sequences: ["Esc"]
+        enabled: window.controller.currentPage !== "home"
+        onActivated: window.controller.navigate("home")
     }
 
     Loader {

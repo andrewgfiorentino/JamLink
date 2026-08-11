@@ -37,6 +37,15 @@ bool readQuotedLine(
     return key == expectedKey && parser.peek() == std::char_traits<char>::eof();
 }
 
+// Reads a quoted value from an already-split optional line.
+bool readQuotedValue(std::istream& line, std::string& value) {
+    if (!(line >> std::quoted(value))) {
+        return false;
+    }
+    line >> std::ws;
+    return line.peek() == std::char_traits<char>::eof();
+}
+
 template <typename Value>
 bool readScalarLine(
     std::istream& input,
@@ -70,12 +79,14 @@ bool valid(const UserPreferences& preferences) noexcept {
         && preferences.remoteInstrumentGain <= 2.0F
         && preferences.remoteVoiceGain >= 0.0F
         && preferences.remoteVoiceGain <= 2.0F;
+    const bool networkValid = preferences.preferredUdpPort <= 65'535U
+        && preferences.latencyMode <= 2U;
     const bool windowValid = preferences.window.width >= 532U
         && preferences.window.width <= 16'384U
         && preferences.window.height >= 480U
         && preferences.window.height <= 16'384U;
     return preferences.schemaVersion == currentPreferencesSchemaVersion
-        && sampleRateValid && bufferValid && gainsValid && windowValid;
+        && sampleRateValid && bufferValid && gainsValid && windowValid && networkValid;
 }
 
 bool parse(std::istream& input, UserPreferences& preferences) {
@@ -126,6 +137,7 @@ bool parse(std::istream& input, UserPreferences& preferences) {
     // must keep restoring rather than being discarded as corrupt. Unknown keys
     // are still rejected.
     int tunerMutes = preferences.tunerMutesInstrument ? 1 : 0;
+    int automaticMapping = preferences.automaticPortMapping ? 1 : 0;
     std::string trailing;
     while (std::getline(input, trailing)) {
         if (trailing.empty()) {
@@ -141,15 +153,25 @@ bool parse(std::istream& input, UserPreferences& preferences) {
             read = static_cast<bool>(line >> preferences.remoteVoiceGain);
         } else if (key == "tuner.mutes_instrument") {
             read = static_cast<bool>(line >> tunerMutes);
+        } else if (key == "record.directory") {
+            read = readQuotedValue(line, preferences.recordingDirectory);
+        } else if (key == "network.port") {
+            read = static_cast<bool>(line >> preferences.preferredUdpPort);
+        } else if (key == "network.automatic_mapping") {
+            read = static_cast<bool>(line >> automaticMapping);
+        } else if (key == "network.latency_mode") {
+            read = static_cast<bool>(line >> preferences.latencyMode);
         }
         if (!read) {
             return false;
         }
     }
-    if (tunerMutes != 0 && tunerMutes != 1) {
+    if ((tunerMutes != 0 && tunerMutes != 1)
+        || (automaticMapping != 0 && automaticMapping != 1)) {
         return false;
     }
     preferences.tunerMutesInstrument = tunerMutes == 1;
+    preferences.automaticPortMapping = automaticMapping == 1;
     return valid(preferences);
 }
 
@@ -184,7 +206,12 @@ void write(std::ostream& output, const UserPreferences& preferences) {
            << "room.remote.instrument.gain " << preferences.remoteInstrumentGain << '\n'
            << "room.remote.voice.gain " << preferences.remoteVoiceGain << '\n'
            << "tuner.mutes_instrument "
-           << static_cast<int>(preferences.tunerMutesInstrument) << '\n';
+           << static_cast<int>(preferences.tunerMutesInstrument) << '\n'
+           << "record.directory " << std::quoted(preferences.recordingDirectory) << '\n'
+           << "network.port " << preferences.preferredUdpPort << '\n'
+           << "network.automatic_mapping "
+           << static_cast<int>(preferences.automaticPortMapping) << '\n'
+           << "network.latency_mode " << preferences.latencyMode << '\n';
 }
 
 PreferencesSaveResult replaceFile(

@@ -74,6 +74,14 @@ public:
     // Control thread only; the producer and consumer must both be stopped.
     void reset() noexcept;
 
+    // Control thread only, with both sides stopped. Retunes how much latency
+    // the buffer is willing to accumulate. Out-of-range values are ignored so a
+    // bad preference cannot break playout.
+    void configureDepth(
+        std::size_t minimumPackets,
+        std::size_t maximumPackets,
+        double jitterSafetyFactor) noexcept;
+
     [[nodiscard]] std::size_t packetFrames() const noexcept { return packetFrames_; }
 
     // Total frames currently held between the network and the speaker, which is
@@ -118,9 +126,9 @@ private:
     const std::size_t packetFrames_;
     const std::size_t slotCount_;
     const std::size_t slotMask_;
-    const std::size_t minimumDepthPackets_;
-    const std::size_t maximumDepthPackets_;
-    const double jitterSafetyFactor_;
+    std::size_t minimumDepthPackets_;
+    std::size_t maximumDepthPackets_;
+    double jitterSafetyFactor_;
     const std::uint32_t shrinkHoldPackets_;
     const double packetDurationMicroseconds_;
 

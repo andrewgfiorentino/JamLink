@@ -5,8 +5,10 @@
 #include <QByteArray>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QGuiApplication>
 #include <QStandardPaths>
+#include <QUrl>
 
 #include <algorithm>
 #include <cmath>
@@ -170,6 +172,110 @@ void AppController::applyTunerMute() {
         tunerActive_ && preferences_.tunerMutesInstrument);
 }
 
+QString AppController::recordingDirectory() const {
+    if (!preferences_.recordingDirectory.empty()) {
+        return QString::fromStdString(preferences_.recordingDirectory);
+    }
+    return QString::fromStdWString(defaultRecordingDirectory().wstring());
+}
+
+void AppController::setRecordingDirectory(const QString& directory) {
+    const std::string chosen = directory.trimmed().toStdString();
+    if (preferences_.recordingDirectory == chosen) {
+        return;
+    }
+    preferences_.recordingDirectory = chosen;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+std::filesystem::path AppController::defaultRecordingDirectory() const {
+    const QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    if (music.isEmpty()) {
+        return store_.path().parent_path() / "Recordings";
+    }
+    return std::filesystem::path(music.toStdWString()) / L"JamLink";
+}
+
+void AppController::openRecordingFolder() {
+    std::error_code error;
+    std::filesystem::create_directories(
+        std::filesystem::path(recordingDirectory().toStdWString()), error);
+    static_cast<void>(QDesktopServices::openUrl(
+        QUrl::fromLocalFile(recordingDirectory())));
+}
+
+int AppController::preferredUdpPort() const noexcept {
+    return static_cast<int>(preferences_.preferredUdpPort);
+}
+
+void AppController::setPreferredUdpPort(int port) {
+    // Zero means "ask the operating system", which is the right default. Ports
+    // below 1024 are privileged and would fail to bind.
+    const auto bounded = static_cast<std::uint32_t>(
+        port <= 0 ? 0 : std::clamp(port, 1'024, 65'535));
+    if (preferences_.preferredUdpPort == bounded) {
+        return;
+    }
+    preferences_.preferredUdpPort = bounded;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+bool AppController::automaticRouterMapping() const noexcept {
+    return preferences_.automaticPortMapping;
+}
+
+void AppController::setAutomaticRouterMapping(bool enabled) {
+    if (preferences_.automaticPortMapping == enabled) {
+        return;
+    }
+    preferences_.automaticPortMapping = enabled;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+int AppController::latencyMode() const noexcept {
+    return static_cast<int>(preferences_.latencyMode);
+}
+
+void AppController::setLatencyMode(int mode) {
+    const auto bounded = static_cast<std::uint32_t>(std::clamp(mode, 0, 2));
+    if (preferences_.latencyMode == bounded) {
+        return;
+    }
+    preferences_.latencyMode = bounded;
+    if (peerTransport_) {
+        peerTransport_->setLatencyPreference(
+            static_cast<jamlink::network::LatencyPreference>(bounded));
+    }
+    scheduleSave();
+    emit settingsChanged();
+}
+
+QString AppController::latencyModeDetail() const {
+    switch (preferences_.latencyMode) {
+    case 0U:
+        return QStringLiteral(
+            "Smallest receive buffer. Best on a good wired path; a rough "
+            "network will be audible as dropouts.");
+    case 2U:
+        return QStringLiteral(
+            "Largest receive buffer. Rides out an unstable network, at delay "
+            "that eventually makes playing in time impossible.");
+    default:
+        return QStringLiteral(
+            "Follows measured jitter and keeps the buffer only as deep as the "
+            "network actually needs.");
+    }
+}
+
+QString AppController::applicationVersion() const {
+    return QStringLiteral(JAMLINK_VERSION_STRING);
+}
+
+QString AppController::qtVersion() const { return QStringLiteral(QT_VERSION_STR); }
+
 bool AppController::recording() const noexcept { return recorderTelemetry_.recording; }
 
 QString AppController::recordingElapsed() const {
@@ -213,10 +319,7 @@ void AppController::toggleRecording() {
         return;
     }
 
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
-    const std::filesystem::path directory = root.isEmpty()
-        ? store_.path().parent_path() / "Recordings"
-        : std::filesystem::path(root.toStdWString()) / L"JamLink";
+    const std::filesystem::path directory(recordingDirectory().toStdWString());
     // A sortable, human-readable folder per take.
     const QString name = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyy-MM-dd HH-mm-ss"));
@@ -716,7 +819,11 @@ void AppController::hostSession() {
         emit setupChanged();
         return;
     }
-    const std::string invite = transport->host();
+    transport->setLatencyPreference(
+        static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
+    const std::string invite = transport->host(
+        static_cast<std::uint16_t>(preferences_.preferredUdpPort),
+        preferences_.automaticPortMapping);
     peerTelemetry_ = transport->telemetry();
     if (invite.empty()) {
         setupMessage_ = peerStateText(peerTelemetry_.state);
@@ -753,6 +860,10 @@ void AppController::joinSession(const QString& inviteCode) {
     }
     leaveSession();
     auto transport = jamlink::network::createPlatformPeerAudioTransport();
+    if (transport) {
+        transport->setLatencyPreference(
+            static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
+    }
     if (!transport || !transport->join(inviteCode.trimmed().toStdString())) {
         if (transport) {
             peerTelemetry_ = transport->telemetry();

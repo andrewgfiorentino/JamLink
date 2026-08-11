@@ -29,7 +29,8 @@ Item {
                 level: 0.7
             }
             Text {
-                text: "JAM"
+                anchors.verticalCenter: parent.verticalCenter
+                text: "JamLink"
                 color: "#f2f4f5"
                 font.family: "Segoe UI Variable Display"
                 font.pixelSize: 20

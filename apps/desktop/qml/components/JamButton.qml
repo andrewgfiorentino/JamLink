@@ -19,7 +19,7 @@ Button {
     font.weight: Font.Medium
 
     background: Rectangle {
-        radius: 7
+        radius: 10
         border.width: control.primary ? 0 : 1
         border.color: control.activeFocus ? "#8b56df" : "#313b42"
         gradient: control.primary && control.enabled ? control.primaryGradient : null

@@ -27,6 +27,15 @@ enum class PeerConnectionState : std::uint8_t {
 // a listener can turn one down without the other, and so speech-oriented
 // processing can never be applied to an instrument. The transport carries the
 // identifier on the wire, so more streams can be added without a redesign.
+// How much receive buffering the user is willing to trade for tolerance of a
+// rough network. Lowest is for a good local path; MostStable survives more
+// jitter at the cost of latency that eventually stops being playable.
+enum class LatencyPreference : std::uint8_t {
+    Lowest = 0U,
+    Balanced = 1U,
+    MostStable = 2U
+};
+
 enum class AudioStreamId : std::uint8_t {
     Instrument = 0U,
     Voice = 1U
@@ -100,6 +109,8 @@ public:
     // How loudly this peer hears one of the remote streams.
     virtual void setRemoteStreamGain(AudioStreamId stream, float gain) noexcept = 0;
     virtual void setRemoteStreamMuted(AudioStreamId stream, bool muted) noexcept = 0;
+    // Applies while stopped; the next room uses it.
+    virtual void setLatencyPreference(LatencyPreference preference) noexcept = 0;
 
     [[nodiscard]] virtual std::string inviteCode() const = 0;
     [[nodiscard]] virtual std::uint16_t localPort() const noexcept = 0;

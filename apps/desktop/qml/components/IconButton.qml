@@ -12,7 +12,7 @@ Button {
     hoverEnabled: true
 
     background: Rectangle {
-        radius: 8
+        radius: 10
         color: control.down ? "#202a31" : control.hovered ? "#172027" : "transparent"
         border.color: control.activeFocus ? "#8b56df" : "transparent"
     }

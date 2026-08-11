@@ -743,6 +743,27 @@ public:
         remoteGain_[streamIndex(stream)].setMuted(muted);
     }
 
+    void setLatencyPreference(LatencyPreference preference) noexcept override {
+        // Minimum depth sets the floor a musician always pays; the maximum is
+        // the point past which playing together is no longer realistic and the
+        // connection grade should be saying so instead.
+        std::size_t minimumPackets = 2U;
+        std::size_t maximumPackets = 32U;
+        double safety = 2.5;
+        if (preference == LatencyPreference::Lowest) {
+            minimumPackets = 1U;
+            maximumPackets = 12U;
+            safety = 1.75;
+        } else if (preference == LatencyPreference::MostStable) {
+            minimumPackets = 4U;
+            maximumPackets = 48U;
+            safety = 3.5;
+        }
+        for (auto& receiver : receivers_) {
+            receiver.configureDepth(minimumPackets, maximumPackets, safety);
+        }
+    }
+
     [[nodiscard]] std::string inviteCode() const override { return inviteCode_; }
     [[nodiscard]] std::uint16_t localPort() const noexcept override { return localPort_; }
 

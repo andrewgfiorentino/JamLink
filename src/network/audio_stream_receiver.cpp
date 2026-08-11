@@ -553,6 +553,23 @@ std::uint32_t AudioStreamReceiver::bufferedFrames() const noexcept {
     return static_cast<std::uint32_t>(static_cast<std::size_t>(depth) * packetFrames_);
 }
 
+void AudioStreamReceiver::configureDepth(
+    std::size_t minimumPackets,
+    std::size_t maximumPackets,
+    double jitterSafetyFactor) noexcept {
+    if (minimumPackets == 0U || minimumPackets > maximumPackets
+        || maximumPackets * 2U >= slotCount_
+        || !(jitterSafetyFactor >= 1.0) || !(jitterSafetyFactor <= 16.0)) {
+        return;
+    }
+    minimumDepthPackets_ = minimumPackets;
+    maximumDepthPackets_ = maximumPackets;
+    jitterSafetyFactor_ = jitterSafetyFactor;
+    producerTarget_ = minimumPackets;
+    targetPackets_.store(
+        static_cast<std::uint32_t>(minimumPackets), std::memory_order_relaxed);
+}
+
 void AudioStreamReceiver::reset() noexcept {
     for (Slot& slot : slots_) {
         slot.stamp.store(0U, std::memory_order_relaxed);

@@ -73,6 +73,14 @@ class AppController final : public QObject {
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
 
+    Q_PROPERTY(QString recordingDirectory READ recordingDirectory WRITE setRecordingDirectory NOTIFY settingsChanged)
+    Q_PROPERTY(int preferredUdpPort READ preferredUdpPort WRITE setPreferredUdpPort NOTIFY settingsChanged)
+    Q_PROPERTY(bool automaticRouterMapping READ automaticRouterMapping WRITE setAutomaticRouterMapping NOTIFY settingsChanged)
+    Q_PROPERTY(int latencyMode READ latencyMode WRITE setLatencyMode NOTIFY settingsChanged)
+    Q_PROPERTY(QString latencyModeDetail READ latencyModeDetail NOTIFY settingsChanged)
+    Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
+    Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
+
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingChanged)
     Q_PROPERTY(QString recordingMessage READ recordingMessage NOTIFY recordingChanged)
@@ -169,6 +177,18 @@ public:
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
 
+    [[nodiscard]] QString recordingDirectory() const;
+    void setRecordingDirectory(const QString& directory);
+    [[nodiscard]] int preferredUdpPort() const noexcept;
+    void setPreferredUdpPort(int port);
+    [[nodiscard]] bool automaticRouterMapping() const noexcept;
+    void setAutomaticRouterMapping(bool enabled);
+    [[nodiscard]] int latencyMode() const noexcept;
+    void setLatencyMode(int mode);
+    [[nodiscard]] QString latencyModeDetail() const;
+    [[nodiscard]] QString applicationVersion() const;
+    [[nodiscard]] QString qtVersion() const;
+
     [[nodiscard]] bool recording() const noexcept;
     [[nodiscard]] QString recordingElapsed() const;
     [[nodiscard]] QString recordingMessage() const;
@@ -200,6 +220,7 @@ public:
     Q_INVOKABLE void leaveSession();
     Q_INVOKABLE void copyInvite();
     Q_INVOKABLE void toggleRecording();
+    Q_INVOKABLE void openRecordingFolder();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
     Q_INVOKABLE void persistNow();
 
@@ -210,6 +231,7 @@ signals:
     void roomChanged();
     void tunerChanged();
     void recordingChanged();
+    void settingsChanged();
 
 private:
     struct DeviceOption final {
@@ -257,6 +279,7 @@ private:
         float& stored,
         double gain);
     void applyTunerMute();
+    [[nodiscard]] std::filesystem::path defaultRecordingDirectory() const;
 
     static constexpr std::size_t instrumentStream =
         static_cast<std::size_t>(jamlink::network::AudioStreamId::Instrument);
