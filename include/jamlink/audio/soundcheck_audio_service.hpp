@@ -3,8 +3,10 @@
 #pragma once
 
 #include "jamlink/audio/instrument_tuner.hpp"
+#include "jamlink/record/session_recorder.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -85,6 +87,15 @@ public:
     virtual void setTunerEnabled(bool enabled) noexcept = 0;
     // Control-thread only. Analyses the most recent instrument window.
     [[nodiscard]] virtual TunerReading tunerReading() = 0;
+
+    // Control-thread only. Recording taps the same points the mixer uses and
+    // hands frames to a disk worker; the callback never touches the filesystem.
+    [[nodiscard]] virtual bool startRecording(
+        const std::filesystem::path& directory,
+        const std::string& sessionName) = 0;
+    virtual void stopRecording() noexcept = 0;
+    [[nodiscard]] virtual jamlink::record::RecorderTelemetry recorderTelemetry()
+        const noexcept = 0;
     // Control-thread only; processing must be stopped while changing this
     // pointer. A null exchange is the enforced Private Soundcheck state.
     virtual void setPeerAudioExchange(

@@ -642,6 +642,23 @@ public:
         return tuner_.analyse();
     }
 
+    [[nodiscard]] bool startRecording(
+        const std::filesystem::path& directory,
+        const std::string& sessionName) override {
+        const std::uint32_t rate = outputSampleRate_.load(std::memory_order_relaxed);
+        if (rate == 0U) {
+            return false;
+        }
+        return recorder_.start(directory, sessionName, rate);
+    }
+
+    void stopRecording() noexcept override { recorder_.stop(); }
+
+    [[nodiscard]] jamlink::record::RecorderTelemetry recorderTelemetry()
+        const noexcept override {
+        return recorder_.telemetry();
+    }
+
     void setPeerAudioExchange(
         jamlink::network::IPeerAudioExchange* exchange) noexcept override {
         peerExchange_ = exchange;
@@ -929,6 +946,21 @@ private:
         static_cast<void>(voiceBuffer.read(
             std::span<float>(voiceScratch.data(), frames)));
         std::fill(remoteScratch.begin(), remoteScratch.begin() + frames, 0.0F);
+
+        // Recording taps the sources, not the mix, so the take stays separable.
+        // Every track advances by the same frame count on every callback, with
+        // silence where a source is absent, which keeps the files aligned to a
+        // single timeline.
+        const bool capturing = recorder_.recording();
+        if (capturing) {
+            recorder_.write(
+                jamlink::record::RecordTrack::LocalInstrument,
+                std::span<const float>(instrumentScratch.data(), frames));
+            recorder_.write(
+                jamlink::record::RecordTrack::LocalVoice,
+                std::span<const float>(voiceScratch.data(), frames));
+        }
+
         if (peerExchange_ != nullptr) {
             // Instrument and voice travel as independent streams, so each has
             // its own receive buffer and neither is summed before transmission.
@@ -974,7 +1006,23 @@ private:
                 for (UINT32 frame = 0U; frame < frames; ++frame) {
                     remoteScratch[frame] += remoteStreamScratch[frame];
                 }
+                if (capturing) {
+                    recorder_.write(
+                        index == 0U
+                            ? jamlink::record::RecordTrack::RemoteInstrument
+                            : jamlink::record::RecordTrack::RemoteVoice,
+                        std::span<const float>(remoteStreamScratch.data(), frames));
+                }
             }
+        } else if (capturing) {
+            // No room, so the friend's tracks record silence rather than
+            // falling behind and shifting the timeline.
+            recorder_.write(
+                jamlink::record::RecordTrack::RemoteInstrument,
+                std::span<const float>(remoteScratch.data(), frames));
+            recorder_.write(
+                jamlink::record::RecordTrack::RemoteVoice,
+                std::span<const float>(remoteScratch.data(), frames));
         }
 
         BYTE* data = nullptr;
@@ -1059,6 +1107,7 @@ private:
     std::atomic<std::uint32_t> tunerEnabled_{0U};
     std::atomic<std::int32_t> nativeError_{0};
     InstrumentTuner tuner_;
+    jamlink::record::SessionRecorder recorder_;
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
 };
 

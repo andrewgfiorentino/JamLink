@@ -9,7 +9,10 @@
 - Independent instrument and voice network streams, each with its own sequence space, receive buffer, remote level, remote mute, and telemetry.
 - Connection quality summary that separates the measured round trip and receive buffer depth from the estimated one-way delay.
 - Peer transport tests for packet reflection, malformed datagram flooding, stream independence, and leave/rejoin key re-derivation.
-- Room screen visual capture test.
+- Chromatic tuner using the McLeod normalised square difference function, tapped off the instrument input so it adds no latency to the monitored or transmitted path, with a tuner mute that silences the instrument to the room while voice keeps flowing.
+- One-button recording writing four sample-aligned 32-bit float WAV tracks from a dedicated disk worker, with periodic header updates so a file left by a crash is still playable.
+- Remote stream levels and the tuner mute preference now persist, and older preference files still restore.
+- Room and tuner screen visual capture tests.
 
 ### Changed
 

@@ -16,11 +16,13 @@ Version 0.2.0 is an early Windows 11 x64 test build, not a production release. T
 - independent instrument and voice streams, each with its own receive buffer and its own remote level and mute, so one can be turned down without the other;
 - an adaptive receive jitter buffer with pitch-synchronous packet-loss concealment and bounded latency growth;
 - room mute, packet counters, per-stream meters, and a connection summary that separates measured round trip from estimated one-way delay;
+- a chromatic tuner tapped off the instrument input, with a tuner mute that silences the instrument to the room while voice keeps flowing;
+- one-button recording that writes four sample-aligned 32-bit float WAV tracks — your instrument, your voice, and each of your friend's streams — from a dedicated disk worker;
 - a self-contained Windows ZIP, including its exact JamLink source archive, produced by `scripts/package_windows.ps1`.
 
 The invite system is functional, not a visual placeholder. Automated tests create a host and guest on real loopback UDP sockets, complete the encrypted handshake, exchange nonzero audio on both streams in both directions, confirm that muting one stream leaves the other audible, reflect the host's own packets back at it from its pinned endpoint, and flood a live session with malformed datagrams. A development-machine automation also opened a real Focusrite WASAPI combination. Those checks are not live-user, cross-home-network, subjective, or hardware-compatibility validation.
 
-The jitter buffer and concealment are measured against a deterministic impairment model in `tests/jamlink_network_tests.cpp`, not against a real Internet path. Over one virtual hour at 1.1% channel loss with 25 ms latency, 8 ms jitter, bursts, and reordering, concealment tracked real loss at 0.87% and receive depth peaked at 65 ms. Isolated-loss concealment measured 14.8 dB below zero fill.
+The jitter buffer and concealment are measured against a deterministic impairment model in `tests/jamlink_network_tests.cpp`, not against a real Internet path. Over one virtual hour at 1.1% channel loss with 25 ms latency, 8 ms jitter, bursts, and reordering, concealment tracked real loss at 0.87% and receive depth peaked at 65 ms. Isolated-loss concealment measured 14.8 dB below zero fill. The tuner measures within 0.16 cents from a 31 Hz bass fundamental to a 1319 Hz fretted guitar note, including when the fundamental is missing entirely.
 
 Read [TONIGHT_TEST.md](TONIGHT_TEST.md) before testing across two homes. The most important limitation is that this build has no relay: UPnP or manual UDP forwarding may be required, and carrier-grade or symmetric NAT can still prevent connection. Sending instrument and voice separately also roughly doubles upstream bandwidth to about 1.6 Mbit/s, because there is still no codec.
 

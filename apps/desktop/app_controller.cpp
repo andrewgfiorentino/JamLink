@@ -4,7 +4,9 @@
 
 #include <QByteArray>
 #include <QClipboard>
+#include <QDateTime>
 #include <QGuiApplication>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <cmath>
@@ -142,14 +144,17 @@ void AppController::setTunerActive(bool active) {
     emit tunerChanged();
 }
 
-bool AppController::tunerMutesInstrument() const noexcept { return tunerMutesInstrument_; }
+bool AppController::tunerMutesInstrument() const noexcept {
+    return preferences_.tunerMutesInstrument;
+}
 
 void AppController::setTunerMutesInstrument(bool muted) {
-    if (tunerMutesInstrument_ == muted) {
+    if (preferences_.tunerMutesInstrument == muted) {
         return;
     }
-    tunerMutesInstrument_ = muted;
+    preferences_.tunerMutesInstrument = muted;
     applyTunerMute();
+    scheduleSave();
     emit tunerChanged();
 }
 
@@ -162,7 +167,67 @@ void AppController::applyTunerMute() {
     }
     peerTransport_->setLocalStreamMuted(
         jamlink::network::AudioStreamId::Instrument,
-        tunerActive_ && tunerMutesInstrument_);
+        tunerActive_ && preferences_.tunerMutesInstrument);
+}
+
+bool AppController::recording() const noexcept { return recorderTelemetry_.recording; }
+
+QString AppController::recordingElapsed() const {
+    const std::uint32_t seconds = recorderTelemetry_.elapsedSeconds;
+    return QStringLiteral("%1:%2")
+        .arg(seconds / 60U)
+        .arg(seconds % 60U, 2, 10, QLatin1Char('0'));
+}
+
+QString AppController::recordingMessage() const {
+    if (recorderTelemetry_.failed) {
+        return QStringLiteral("Recording could not be written to disk");
+    }
+    if (!recorderTelemetry_.recording) {
+        return recordingLocation_.isEmpty()
+            ? QStringLiteral("Records your parts and your friend's separately")
+            : QStringLiteral("Saved to %1").arg(recordingLocation_);
+    }
+    if (recorderTelemetry_.droppedFrames > 0U) {
+        // Never quietly ship a take with holes in it.
+        return QStringLiteral("Recording · disk fell behind, this take has gaps");
+    }
+    return QStringLiteral("Recording · 4 separate tracks");
+}
+
+QString AppController::recordingLocation() const { return recordingLocation_; }
+
+void AppController::toggleRecording() {
+    if (visualFixture_ || !audioService_) {
+        return;
+    }
+    if (recorderTelemetry_.recording) {
+        audioService_->stopRecording();
+        recorderTelemetry_ = audioService_->recorderTelemetry();
+        emit recordingChanged();
+        return;
+    }
+    if (!audioActive()) {
+        setupMessage_ = QStringLiteral("Start the audio setup before recording");
+        emit setupChanged();
+        return;
+    }
+
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    const std::filesystem::path directory = root.isEmpty()
+        ? store_.path().parent_path() / "Recordings"
+        : std::filesystem::path(root.toStdWString()) / L"JamLink";
+    // A sortable, human-readable folder per take.
+    const QString name = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyy-MM-dd HH-mm-ss"));
+    if (!audioService_->startRecording(directory, name.toStdString())) {
+        setupMessage_ = QStringLiteral("Recording could not be started");
+        emit setupChanged();
+        return;
+    }
+    recordingLocation_ = QString::fromStdWString((directory / name.toStdWString()).wstring());
+    recorderTelemetry_ = audioService_->recorderTelemetry();
+    emit recordingChanged();
 }
 
 bool AppController::tunerDetected() const noexcept { return tunerReading_.detected; }
@@ -429,17 +494,22 @@ double AppController::remoteVoiceLevel() const noexcept {
     return peerTelemetry_.streams[voiceStream].peak;
 }
 
-double AppController::remoteInstrumentGain() const noexcept { return remoteInstrumentGain_; }
-double AppController::remoteVoiceGain() const noexcept { return remoteVoiceGain_; }
+double AppController::remoteInstrumentGain() const noexcept {
+    return static_cast<double>(preferences_.remoteInstrumentGain);
+}
+double AppController::remoteVoiceGain() const noexcept {
+    return static_cast<double>(preferences_.remoteVoiceGain);
+}
 bool AppController::remoteInstrumentMuted() const noexcept { return remoteInstrumentMuted_; }
 bool AppController::remoteVoiceMuted() const noexcept { return remoteVoiceMuted_; }
 
 void AppController::setRemoteInstrumentGain(double gain) {
     applyRemoteStream(
-        jamlink::network::AudioStreamId::Instrument, remoteInstrumentGain_, gain);
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain, gain);
 }
 void AppController::setRemoteVoiceGain(double gain) {
-    applyRemoteStream(jamlink::network::AudioStreamId::Voice, remoteVoiceGain_, gain);
+    applyRemoteStream(
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain, gain);
 }
 void AppController::setRemoteInstrumentMuted(bool muted) {
     if (remoteInstrumentMuted_ == muted) {
@@ -465,16 +535,19 @@ void AppController::setRemoteVoiceMuted(bool muted) {
 
 void AppController::applyRemoteStream(
     jamlink::network::AudioStreamId stream,
-    double& stored,
+    float& stored,
     double gain) {
-    const double bounded = std::clamp(gain, 0.0, 1.0);
-    if (std::abs(stored - bounded) < 0.0005) {
+    const auto bounded = static_cast<float>(std::clamp(gain, 0.0, 1.0));
+    if (std::abs(stored - bounded) < 0.0005F) {
         return;
     }
     stored = bounded;
     if (peerTransport_) {
-        peerTransport_->setRemoteStreamGain(stream, static_cast<float>(bounded));
+        peerTransport_->setRemoteStreamGain(stream, bounded);
     }
+    // How loud a friend sits in the mix is exactly the kind of thing worth
+    // remembering between sessions.
+    scheduleSave();
     emit roomChanged();
 }
 
@@ -655,10 +728,9 @@ void AppController::hostSession() {
     // Carry the listener's remote mix preferences into the new session rather
     // than silently resetting them on every join.
     transport->setRemoteStreamGain(
-        jamlink::network::AudioStreamId::Instrument,
-        static_cast<float>(remoteInstrumentGain_));
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain);
     transport->setRemoteStreamGain(
-        jamlink::network::AudioStreamId::Voice, static_cast<float>(remoteVoiceGain_));
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain);
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
     transport->setRemoteStreamMuted(
@@ -696,10 +768,9 @@ void AppController::joinSession(const QString& inviteCode) {
     // Carry the listener's remote mix preferences into the new session rather
     // than silently resetting them on every join.
     transport->setRemoteStreamGain(
-        jamlink::network::AudioStreamId::Instrument,
-        static_cast<float>(remoteInstrumentGain_));
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain);
     transport->setRemoteStreamGain(
-        jamlink::network::AudioStreamId::Voice, static_cast<float>(remoteVoiceGain_));
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain);
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
     transport->setRemoteStreamMuted(
@@ -1058,6 +1129,14 @@ void AppController::pollAudioTelemetry() {
     if (tunerActive_) {
         tunerReading_ = audioService_->tunerReading();
         emit tunerChanged();
+    }
+    const auto previousRecorder = recorderTelemetry_;
+    recorderTelemetry_ = audioService_->recorderTelemetry();
+    if (previousRecorder.recording != recorderTelemetry_.recording
+        || previousRecorder.elapsedSeconds != recorderTelemetry_.elapsedSeconds
+        || previousRecorder.failed != recorderTelemetry_.failed
+        || (previousRecorder.droppedFrames == 0U) != (recorderTelemetry_.droppedFrames == 0U)) {
+        emit recordingChanged();
     }
     emit setupChanged();
 }

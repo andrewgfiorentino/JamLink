@@ -310,6 +310,69 @@ Item {
             }
         }
 
+        // One button. The four separate tracks are an implementation detail the
+        // musician only meets afterwards, in the folder.
+        JamCard {
+            width: parent.width
+            height: 68
+
+            Row {
+                anchors.fill: parent
+                anchors.margins: 13
+                spacing: 12
+
+                Rectangle {
+                    id: recordDot
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 15
+                    height: 15
+                    radius: 8
+                    color: root.controller.recording ? "#e0473f" : "#3a444b"
+                    SequentialAnimation on opacity {
+                        running: root.controller.recording
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1.0; to: 0.35; duration: 700 }
+                        NumberAnimation { from: 0.35; to: 1.0; duration: 700 }
+                        onStopped: recordDot.opacity = 1.0
+                    }
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - recordDot.width - recordButton.width - 36
+                    spacing: 3
+                    Text {
+                        text: root.controller.recording
+                            ? "Recording " + root.controller.recordingElapsed
+                            : "Record this jam"
+                        color: root.controller.recording ? "#f2f4f5" : "#dfe3e5"
+                        font.family: "Segoe UI Variable Text"
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        width: parent.width
+                        text: root.controller.recordingMessage
+                        color: "#78838a"
+                        elide: Text.ElideRight
+                        font.family: "Segoe UI Variable Text"
+                        font.pixelSize: 9
+                    }
+                }
+                JamButton {
+                    id: recordButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 92
+                    height: 32
+                    text: root.controller.recording ? "Stop" : "Record"
+                    primary: !root.controller.recording
+                    enabled: root.controller.audioActive
+                    Accessible.name: root.controller.recording
+                        ? "Stop recording" : "Start recording"
+                    onClicked: root.controller.toggleRecording()
+                }
+            }
+        }
+
         JamCard {
             width: parent.width
             height: 84

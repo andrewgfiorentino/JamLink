@@ -29,6 +29,7 @@ add_library(jamlink_core STATIC
     src/control/readiness_tracker.cpp
     src/network/audio_stream_receiver.cpp
     src/preferences/preferences_store.cpp
+    src/record/session_recorder.cpp
 )
 
 add_library(JamLink::Core ALIAS jamlink_core)

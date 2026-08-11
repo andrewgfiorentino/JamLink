@@ -65,7 +65,11 @@ bool valid(const UserPreferences& preferences) noexcept {
         && preferences.instrumentMonitorGain >= 0.0F
         && preferences.instrumentMonitorGain <= 2.0F
         && preferences.voiceMonitorGain >= 0.0F
-        && preferences.voiceMonitorGain <= 2.0F;
+        && preferences.voiceMonitorGain <= 2.0F
+        && preferences.remoteInstrumentGain >= 0.0F
+        && preferences.remoteInstrumentGain <= 2.0F
+        && preferences.remoteVoiceGain >= 0.0F
+        && preferences.remoteVoiceGain <= 2.0F;
     const bool windowValid = preferences.window.width >= 532U
         && preferences.window.width <= 16'384U
         && preferences.window.height >= 480U
@@ -118,12 +122,34 @@ bool parse(std::istream& input, UserPreferences& preferences) {
     preferences.voiceMonitorEnabled = voiceEnabled == 1;
     preferences.window.hasPosition = hasPosition == 1;
 
+    // Optional trailing keys. Absent in files written by earlier builds, which
+    // must keep restoring rather than being discarded as corrupt. Unknown keys
+    // are still rejected.
+    int tunerMutes = preferences.tunerMutesInstrument ? 1 : 0;
     std::string trailing;
     while (std::getline(input, trailing)) {
-        if (!trailing.empty()) {
+        if (trailing.empty()) {
+            continue;
+        }
+        std::istringstream line(trailing);
+        std::string key;
+        line >> key;
+        bool read = false;
+        if (key == "room.remote.instrument.gain") {
+            read = static_cast<bool>(line >> preferences.remoteInstrumentGain);
+        } else if (key == "room.remote.voice.gain") {
+            read = static_cast<bool>(line >> preferences.remoteVoiceGain);
+        } else if (key == "tuner.mutes_instrument") {
+            read = static_cast<bool>(line >> tunerMutes);
+        }
+        if (!read) {
             return false;
         }
     }
+    if (tunerMutes != 0 && tunerMutes != 1) {
+        return false;
+    }
+    preferences.tunerMutesInstrument = tunerMutes == 1;
     return valid(preferences);
 }
 
@@ -154,7 +180,11 @@ void write(std::ostream& output, const UserPreferences& preferences) {
            << "window.y " << preferences.window.y << '\n'
            << "window.width " << preferences.window.width << '\n'
            << "window.height " << preferences.window.height << '\n'
-           << "window.has_position " << static_cast<int>(preferences.window.hasPosition) << '\n';
+           << "window.has_position " << static_cast<int>(preferences.window.hasPosition) << '\n'
+           << "room.remote.instrument.gain " << preferences.remoteInstrumentGain << '\n'
+           << "room.remote.voice.gain " << preferences.remoteVoiceGain << '\n'
+           << "tuner.mutes_instrument "
+           << static_cast<int>(preferences.tunerMutesInstrument) << '\n';
 }
 
 PreferencesSaveResult replaceFile(

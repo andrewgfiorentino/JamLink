@@ -30,6 +30,8 @@ This is an early Windows 11 x64 Internet test build for exactly two people. It u
 - In the Room, each of your friend's streams has its own level slider and switch, so you can turn their guitar down without turning their voice down.
 - The room switch at the bottom mutes or unmutes everything you send to your friend.
 - The connection line reports a grade, the measured round trip, and how much receive buffering is currently in use. One-way delay is an estimate derived from the round trip; the round trip and the buffer are measured.
+- **Tuner** is the slider icon in the header. Opening it stops your guitar reaching your friend while your microphone keeps working, so you can say "give me a second" and still be heard. Leaving the page always unmutes.
+- **Record** writes four separate WAV files: your instrument, your voice, and each of your friend's streams, all aligned to the same timeline. The folder is shown under the button, normally `Music\JamLink\<date time>`. If the card says the disk fell behind, that take has gaps in it.
 - Choose **Leave** before changing networks or closing the app.
 
 ## Important limits
@@ -38,7 +40,8 @@ This is an early Windows 11 x64 Internet test build for exactly two people. It u
 - There is no relay server. If the host is behind carrier-grade NAT, symmetric NAT, or a router/firewall that cannot accept a UDP mapping, the direct connection may fail even with a valid invite.
 - This test format is uncompressed 48 kHz mono PCM per stream. With guitar and microphone sent separately it uses roughly 1.6 Mbit/s upstream in each direction, about twice the previous combined build. There is no codec yet.
 - The receive path now has an adaptive jitter buffer and packet-loss concealment, but neither has been validated against a real Internet path between two homes. Both were measured only against a deterministic impairment model.
-- Chat, recording, tuner, echo cancellation, and speaker protection are not implemented.
+- Recording captures what arrives over the network, concealment and all. Pristine local masters exchanged after a take are a later feature.
+- Text chat, echo cancellation, and speaker protection are not implemented. Use headphones.
 - No live-user or cross-home-network validation had been performed before this build. The encrypted two-peer path was verified automatically on real loopback sockets, and the Windows device path was automatically opened on development hardware.
 
 If joining fails, record the exact room status, whether automatic router mapping was ready, the shown UDP port, and whether Windows Firewall permission was accepted.

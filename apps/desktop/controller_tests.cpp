@@ -21,6 +21,11 @@ public:
     void requestOutputTest() noexcept override {}
     void setTunerEnabled(bool) noexcept override {}
     [[nodiscard]] jamlink::audio::TunerReading tunerReading() override { return {}; }
+    [[nodiscard]] bool startRecording(
+        const std::filesystem::path&, const std::string&) override { return false; }
+    void stopRecording() noexcept override {}
+    [[nodiscard]] jamlink::record::RecorderTelemetry recorderTelemetry()
+        const noexcept override { return {}; }
     void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return {jamlink::audio::SoundcheckAudioState::NoEndpoints};
@@ -64,6 +69,17 @@ public:
     void requestOutputTest() noexcept override { ++outputTestCount; }
     void setTunerEnabled(bool enabled) noexcept override { tunerEnabled = enabled; }
     [[nodiscard]] jamlink::audio::TunerReading tunerReading() override { return tuner; }
+    [[nodiscard]] bool startRecording(
+        const std::filesystem::path& directory, const std::string& name) override {
+        lastRecordingDirectory = directory;
+        lastRecordingName = name;
+        ++recordingStartCount;
+        recorder.recording = true;
+        return true;
+    }
+    void stopRecording() noexcept override { recorder.recording = false; }
+    [[nodiscard]] jamlink::record::RecorderTelemetry recorderTelemetry()
+        const noexcept override { return recorder; }
     void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return current;
@@ -72,6 +88,10 @@ public:
     jamlink::audio::SoundcheckAudioConfiguration lastConfiguration;
     jamlink::audio::SoundcheckAudioTelemetry current;
     jamlink::audio::TunerReading tuner;
+    jamlink::record::RecorderTelemetry recorder;
+    std::filesystem::path lastRecordingDirectory;
+    std::string lastRecordingName;
+    std::size_t recordingStartCount{0U};
     bool tunerEnabled{false};
     std::size_t startCount{0U};
     std::size_t outputTestCount{0U};
@@ -121,6 +141,11 @@ int main(int argc, char* argv[]) {
     first.setInstrumentMonitorGain(0.44);
     first.setVoiceMonitorGain(0.31);
     first.setVoiceMonitorEnabled(false);
+    // How loud a friend sits in the mix, and whether tuning mutes the room, are
+    // settings a user should only ever choose once.
+    first.setRemoteInstrumentGain(0.62);
+    first.setRemoteVoiceGain(0.88);
+    first.setTunerMutesInstrument(false);
     first.saveSoundcheck();
     passed = expect(first.allReady(), "explicit Sound Check save verifies current selections")
         && passed;
@@ -141,6 +166,11 @@ int main(int argc, char* argv[]) {
         && passed;
     passed = expect(near(second.voiceMonitorGain(), 0.31), "voice gain restores") && passed;
     passed = expect(!second.voiceMonitorEnabled(), "monitor mute restores") && passed;
+    passed = expect(near(second.remoteInstrumentGain(), 0.62), "remote instrument level restores")
+        && passed;
+    passed = expect(near(second.remoteVoiceGain(), 0.88), "remote voice level restores")
+        && passed;
+    passed = expect(!second.tunerMutesInstrument(), "tuner mute preference restores") && passed;
     passed = expect(second.hasPreferredWindowPosition(), "window placement flag restores")
         && passed;
     passed = expect(second.preferredWindowX() == 120 && second.preferredWindowY() == 80,
@@ -156,8 +186,11 @@ int main(int argc, char* argv[]) {
     // navigate away and stay silently muted to the room.
     auto tunerService = std::make_unique<DeterministicAudioService>();
     auto* tunerServiceView = tunerService.get();
+    // Its own preferences file, so this block does not inherit the tuner mute
+    // the persistence checks above deliberately turned off.
     jamlink::desktop::AppController tuner(
-        path, false, QStringLiteral("home"), 0U, 0U, nullptr, std::move(tunerService));
+        directory / "tuner.jlpf", false, QStringLiteral("home"), 0U, 0U, nullptr,
+        std::move(tunerService));
     passed = expect(!tuner.tunerActive(), "tuner starts inactive") && passed;
     passed = expect(!tunerServiceView->tunerEnabled, "instrument tap starts off") && passed;
     passed = expect(tuner.tunerMutesInstrument(),
@@ -179,6 +212,42 @@ int main(int argc, char* argv[]) {
         && passed;
     passed = expect(!tuner.tunerDetected(), "leaving the tuner clears the last reading")
         && passed;
+
+    // One button starts and stops a take, and it stays disabled until audio is
+    // actually running so a press can never produce an empty folder.
+    auto recordService = std::make_unique<DeterministicAudioService>();
+    auto* recordServiceView = recordService.get();
+    jamlink::desktop::AppController recorder(
+        directory / "record.jlpf", false, QStringLiteral("home"), 0U, 0U, nullptr,
+        std::move(recordService));
+    passed = expect(!recorder.recording(), "recording starts off") && passed;
+    recorder.toggleRecording();
+    passed = expect(!recorder.recording(),
+                    "record button does nothing before audio is running")
+        && passed;
+    passed = expect(recordServiceView->recordingStartCount == 0U,
+                    "a take is never opened without a running audio device")
+        && passed;
+
+    // Let the deferred audio start run, which is what the real app does a beat
+    // after launch.
+    QCoreApplication::processEvents();
+    passed = expect(recorder.audioActive(), "audio is running before the record test")
+        && passed;
+
+    recorder.toggleRecording();
+    passed = expect(recorder.recording(), "record button starts a take") && passed;
+    passed = expect(recordServiceView->recordingStartCount == 1U,
+                    "record button reaches the audio service")
+        && passed;
+    passed = expect(!recordServiceView->lastRecordingName.empty(),
+                    "each take gets its own named folder")
+        && passed;
+    passed = expect(recorder.recordingLocation().length() > 0,
+                    "the user is told where the take went")
+        && passed;
+    recorder.toggleRecording();
+    passed = expect(!recorder.recording(), "record button stops the take") && passed;
 
     auto stalePreferences = jamlink::preferences::PreferencesStore(path).load().preferences;
     stalePreferences.instrument.deviceId = "fixture:missing";

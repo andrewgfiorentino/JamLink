@@ -40,6 +40,13 @@ struct UserPreferences final {
     float voiceMonitorGain{0.55F};
     bool instrumentMonitorEnabled{false};
     bool voiceMonitorEnabled{false};
+    // How loudly this user hears each of a friend's streams, and whether the
+    // tuner silences the instrument to the room. Appended after the fields
+    // above and treated as optional on read, so a preferences file written by
+    // an earlier build still restores everything it did before.
+    float remoteInstrumentGain{1.0F};
+    float remoteVoiceGain{1.0F};
+    bool tunerMutesInstrument{true};
     WindowPlacement window;
 
     bool operator==(const UserPreferences&) const = default;

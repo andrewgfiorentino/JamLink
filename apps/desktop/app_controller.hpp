@@ -73,6 +73,11 @@ class AppController final : public QObject {
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
 
+    Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingMessage READ recordingMessage NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingLocation READ recordingLocation NOTIFY recordingChanged)
+
     Q_PROPERTY(bool tunerActive READ tunerActive WRITE setTunerActive NOTIFY tunerChanged)
     Q_PROPERTY(bool tunerMutesInstrument READ tunerMutesInstrument WRITE setTunerMutesInstrument NOTIFY tunerChanged)
     Q_PROPERTY(bool tunerDetected READ tunerDetected NOTIFY tunerChanged)
@@ -164,6 +169,11 @@ public:
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
 
+    [[nodiscard]] bool recording() const noexcept;
+    [[nodiscard]] QString recordingElapsed() const;
+    [[nodiscard]] QString recordingMessage() const;
+    [[nodiscard]] QString recordingLocation() const;
+
     [[nodiscard]] bool tunerActive() const noexcept;
     void setTunerActive(bool active);
     [[nodiscard]] bool tunerMutesInstrument() const noexcept;
@@ -189,6 +199,7 @@ public:
     Q_INVOKABLE void joinSession(const QString& inviteCode);
     Q_INVOKABLE void leaveSession();
     Q_INVOKABLE void copyInvite();
+    Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
     Q_INVOKABLE void persistNow();
 
@@ -198,6 +209,7 @@ signals:
     void saveMessageChanged();
     void roomChanged();
     void tunerChanged();
+    void recordingChanged();
 
 private:
     struct DeviceOption final {
@@ -242,7 +254,7 @@ private:
         jamlink::network::PeerConnectionState state);
     void applyRemoteStream(
         jamlink::network::AudioStreamId stream,
-        double& stored,
+        float& stored,
         double gain);
     void applyTunerMute();
 
@@ -270,13 +282,12 @@ private:
     jamlink::network::PeerTransportTelemetry peerTelemetry_;
     QString inviteCode_;
     bool sendMuted_{false};
-    double remoteInstrumentGain_{1.0};
-    double remoteVoiceGain_{1.0};
     bool remoteInstrumentMuted_{false};
     bool remoteVoiceMuted_{false};
     jamlink::audio::TunerReading tunerReading_;
     bool tunerActive_{false};
-    bool tunerMutesInstrument_{true};
+    jamlink::record::RecorderTelemetry recorderTelemetry_;
+    QString recordingLocation_;
 
     std::vector<DeviceOption> instrumentOptions_;
     std::vector<DeviceOption> voiceOptions_;
