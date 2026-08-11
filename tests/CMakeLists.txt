@@ -6,7 +6,9 @@ target_compile_features(jamlink_core_tests PRIVATE cxx_std_20)
 jamlink_set_warnings(jamlink_core_tests)
 
 add_test(NAME jamlink_core_tests COMMAND jamlink_core_tests)
-set_tests_properties(jamlink_core_tests PROPERTIES TIMEOUT 30)
+# Debug virtual-time drift simulations take about 25 seconds on the development
+# machine and can legitimately cross 30 seconds on a shared CI runner.
+set_tests_properties(jamlink_core_tests PROPERTIES TIMEOUT 90)
 
 add_executable(jamlink_network_tests jamlink_network_tests.cpp)
 target_link_libraries(jamlink_network_tests PRIVATE JamLink::Core)
