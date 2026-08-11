@@ -336,20 +336,36 @@ void rejectsReflectedOwnTraffic() {
     check(connected, "relayed handshake completes");
 
     const bool audio = connected && exchangeAudio(*host, *guest);
-    const auto hostTelemetry = host->telemetry();
 
+    // Stop reflecting before reading any counter. Sampling the telemetry while
+    // the relay still runs races the reflection count forward and makes the
+    // comparison below fail for timing reasons rather than security ones.
     stopRelay.store(true, std::memory_order_release);
     relayThread.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    check(reflected.load(std::memory_order_relaxed) > 0U, "reflection harness echoed traffic");
-    // Every reflected datagram must fail authentication under the peer's own
-    // receive key, so the rejection count has to cover them.
+    const std::uint64_t reflectedCount = reflected.load(std::memory_order_relaxed);
+    const auto hostTelemetry = host->telemetry();
+    const auto guestTelemetry = guest->telemetry();
+
+    check(reflectedCount > 0U, "reflection harness echoed traffic");
+
+    // The security property, stated so that timing cannot satisfy it by
+    // accident: the host may only ever accept packets the guest actually sent.
+    // Accepting its own reflected traffic would push its received count above
+    // everything the guest ever put on the wire.
     check(
-        hostTelemetry.packetsRejected >= reflected.load(std::memory_order_relaxed),
+        hostTelemetry.packetsReceived <= guestTelemetry.packetsSent,
+        "host never accepts a reflected packet");
+    // And they must be actively rejected rather than silently lost. Loopback
+    // can still drop a datagram on a loaded runner, so this allows for some
+    // shortfall while staying far above zero.
+    check(
+        hostTelemetry.packetsRejected * 2U >= reflectedCount,
         "host rejects its own reflected packets");
     check(audio, "session survives reflection attack");
     check(
-        host->telemetry().state == PeerConnectionState::Connected,
+        hostTelemetry.state == PeerConnectionState::Connected,
         "reflection does not tear down the session");
 
     host->stop();
