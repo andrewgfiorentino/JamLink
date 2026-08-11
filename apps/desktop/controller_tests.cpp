@@ -19,6 +19,8 @@ public:
     void stop() noexcept override {}
     void setMonitorControls(float, bool, float, bool) noexcept override {}
     void requestOutputTest() noexcept override {}
+    void setTunerEnabled(bool) noexcept override {}
+    [[nodiscard]] jamlink::audio::TunerReading tunerReading() override { return {}; }
     void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return {jamlink::audio::SoundcheckAudioState::NoEndpoints};
@@ -60,6 +62,8 @@ public:
         lastVoiceEnabled = voiceEnabled;
     }
     void requestOutputTest() noexcept override { ++outputTestCount; }
+    void setTunerEnabled(bool enabled) noexcept override { tunerEnabled = enabled; }
+    [[nodiscard]] jamlink::audio::TunerReading tunerReading() override { return tuner; }
     void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return current;
@@ -67,6 +71,8 @@ public:
 
     jamlink::audio::SoundcheckAudioConfiguration lastConfiguration;
     jamlink::audio::SoundcheckAudioTelemetry current;
+    jamlink::audio::TunerReading tuner;
+    bool tunerEnabled{false};
     std::size_t startCount{0U};
     std::size_t outputTestCount{0U};
     float lastInstrumentGain{0.0F};

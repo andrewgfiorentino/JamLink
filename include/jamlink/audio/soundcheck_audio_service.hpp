@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "jamlink/audio/instrument_tuner.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -78,6 +80,11 @@ public:
         float voiceGain,
         bool voiceEnabled) noexcept = 0;
     virtual void requestOutputTest() noexcept = 0;
+    // Taps the instrument input for pitch detection. The tap is a copy: the
+    // monitored signal path and its latency are unchanged either way.
+    virtual void setTunerEnabled(bool enabled) noexcept = 0;
+    // Control-thread only. Analyses the most recent instrument window.
+    [[nodiscard]] virtual TunerReading tunerReading() = 0;
     // Control-thread only; processing must be stopped while changing this
     // pointer. A null exchange is the enforced Private Soundcheck state.
     virtual void setPeerAudioExchange(

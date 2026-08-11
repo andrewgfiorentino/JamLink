@@ -631,6 +631,17 @@ public:
         testToneRequest_.fetch_add(1U, std::memory_order_release);
     }
 
+    void setTunerEnabled(bool enabled) noexcept override {
+        tunerEnabled_.store(enabled ? 1U : 0U, std::memory_order_release);
+    }
+
+    [[nodiscard]] TunerReading tunerReading() override {
+        if (tunerEnabled_.load(std::memory_order_acquire) == 0U) {
+            return {};
+        }
+        return tuner_.analyse();
+    }
+
     void setPeerAudioExchange(
         jamlink::network::IPeerAudioExchange* exchange) noexcept override {
         peerExchange_ = exchange;
@@ -782,11 +793,11 @@ private:
                     break;
                 case WAIT_OBJECT_0 + 1U:
                     keepRunning = processCapture(
-                        instrument, instrumentCapture, instrumentBuffer, instrumentPeak_);
+                        instrument, instrumentCapture, instrumentBuffer, instrumentPeak_, true);
                     break;
                 case WAIT_OBJECT_0 + 2U:
                     keepRunning = processCapture(
-                        voice, voiceCapture, voiceBuffer, voicePeak_);
+                        voice, voiceCapture, voiceBuffer, voicePeak_, false);
                     break;
                 case WAIT_OBJECT_0 + 3U:
                     keepRunning = processRender(
@@ -833,7 +844,8 @@ private:
         WasapiStream& stream,
         std::vector<float>& scratch,
         AsyncMonoResampler& destination,
-        RealtimeAtomicFloat& peakTarget) noexcept {
+        RealtimeAtomicFloat& peakTarget,
+        bool feedTuner) noexcept {
         UINT32 packetFrames = 0U;
         HRESULT result = stream.capture->GetNextPacketSize(&packetFrames);
         while (SUCCEEDED(result) && packetFrames != 0U) {
@@ -860,6 +872,13 @@ private:
                 peak = std::max(peak, std::abs(sample));
             }
             peakTarget.store(std::clamp(peak, 0.0F, 1.0F));
+            if (feedTuner && tunerEnabled_.load(std::memory_order_acquire) != 0U) {
+                // A copy taken at the input, before monitoring or transmission,
+                // so tuning never changes what is heard or sent.
+                tuner_.write(
+                    std::span<const float>(scratch.data(), frames),
+                    stream.format.sampleRate);
+            }
             static_cast<void>(destination.write(
                 std::span<const float>(scratch.data(), frames)));
             result = stream.capture->ReleaseBuffer(frames);
@@ -1037,7 +1056,9 @@ private:
     std::atomic<std::uint64_t> underruns_{0U};
     std::atomic<std::uint64_t> overruns_{0U};
     std::atomic<std::uint32_t> testToneRequest_{0U};
+    std::atomic<std::uint32_t> tunerEnabled_{0U};
     std::atomic<std::int32_t> nativeError_{0};
+    InstrumentTuner tuner_;
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
 };
 

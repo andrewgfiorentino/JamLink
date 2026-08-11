@@ -23,6 +23,7 @@ include(JamLinkWarnings)
 
 add_library(jamlink_core STATIC
     src/audio/audio_route_graph.cpp
+    src/audio/instrument_tuner.cpp
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
