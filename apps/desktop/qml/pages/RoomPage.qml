@@ -8,6 +8,7 @@ import "../components"
 Item {
     id: root
     required property AppController controller
+    property bool chatOpen: false
 
     Rectangle {
         id: header
@@ -23,16 +24,18 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
             Text {
-                text: "Private Room"
+                text: root.controller.peerConnected
+                    ? "Room with " + root.controller.remoteDisplayName
+                    : "Private Room"
                 color: "#f2f4f5"
-                font.family: "Segoe UI Variable Display"
+                font.family: "Segoe UI"
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
             }
             Text {
                 text: root.controller.roomStatus
                 color: root.controller.peerConnected ? "#44d86a" : "#929ba1"
-                font.family: "Segoe UI Variable Text"
+                font.family: "Segoe UI"
                 font.pixelSize: 10
             }
         }
@@ -41,6 +44,28 @@ Item {
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             spacing: 6
+            ProfileAvatar {
+                visible: root.controller.peerConnected
+                anchors.verticalCenter: parent.verticalCenter
+                width: visible ? 30 : 0
+                height: 30
+                avatarId: root.controller.remoteAvatarId
+                ringColor: "#42d97a"
+            }
+            JamButton {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 70
+                height: 32
+                text: root.controller.unreadChatCount > 0
+                    ? "Chat " + root.controller.unreadChatCount : "Chat"
+                enabled: root.controller.peerConnected
+                Accessible.name: "Open room chat"
+                onClicked: {
+                    root.chatOpen = !root.chatOpen
+                    if (root.chatOpen)
+                        root.controller.markChatRead()
+                }
+            }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 iconSource: Qt.resolvedUrl("../../assets/tune.svg")
@@ -49,7 +74,7 @@ Item {
             }
             JamButton {
                 anchors.verticalCenter: parent.verticalCenter
-                width: 84
+                width: 70
                 height: 32
                 text: "Leave"
                 enabled: root.controller.roomActive
@@ -99,12 +124,12 @@ Item {
                         text: !root.controller.roomActive
                             ? "No active private room"
                             : root.controller.peerConnected
-                            ? "Your friend is connected"
+                            ? root.controller.remoteDisplayName + " is connected"
                             : root.controller.inviteCode.length > 0
                                 ? "Send this one-time room code to your friend"
                                 : "Connecting to your friend's private room"
                         color: "#eef1f2"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                         font.weight: Font.Medium
                     }
@@ -156,7 +181,7 @@ Item {
                     color: root.controller.inviteCode.length === 0
                         || root.controller.automaticPortMapping ? "#7f8b91" : "#e4b352"
                     wrapMode: Text.WordWrap
-                    font.family: "Segoe UI Variable Text"
+                    font.family: "Segoe UI"
                     font.pixelSize: 9
                 }
             }
@@ -176,7 +201,7 @@ Item {
                         width: parent.width - latencyText.width
                         text: "WHAT YOU HEAR"
                         color: "#eef1f2"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                         font.weight: Font.Medium
                     }
@@ -186,7 +211,7 @@ Item {
                             ? root.controller.roundTripMilliseconds + " ms round trip"
                             : "Waiting"
                         color: root.controller.peerConnected ? "#43d96a" : "#7b858b"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                 }
@@ -196,12 +221,17 @@ Item {
                 Repeater {
                     model: [
                         {
-                            label: "Their guitar",
+                            label: root.controller.peerConnected
+                                ? root.controller.remoteDisplayName + " · "
+                                    + root.controller.remotePrimaryInstrument
+                                : "Their instrument",
                             icon: "music_note.svg",
                             tint: "#8b56df"
                         },
                         {
-                            label: "Their voice",
+                            label: root.controller.peerConnected
+                                ? root.controller.remoteDisplayName + " · voice"
+                                : "Their voice",
                             icon: "mic.svg",
                             tint: "#42d97a"
                         }
@@ -237,7 +267,7 @@ Item {
                             Text {
                                 text: streamRow.modelData.label
                                 color: streamRow.streamMuted ? "#7b858b" : "#cbd2d6"
-                                font.family: "Segoe UI Variable Text"
+                                font.family: "Segoe UI"
                                 font.pixelSize: 10
                             }
                             LevelBar {
@@ -296,7 +326,7 @@ Item {
                             ? "Your audio is muted to your friend"
                             : "Your guitar and microphone are being sent separately"
                         color: root.controller.sendMuted ? "#e4b352" : "#cbd2d6"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                     JamSwitch {
@@ -345,7 +375,7 @@ Item {
                             ? "Recording " + root.controller.recordingElapsed
                             : "Record this jam"
                         color: root.controller.recording ? "#f2f4f5" : "#dfe3e5"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                         font.weight: Font.Medium
                     }
@@ -354,7 +384,7 @@ Item {
                         text: root.controller.recordingMessage
                         color: "#78838a"
                         elide: Text.ElideRight
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 9
                     }
                 }
@@ -398,7 +428,7 @@ Item {
                         color: "#e7eaec"
                         wrapMode: Text.WordWrap
                         width: parent.width
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                         font.weight: Font.Medium
                     }
@@ -409,9 +439,170 @@ Item {
                         color: "#818c92"
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 9
                     }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: chatDrawer
+        z: 20
+        visible: root.chatOpen
+        anchors.top: header.bottom
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        width: Math.min(370, parent.width - 20)
+        color: "#0b1115"
+        border.color: "#303b42"
+        radius: 14
+
+        Rectangle {
+            id: chatHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 52
+            color: "transparent"
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 16
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Room Chat"
+                color: "#f2f4f5"
+                font.family: "Segoe UI"
+                font.pixelSize: 16
+                font.weight: Font.DemiBold
+            }
+            IconButton {
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                iconSource: Qt.resolvedUrl("../../assets/close.svg")
+                Accessible.name: "Close room chat"
+                onClicked: root.chatOpen = false
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: "#202a30"
+            }
+        }
+
+        ListView {
+            id: chatList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: chatHeader.bottom
+            anchors.bottom: composer.top
+            anchors.margins: 12
+            spacing: 8
+            clip: true
+            model: root.controller.chatMessages
+            delegate: Item {
+                id: chatEntry
+                required property var modelData
+                width: ListView.view.width
+                height: messageColumn.implicitHeight + 8
+                Column {
+                    id: messageColumn
+                    width: parent.width
+                    spacing: 3
+                    Row {
+                        visible: !chatEntry.modelData.system
+                        width: parent.width
+                        Text {
+                            width: parent.width - messageTime.width
+                            text: chatEntry.modelData.own
+                                ? "You" : chatEntry.modelData.sender
+                            color: chatEntry.modelData.own ? "#b993ff" : "#58db84"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            id: messageTime
+                            text: chatEntry.modelData.time
+                            color: "#68747b"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 8
+                        }
+                    }
+                    TextArea {
+                        width: parent.width
+                        text: chatEntry.modelData.text
+                        readOnly: true
+                        selectByMouse: true
+                        wrapMode: TextEdit.Wrap
+                        color: chatEntry.modelData.system ? "#778289" : "#dce1e4"
+                        font.family: "Segoe UI"
+                        font.pixelSize: chatEntry.modelData.system ? 9 : 10
+                        horizontalAlignment: chatEntry.modelData.system
+                            ? Text.AlignHCenter : Text.AlignLeft
+                        background: null
+                        padding: 0
+                    }
+                }
+            }
+            Connections {
+                target: root.controller
+                function onChatChanged() {
+                    chatList.positionViewAtEnd()
+                    if (root.chatOpen)
+                        root.controller.markChatRead()
+                }
+            }
+        }
+
+        Row {
+            id: composer
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 12
+            height: 62
+            spacing: 8
+            TextArea {
+                id: chatInput
+                width: parent.width - sendChatButton.width - 8
+                height: 54
+                placeholderText: "Message " + root.controller.remoteDisplayName
+                wrapMode: TextEdit.Wrap
+                color: "#edf0f2"
+                placeholderTextColor: "#68747b"
+                selectionColor: "#6938c5"
+                font.family: "Segoe UI"
+                font.pixelSize: 10
+                background: Rectangle {
+                    radius: 9
+                    color: "#151e23"
+                    border.color: chatInput.activeFocus ? "#8b56df" : "#2c373e"
+                }
+                Keys.onReturnPressed: event => {
+                    if ((event.modifiers & Qt.ShiftModifier) !== 0) {
+                        chatInput.insert(chatInput.cursorPosition, "\n")
+                    } else if (root.controller.sendChatMessage(chatInput.text)) {
+                        chatInput.clear()
+                    }
+                    event.accepted = true
+                }
+            }
+            JamButton {
+                id: sendChatButton
+                anchors.verticalCenter: parent.verticalCenter
+                width: 72
+                height: 34
+                primary: true
+                text: "Send"
+                enabled: root.controller.peerConnected && chatInput.text.trim().length > 0
+                Accessible.name: "Send room chat message"
+                onClicked: {
+                    if (root.controller.sendChatMessage(chatInput.text))
+                        chatInput.clear()
                 }
             }
         }

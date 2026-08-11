@@ -64,7 +64,8 @@ ApplicationWindow {
             ? soundCheckPage
             : window.controller.currentPage === "settings" ? settingsPage
             : window.controller.currentPage === "room" ? roomPage
-            : window.controller.currentPage === "tuner" ? tunerPage : homePage
+            : window.controller.currentPage === "tuner" ? tunerPage
+            : window.controller.currentPage === "profile" ? profilePage : homePage
     }
 
     Component { id: homePage; HomePage { controller: window.controller } }
@@ -72,4 +73,5 @@ ApplicationWindow {
     Component { id: soundCheckPage; SoundCheckPage { controller: window.controller } }
     Component { id: settingsPage; SettingsPage { controller: window.controller } }
     Component { id: tunerPage; TunerPage { controller: window.controller } }
+    Component { id: profilePage; ProfilePage { controller: window.controller } }
 }

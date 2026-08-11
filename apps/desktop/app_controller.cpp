@@ -6,9 +6,15 @@
 #include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
+#include <QImageReader>
+#include <QSaveFile>
 #include <QStandardPaths>
+#include <QUuid>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +34,47 @@ std::uint64_t appendHash(std::uint64_t hash, const QByteArray& bytes) noexcept {
     return hash;
 }
 
+QString boundedSingleLine(const QString& value, qsizetype maximum) {
+    QString result = value.normalized(QString::NormalizationForm_KC);
+    result.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    result.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    result = result.simplified();
+    return result.left(maximum);
+}
+
+QString normalizedHandle(const QString& value) {
+    QString source = value.trimmed().normalized(QString::NormalizationForm_KC);
+    if (source.startsWith(QLatin1Char('@'))) {
+        source.remove(0, 1);
+    }
+    source = source.toCaseFolded();
+    QString result;
+    result.reserve(std::min<qsizetype>(source.size(), 24));
+    for (const QChar character : source) {
+        if (character.isLetterOrNumber() || character == QLatin1Char('_')
+            || character == QLatin1Char('.') || character == QLatin1Char('-')) {
+            result.push_back(character);
+            if (result.size() == 24) {
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+const QStringList& avatarIds() {
+    static const QStringList values{
+        QStringLiteral("avatar:guitar-electric"),
+        QStringLiteral("avatar:guitar-acoustic"),
+        QStringLiteral("avatar:bass"),
+        QStringLiteral("avatar:drums"),
+        QStringLiteral("avatar:keys"),
+        QStringLiteral("avatar:vocals"),
+        QStringLiteral("avatar:synth"),
+        QStringLiteral("avatar:listener")};
+    return values;
+}
+
 } // namespace
 
 AppController::AppController(
@@ -40,15 +87,22 @@ AppController::AppController(
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService)
     : QObject(parent),
       store_(std::move(preferencePath)),
+      updateManager_(
+          QStringLiteral(JAMLINK_VERSION_STRING),
+          QStringLiteral(JAMLINK_RELEASE_CHANNEL_STRING),
+          visualFixture,
+          this),
       currentPage_(std::move(initialPage)),
       visualFixture_(visualFixture),
       audioService_(std::move(audioService)) {
+    connect(&updateManager_, &UpdateManager::changed, this, &AppController::updateChanged);
     const bool automaticPage = currentPage_ == QStringLiteral("auto");
     if (!automaticPage && currentPage_ != QStringLiteral("home")
         && currentPage_ != QStringLiteral("soundcheck")
         && currentPage_ != QStringLiteral("settings")
         && currentPage_ != QStringLiteral("room")
-        && currentPage_ != QStringLiteral("tuner")) {
+        && currentPage_ != QStringLiteral("tuner")
+        && currentPage_ != QStringLiteral("profile")) {
         currentPage_ = QStringLiteral("home");
     }
     tunerActive_ = currentPage_ == QStringLiteral("tuner");
@@ -92,8 +146,12 @@ AppController::AppController(
             ? QStringLiteral("home")
             : QStringLiteral("soundcheck");
     }
-    if (!visualFixture_ && devicesAvailable_) {
+    if (!visualFixture_ && devicesAvailable_
+        && (!restoredPreferences_ || restoredSetupAvailable_)) {
         audioRestartTimer_.start(0);
+    }
+    if (!visualFixture_) {
+        QTimer::singleShot(1'500, &updateManager_, &UpdateManager::checkNow);
     }
 }
 
@@ -112,7 +170,7 @@ QString AppController::currentPage() const { return currentPage_; }
 void AppController::setCurrentPage(const QString& page) {
     if (page != QStringLiteral("home") && page != QStringLiteral("soundcheck")
         && page != QStringLiteral("settings") && page != QStringLiteral("room")
-        && page != QStringLiteral("tuner")) {
+        && page != QStringLiteral("tuner") && page != QStringLiteral("profile")) {
         return;
     }
     if (page != currentPage_) {
@@ -276,6 +334,252 @@ QString AppController::applicationVersion() const {
 
 QString AppController::qtVersion() const { return QStringLiteral(QT_VERSION_STR); }
 
+QString AppController::updateStatus() const { return updateManager_.status(); }
+bool AppController::updateAvailable() const noexcept { return updateManager_.updateAvailable(); }
+bool AppController::updateBusy() const noexcept { return updateManager_.busy(); }
+double AppController::updateProgress() const noexcept { return updateManager_.progress(); }
+void AppController::checkForUpdates() { updateManager_.checkNow(); }
+void AppController::installUpdate() {
+    if (!roomActive()) {
+        updateManager_.downloadAndInstall();
+    }
+}
+
+UpdateManager* AppController::updateManager() noexcept { return &updateManager_; }
+
+QString AppController::profileId() const {
+    return QString::fromStdString(preferences_.profile.profileId);
+}
+
+QString AppController::profileHandle() const {
+    return QString::fromStdString(preferences_.profile.handle);
+}
+
+void AppController::setProfileHandle(const QString& value) {
+    const std::string normalized = normalizedHandle(value).toStdString();
+    if (preferences_.profile.handle == normalized) {
+        return;
+    }
+    preferences_.profile.handle = normalized;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QString AppController::profileDisplayName() const {
+    return QString::fromStdString(preferences_.profile.displayName);
+}
+
+void AppController::setProfileDisplayName(const QString& value) {
+    QString normalized = boundedSingleLine(value, 48);
+    if (normalized.isEmpty()) {
+        normalized = QStringLiteral("Musician");
+    }
+    const std::string stored = normalized.toStdString();
+    if (preferences_.profile.displayName == stored) {
+        return;
+    }
+    preferences_.profile.displayName = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QString AppController::profileAvatarId() const {
+    return QString::fromStdString(preferences_.profile.avatarId);
+}
+
+void AppController::setProfileAvatarId(const QString& value) {
+    if (!avatarIds().contains(value)) {
+        return;
+    }
+    const std::string stored = value.toStdString();
+    if (preferences_.profile.avatarId == stored) {
+        return;
+    }
+    preferences_.profile.avatarId = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QUrl AppController::profileCustomAvatarSource() const {
+    if (preferences_.profile.avatarId != "avatar:custom"
+        || preferences_.profile.customAvatarPath.empty()) {
+        return {};
+    }
+    const QString path = QString::fromUtf8(preferences_.profile.customAvatarPath);
+    if (!QFileInfo(path).isFile()) {
+        return {};
+    }
+    return QUrl::fromLocalFile(path);
+}
+
+QString AppController::profilePrimaryInstrument() const {
+    return QString::fromStdString(preferences_.profile.primaryInstrument);
+}
+
+void AppController::setProfilePrimaryInstrument(const QString& value) {
+    if (!profileInstrumentOptions().contains(value)) {
+        return;
+    }
+    const std::string stored = value.toStdString();
+    if (preferences_.profile.primaryInstrument == stored) {
+        return;
+    }
+    preferences_.profile.primaryInstrument = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QString AppController::profileGenres() const {
+    return QString::fromStdString(preferences_.profile.genres);
+}
+
+void AppController::setProfileGenres(const QString& value) {
+    const std::string stored = boundedSingleLine(value, 96).toStdString();
+    if (preferences_.profile.genres == stored) {
+        return;
+    }
+    preferences_.profile.genres = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QString AppController::profileBio() const {
+    return QString::fromStdString(preferences_.profile.bio);
+}
+
+void AppController::setProfileBio(const QString& value) {
+    QString normalized = value.normalized(QString::NormalizationForm_KC);
+    normalized.replace(QLatin1Char('\r'), QString());
+    normalized = normalized.left(240);
+    const std::string stored = normalized.toStdString();
+    if (preferences_.profile.bio == stored) {
+        return;
+    }
+    preferences_.profile.bio = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QString AppController::profileRegion() const {
+    return QString::fromStdString(preferences_.profile.region);
+}
+
+void AppController::setProfileRegion(const QString& value) {
+    const std::string stored = boundedSingleLine(value, 48).toStdString();
+    if (preferences_.profile.region == stored) {
+        return;
+    }
+    preferences_.profile.region = stored;
+    scheduleSave();
+    emit profileChanged();
+}
+
+QStringList AppController::profileAvatarIds() const { return avatarIds(); }
+
+QStringList AppController::profileAvatarLabels() const {
+    return {
+        QStringLiteral("Electric guitar"), QStringLiteral("Acoustic guitar"),
+        QStringLiteral("Bass"), QStringLiteral("Drums"), QStringLiteral("Keys"),
+        QStringLiteral("Vocals"), QStringLiteral("Synth"), QStringLiteral("Listener")};
+}
+
+QStringList AppController::profileInstrumentOptions() const {
+    return {
+        QStringLiteral("Guitar"), QStringLiteral("Bass"), QStringLiteral("Drums"),
+        QStringLiteral("Keys"), QStringLiteral("Vocals"), QStringLiteral("Synth"),
+        QStringLiteral("Multi-instrumentalist"), QStringLiteral("Listener")};
+}
+
+QString AppController::remoteDisplayName() const {
+    return remoteParticipant_.displayName.empty()
+        ? QStringLiteral("Friend")
+        : QString::fromStdString(remoteParticipant_.displayName);
+}
+
+QString AppController::remoteHandle() const {
+    return QString::fromStdString(remoteParticipant_.handle);
+}
+
+QString AppController::remoteAvatarId() const {
+    return QString::fromStdString(remoteParticipant_.avatarId);
+}
+
+QString AppController::remotePrimaryInstrument() const {
+    return remoteParticipant_.primaryInstrument.empty()
+        ? QStringLiteral("Musician")
+        : QString::fromStdString(remoteParticipant_.primaryInstrument);
+}
+
+QVariantList AppController::chatMessages() const { return chatMessages_; }
+int AppController::unreadChatCount() const noexcept { return unreadChatCount_; }
+
+bool AppController::setCustomAvatar(const QUrl& source) {
+    if (!source.isLocalFile()) {
+        setupMessage_ = QStringLiteral("Choose a local PNG, JPEG, or WebP image");
+        emit setupChanged();
+        return false;
+    }
+    const QString sourcePath = source.toLocalFile();
+    const QFileInfo sourceInfo(sourcePath);
+    constexpr qint64 maximumInputBytes = 10LL * 1'024LL * 1'024LL;
+    if (!sourceInfo.isFile() || sourceInfo.size() <= 0
+        || sourceInfo.size() > maximumInputBytes) {
+        setupMessage_ = QStringLiteral("Avatar images must be smaller than 10 MB");
+        emit setupChanged();
+        return false;
+    }
+    QImageReader reader(sourcePath);
+    reader.setAutoTransform(true);
+    const QSize sourceSize = reader.size();
+    constexpr qint64 maximumPixels = 16LL * 1'024LL * 1'024LL;
+    if (!sourceSize.isValid() || sourceSize.width() > 4'096
+        || sourceSize.height() > 4'096
+        || static_cast<qint64>(sourceSize.width()) * sourceSize.height() > maximumPixels) {
+        setupMessage_ = QStringLiteral("Avatar dimensions are too large");
+        emit setupChanged();
+        return false;
+    }
+    QSize decodedSize = sourceSize;
+    decodedSize.scale(512, 512, Qt::KeepAspectRatioByExpanding);
+    reader.setScaledSize(decodedSize);
+    QImage decoded = reader.read();
+    if (decoded.isNull()) {
+        setupMessage_ = QStringLiteral("That image could not be decoded safely");
+        emit setupChanged();
+        return false;
+    }
+    const int side = std::min(decoded.width(), decoded.height());
+    const QRect crop(
+        (decoded.width() - side) / 2, (decoded.height() - side) / 2, side, side);
+    const QImage thumbnail = decoded.copy(crop).scaled(
+        256, 256, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+        .convertToFormat(QImage::Format_RGBA8888);
+    const std::filesystem::path destination =
+        store_.path().parent_path() / "profile-avatar.png";
+    QSaveFile output(QString::fromStdWString(destination.wstring()));
+    if (!output.open(QIODevice::WriteOnly)
+        || !thumbnail.save(&output, "PNG") || !output.commit()) {
+        setupMessage_ = QStringLiteral("The sanitized avatar could not be saved");
+        emit setupChanged();
+        return false;
+    }
+    preferences_.profile.customAvatarPath =
+        QString::fromStdWString(destination.wstring()).toUtf8().toStdString();
+    preferences_.profile.avatarId = "avatar:custom";
+    scheduleSave();
+    emit profileChanged();
+    return true;
+}
+
+void AppController::clearCustomAvatar() {
+    if (preferences_.profile.avatarId != "avatar:custom") {
+        return;
+    }
+    preferences_.profile.avatarId = "avatar:guitar-electric";
+    scheduleSave();
+    emit profileChanged();
+}
+
 bool AppController::recording() const noexcept { return recorderTelemetry_.recording; }
 
 QString AppController::recordingElapsed() const {
@@ -368,9 +672,15 @@ QString AppController::audioStatus() const {
         return QStringLiteral("Deterministic visual fixture");
     }
     if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running) {
-        return QStringLiteral("WASAPI Shared · %1 kHz · %2 frames")
+        const bool asio = validIndex(outputIndex_, outputOptions_.size())
+            && outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption.backend
+                == jamlink::audio::SoundcheckBackend::Asio;
+        return QStringLiteral("%1 · %2 kHz · %3 frames%4")
+            .arg(asio ? QStringLiteral("ASIO") : QStringLiteral("WASAPI Shared"))
             .arg(audioTelemetry_.outputSampleRate / 1'000.0, 0, 'g', 3)
-            .arg(audioTelemetry_.outputBufferFrames);
+            .arg(audioTelemetry_.outputBufferFrames)
+            .arg(audioTelemetry_.secondaryVoiceActive
+                ? QString() : QStringLiteral(" · microphone reconnecting"));
     }
     const QString state = audioStateText(audioTelemetry_.state);
     return audioTelemetry_.nativeError == 0
@@ -411,6 +721,24 @@ void AppController::setVoiceDeviceIndex(int index) {
     }
     voiceIndex_ = index;
     invalidateReadiness();
+    if (audioService_ && audioActive()) {
+        const auto result = audioService_->tryReplaceVoiceEndpoint(
+            voiceOptions_[static_cast<std::size_t>(voiceIndex_)].serviceOption);
+        if (result == jamlink::audio::VoiceEndpointChangeResult::Applied) {
+            audioTelemetry_ = audioService_->telemetry();
+            setupMessage_ = QStringLiteral(
+                "Microphone switched; ASIO instrument and output stayed active");
+            emit setupChanged();
+            return;
+        }
+        if (result == jamlink::audio::VoiceEndpointChangeResult::Failed) {
+            audioTelemetry_ = audioService_->telemetry();
+            setupMessage_ = QStringLiteral(
+                "That microphone could not start; ASIO instrument and output remain active");
+            emit setupChanged();
+            return;
+        }
+    }
     scheduleAudioRestart();
 }
 
@@ -744,7 +1072,7 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
 
 void AppController::saveSoundcheck() {
-    if (devicesAvailable_ && audioActive()) {
+    if (devicesAvailable_ && audioActive() && audioTelemetry_.secondaryVoiceActive) {
         updateReadinessConfiguration();
         static_cast<void>(readiness_.markVerified(
             jamlink::control::SetupComponent::Instrument,
@@ -819,6 +1147,7 @@ void AppController::hostSession() {
         emit setupChanged();
         return;
     }
+    transport->setLocalParticipant(localParticipant());
     transport->setLatencyPreference(
         static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
     const std::string invite = transport->host(
@@ -861,6 +1190,7 @@ void AppController::joinSession(const QString& inviteCode) {
     leaveSession();
     auto transport = jamlink::network::createPlatformPeerAudioTransport();
     if (transport) {
+        transport->setLocalParticipant(localParticipant());
         transport->setLatencyPreference(
             static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
     }
@@ -906,6 +1236,7 @@ void AppController::leaveSession() {
     peerTransport_->stop();
     peerTransport_.reset();
     peerTelemetry_ = {};
+    remoteParticipant_ = {};
     inviteCode_.clear();
     sendMuted_ = false;
     if (audioService_ && devicesAvailable_) {
@@ -920,6 +1251,129 @@ void AppController::copyInvite() {
         QGuiApplication::clipboard()->setText(inviteCode_);
         setupMessage_ = QStringLiteral("Invite code copied");
         emit setupChanged();
+    }
+}
+
+jamlink::network::PeerParticipantInfo AppController::localParticipant() const {
+    jamlink::network::PeerParticipantInfo participant;
+    participant.profileId = preferences_.profile.profileId;
+    participant.handle = preferences_.profile.handle;
+    participant.displayName = preferences_.profile.displayName;
+    participant.avatarId = preferences_.profile.avatarId;
+    participant.primaryInstrument = preferences_.profile.shareInstrument
+        ? preferences_.profile.primaryInstrument : "Musician";
+    participant.applicationVersion = JAMLINK_VERSION_STRING;
+    participant.buildIdentity = JAMLINK_BUILD_IDENTITY_STRING;
+    participant.releaseChannel = JAMLINK_RELEASE_CHANNEL_STRING;
+    return participant;
+}
+
+bool AppController::sendChatMessage(const QString& text) {
+    if (!peerTransport_ || !peerConnected()) {
+        return false;
+    }
+    QString normalized = text.normalized(QString::NormalizationForm_C);
+    normalized.replace(QLatin1Char('\r'), QString());
+    normalized = normalized.trimmed();
+    const QByteArray encoded = normalized.toUtf8();
+    if (encoded.isEmpty()
+        || encoded.size() > static_cast<qsizetype>(jamlink::network::maximumChatMessageBytes)
+        || !peerTransport_->sendChatMessage(encoded.toStdString())) {
+        return false;
+    }
+    appendChatEntry(
+        profileDisplayName(), profileHandle(), normalized,
+        static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch()), true, false);
+    emit chatChanged();
+    return true;
+}
+
+void AppController::markChatRead() {
+    if (unreadChatCount_ == 0) {
+        return;
+    }
+    unreadChatCount_ = 0;
+    emit chatChanged();
+}
+
+void AppController::appendChatEntry(
+    const QString& sender,
+    const QString& handle,
+    const QString& text,
+    std::uint64_t timestampMilliseconds,
+    bool own,
+    bool system) {
+    QVariantMap entry;
+    entry.insert(QStringLiteral("sender"), sender);
+    entry.insert(QStringLiteral("handle"), handle);
+    entry.insert(QStringLiteral("text"), text);
+    entry.insert(QStringLiteral("own"), own);
+    entry.insert(QStringLiteral("system"), system);
+    entry.insert(
+        QStringLiteral("time"),
+        QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestampMilliseconds))
+            .toString(QStringLiteral("h:mm AP")));
+    if (chatMessages_.size() >= 200) {
+        chatMessages_.removeFirst();
+    }
+    chatMessages_.push_back(entry);
+}
+
+void AppController::processRoomControlEvents() {
+    if (!peerTransport_) {
+        return;
+    }
+    bool roomUpdated = false;
+    bool chatUpdated = false;
+    for (const auto& event : peerTransport_->takeControlEvents()) {
+        const QString displayName = event.participant.displayName.empty()
+            ? QStringLiteral("Friend")
+            : QString::fromStdString(event.participant.displayName);
+        switch (event.type) {
+        case jamlink::network::RoomControlEventType::PeerJoined:
+            remoteParticipant_ = event.participant;
+            appendChatEntry(
+                QString(), QString(), displayName + QStringLiteral(" joined"),
+                event.timestampMilliseconds, false, true);
+            roomUpdated = true;
+            chatUpdated = true;
+            break;
+        case jamlink::network::RoomControlEventType::PeerLeft:
+            appendChatEntry(
+                QString(), QString(), displayName + QStringLiteral(" left"),
+                event.timestampMilliseconds, false, true);
+            roomUpdated = true;
+            chatUpdated = true;
+            break;
+        case jamlink::network::RoomControlEventType::ChatMessage:
+            remoteParticipant_ = event.participant;
+            appendChatEntry(
+                displayName, QString::fromStdString(event.participant.handle),
+                QString::fromStdString(event.text), event.timestampMilliseconds,
+                false, false);
+            unreadChatCount_ = std::min(unreadChatCount_ + 1, 99);
+            roomUpdated = true;
+            chatUpdated = true;
+            break;
+        case jamlink::network::RoomControlEventType::ChatDeliveryFailed:
+            appendChatEntry(
+                QString(), QString(), QStringLiteral("A message was not delivered"),
+                event.timestampMilliseconds, false, true);
+            chatUpdated = true;
+            break;
+        case jamlink::network::RoomControlEventType::VersionMismatch:
+            remoteParticipant_ = event.participant;
+            setupMessage_ = QStringLiteral(
+                "Your friend is using a different JamLink build; both people must update");
+            roomUpdated = true;
+            break;
+        }
+    }
+    if (roomUpdated) {
+        emit roomChanged();
+    }
+    if (chatUpdated) {
+        emit chatChanged();
     }
 }
 
@@ -1006,6 +1460,92 @@ void AppController::loadDeviceInventory() {
     }
 }
 
+void AppController::chooseInitialAudioDefaults() {
+    if (!devicesAvailable_) {
+        return;
+    }
+    const auto driverScore = [](const DeviceOption& option) {
+        if (option.serviceOption.backend != jamlink::audio::SoundcheckBackend::Asio) {
+            return -1'000;
+        }
+        const QString name = option.displayName.toCaseFolded();
+        int score = 100;
+        for (const QString& professional : {
+                 QStringLiteral("focusrite"), QStringLiteral("rme"),
+                 QStringLiteral("motu"), QStringLiteral("presonus"),
+                 QStringLiteral("universal audio"), QStringLiteral("audient"),
+                 QStringLiteral("steinberg"), QStringLiteral("behringer"),
+                 QStringLiteral("ssl"), QStringLiteral("apollo")}) {
+            if (name.contains(professional)) {
+                score += 100;
+                break;
+            }
+        }
+        if (name.contains(QStringLiteral("asio4all"))
+            || name.contains(QStringLiteral("fl studio"))) {
+            score -= 80;
+        }
+        return score;
+    };
+
+    int bestScore = -1'000;
+    int bestInstrument = -1;
+    int bestOutput = -1;
+    for (std::size_t output = 0U; output < outputOptions_.size(); ++output) {
+        const auto& outputOption = outputOptions_[output];
+        for (std::size_t input = 0U; input < instrumentOptions_.size(); ++input) {
+            const auto& inputOption = instrumentOptions_[input];
+            if (inputOption.serviceOption.backendId.empty()
+                || inputOption.serviceOption.backendId
+                    != outputOption.serviceOption.backendId) {
+                continue;
+            }
+            int score = driverScore(outputOption) + driverScore(inputOption);
+            score += outputOption.serviceOption.hasSecondaryChannel ? 10 : 0;
+            score += inputOption.serviceOption.primaryChannel == 1U ? 2 : 0;
+            if (score > bestScore) {
+                bestScore = score;
+                bestInstrument = static_cast<int>(input);
+                bestOutput = static_cast<int>(output);
+            }
+        }
+    }
+    if (bestInstrument < 0 || bestOutput < 0) {
+        return;
+    }
+    instrumentIndex_ = bestInstrument;
+    outputIndex_ = bestOutput;
+
+    int bestVoice = -1;
+    int bestVoiceScore = -1'000;
+    const QString masterName = outputOptions_[static_cast<std::size_t>(bestOutput)]
+        .displayName.toCaseFolded();
+    for (std::size_t input = 0U; input < voiceOptions_.size(); ++input) {
+        const auto& option = voiceOptions_[input];
+        if (option.serviceOption.backend != jamlink::audio::SoundcheckBackend::WasapiShared) {
+            continue;
+        }
+        const QString name = option.displayName.toCaseFolded();
+        int score = 100;
+        if (name.contains(QStringLiteral("microphone"))
+            || name.contains(QStringLiteral("mic "))) {
+            score += 20;
+        }
+        if (name.contains(QStringLiteral("loopback"))
+            || name.contains(QStringLiteral("stereo mix"))) {
+            score -= 100;
+        }
+        if (!masterName.isEmpty() && name.contains(masterName)) {
+            score -= 20;
+        }
+        if (score > bestVoiceScore) {
+            bestVoiceScore = score;
+            bestVoice = static_cast<int>(input);
+        }
+    }
+    voiceIndex_ = bestVoice >= 0 ? bestVoice : bestInstrument;
+}
+
 void AppController::updateOutputCapabilities() {
     if (visualFixture_ || !devicesAvailable_
         || !validIndex(outputIndex_, outputOptions_.size())) {
@@ -1082,6 +1622,17 @@ void AppController::loadPreferences(
     restoredPreferences_ =
         loaded.state == jamlink::preferences::PreferencesLoadState::Loaded;
     preferences_ = loaded.preferences;
+    if (preferences_.profile.profileId.empty()) {
+        preferences_.profile.profileId = visualFixture_
+            ? "fixture-profile"
+            : QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        if (visualFixture_) {
+            preferences_.profile.displayName = "Alex";
+            preferences_.profile.handle = "alex";
+            preferences_.profile.genres = "Rock / Alternative";
+        }
+        scheduleSave();
+    }
     if (visualFixture_ && !restoredPreferences_) {
         preferences_.instrumentMonitorEnabled = true;
         preferences_.voiceMonitorEnabled = true;
@@ -1096,6 +1647,9 @@ void AppController::loadPreferences(
     instrumentIndex_ = resolveDevice(instrumentOptions_, preferences_.instrument);
     voiceIndex_ = resolveDevice(voiceOptions_, preferences_.voice);
     outputIndex_ = resolveDevice(outputOptions_, preferences_.output);
+    if (!restoredPreferences_) {
+        chooseInitialAudioDefaults();
+    }
     updateOutputCapabilities();
     sampleRateIndex_ = resolveScalar(sampleRateValues_, preferences_.sampleRate);
     bufferSizeIndex_ = resolveScalar(bufferSizeValues_, preferences_.bufferFrames);
@@ -1113,7 +1667,7 @@ void AppController::loadPreferences(
     } else if (visualFixture_) {
         setupMessage_ = QStringLiteral("Deterministic visual fixture; no hardware is active");
     } else if (devicesAvailable_) {
-        setupMessage_ = QStringLiteral("Starting private WASAPI Shared monitor");
+        setupMessage_ = QStringLiteral("Starting selected private Windows audio monitor");
     } else {
         setupMessage_ = QStringLiteral("Connect an input and output, then retry audio");
     }
@@ -1212,8 +1766,14 @@ void AppController::restartAudio() {
     static_cast<void>(audioService_->start(configuration));
     audioTelemetry_ = audioService_->telemetry();
     if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running) {
-        setupMessage_ = QStringLiteral(
-            "Private local monitor active; Windows shared-mode processing may apply");
+        const bool asio = configuration.output.backend == jamlink::audio::SoundcheckBackend::Asio;
+        const bool hybrid = asio
+            && configuration.voice.backend == jamlink::audio::SoundcheckBackend::WasapiShared;
+        setupMessage_ = hybrid
+            ? QStringLiteral("ASIO guitar/output active with synchronized USB microphone")
+            : asio
+                ? QStringLiteral("Native ASIO private monitor active")
+                : QStringLiteral("Windows shared-audio private monitor active");
         telemetryTimer_.start();
     } else {
         setupMessage_ = audioStateText(audioTelemetry_.state);
@@ -1226,6 +1786,7 @@ void AppController::pollAudioTelemetry() {
         return;
     }
     const auto previousState = audioTelemetry_.state;
+    const bool previousSecondary = audioTelemetry_.secondaryVoiceActive;
     audioTelemetry_ = audioService_->telemetry();
     if (previousState == jamlink::audio::SoundcheckAudioState::Running
         && audioTelemetry_.state != jamlink::audio::SoundcheckAudioState::Running) {
@@ -1233,8 +1794,19 @@ void AppController::pollAudioTelemetry() {
         telemetryTimer_.stop();
         audioRestartTimer_.start(1'000);
     }
+    if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running
+        && previousSecondary != audioTelemetry_.secondaryVoiceActive) {
+        if (!audioTelemetry_.secondaryVoiceActive) {
+            readiness_.invalidate(jamlink::control::SetupComponent::Voice);
+        }
+        setupMessage_ = audioTelemetry_.secondaryVoiceActive
+            ? QStringLiteral("USB microphone reconnected; ASIO stream stayed active")
+            : QStringLiteral(
+                "USB microphone disconnected; ASIO guitar/output remain active while it reconnects");
+    }
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
+        processRoomControlEvents();
         emit roomChanged();
     }
     if (tunerActive_) {
@@ -1290,6 +1862,8 @@ QString AppController::peerStateText(jamlink::network::PeerConnectionState state
         return QStringLiteral("Connected · encrypted direct audio");
     case State::InviteInvalid:
         return QStringLiteral("That invite code is invalid");
+    case State::VersionMismatch:
+        return QStringLiteral("Update required · this room uses a different JamLink build");
     case State::SocketFailed:
         return QStringLiteral("Windows could not open the room network port");
     case State::EncryptionFailed:

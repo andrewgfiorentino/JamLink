@@ -65,6 +65,11 @@ bool readScalarLine(
 }
 
 bool valid(const UserPreferences& preferences) noexcept {
+    const auto validText = [](const std::string& value, std::size_t maximum) {
+        return value.size() <= maximum
+            && value.find('\0') == std::string::npos
+            && value.find('\r') == std::string::npos;
+    };
     const bool sampleRateValid = preferences.sampleRate >= 8'000U
         && preferences.sampleRate <= 384'000U;
     const bool bufferValid = preferences.bufferFrames >= 1U
@@ -85,8 +90,21 @@ bool valid(const UserPreferences& preferences) noexcept {
         && preferences.window.width <= 16'384U
         && preferences.window.height >= 480U
         && preferences.window.height <= 16'384U;
+    const bool profileValid = validText(preferences.profile.profileId, 64U)
+        && validText(preferences.profile.handle, 32U)
+        && !preferences.profile.displayName.empty()
+        && validText(preferences.profile.displayName, 64U)
+        && !preferences.profile.avatarId.empty()
+        && validText(preferences.profile.avatarId, 64U)
+        && validText(preferences.profile.customAvatarPath, 1'024U)
+        && !preferences.profile.primaryInstrument.empty()
+        && validText(preferences.profile.primaryInstrument, 32U)
+        && validText(preferences.profile.genres, 128U)
+        && validText(preferences.profile.bio, 280U)
+        && validText(preferences.profile.region, 64U);
     return preferences.schemaVersion == currentPreferencesSchemaVersion
-        && sampleRateValid && bufferValid && gainsValid && windowValid && networkValid;
+        && sampleRateValid && bufferValid && gainsValid && windowValid
+        && networkValid && profileValid;
 }
 
 bool parse(std::istream& input, UserPreferences& preferences) {
@@ -138,6 +156,10 @@ bool parse(std::istream& input, UserPreferences& preferences) {
     // are still rejected.
     int tunerMutes = preferences.tunerMutesInstrument ? 1 : 0;
     int automaticMapping = preferences.automaticPortMapping ? 1 : 0;
+    int shareInstrument = preferences.profile.shareInstrument ? 1 : 0;
+    int shareGenres = preferences.profile.shareGenres ? 1 : 0;
+    int shareBio = preferences.profile.shareBio ? 1 : 0;
+    int shareRegion = preferences.profile.shareRegion ? 1 : 0;
     std::string trailing;
     while (std::getline(input, trailing)) {
         if (trailing.empty()) {
@@ -161,17 +183,51 @@ bool parse(std::istream& input, UserPreferences& preferences) {
             read = static_cast<bool>(line >> automaticMapping);
         } else if (key == "network.latency_mode") {
             read = static_cast<bool>(line >> preferences.latencyMode);
+        } else if (key == "profile.id") {
+            read = readQuotedValue(line, preferences.profile.profileId);
+        } else if (key == "profile.handle") {
+            read = readQuotedValue(line, preferences.profile.handle);
+        } else if (key == "profile.display_name") {
+            read = readQuotedValue(line, preferences.profile.displayName);
+        } else if (key == "profile.avatar_id") {
+            read = readQuotedValue(line, preferences.profile.avatarId);
+        } else if (key == "profile.custom_avatar") {
+            read = readQuotedValue(line, preferences.profile.customAvatarPath);
+        } else if (key == "profile.primary_instrument") {
+            read = readQuotedValue(line, preferences.profile.primaryInstrument);
+        } else if (key == "profile.genres") {
+            read = readQuotedValue(line, preferences.profile.genres);
+        } else if (key == "profile.bio") {
+            read = readQuotedValue(line, preferences.profile.bio);
+        } else if (key == "profile.region") {
+            read = readQuotedValue(line, preferences.profile.region);
+        } else if (key == "profile.share_instrument") {
+            read = static_cast<bool>(line >> shareInstrument);
+        } else if (key == "profile.share_genres") {
+            read = static_cast<bool>(line >> shareGenres);
+        } else if (key == "profile.share_bio") {
+            read = static_cast<bool>(line >> shareBio);
+        } else if (key == "profile.share_region") {
+            read = static_cast<bool>(line >> shareRegion);
         }
         if (!read) {
             return false;
         }
     }
     if ((tunerMutes != 0 && tunerMutes != 1)
-        || (automaticMapping != 0 && automaticMapping != 1)) {
+        || (automaticMapping != 0 && automaticMapping != 1)
+        || (shareInstrument != 0 && shareInstrument != 1)
+        || (shareGenres != 0 && shareGenres != 1)
+        || (shareBio != 0 && shareBio != 1)
+        || (shareRegion != 0 && shareRegion != 1)) {
         return false;
     }
     preferences.tunerMutesInstrument = tunerMutes == 1;
     preferences.automaticPortMapping = automaticMapping == 1;
+    preferences.profile.shareInstrument = shareInstrument == 1;
+    preferences.profile.shareGenres = shareGenres == 1;
+    preferences.profile.shareBio = shareBio == 1;
+    preferences.profile.shareRegion = shareRegion == 1;
     return valid(preferences);
 }
 
@@ -212,6 +268,24 @@ void write(std::ostream& output, const UserPreferences& preferences) {
            << "network.automatic_mapping "
            << static_cast<int>(preferences.automaticPortMapping) << '\n'
            << "network.latency_mode " << preferences.latencyMode << '\n';
+    output << "profile.id " << std::quoted(preferences.profile.profileId) << '\n'
+           << "profile.handle " << std::quoted(preferences.profile.handle) << '\n'
+           << "profile.display_name " << std::quoted(preferences.profile.displayName) << '\n'
+           << "profile.avatar_id " << std::quoted(preferences.profile.avatarId) << '\n'
+           << "profile.custom_avatar " << std::quoted(preferences.profile.customAvatarPath) << '\n'
+           << "profile.primary_instrument "
+           << std::quoted(preferences.profile.primaryInstrument) << '\n'
+           << "profile.genres " << std::quoted(preferences.profile.genres) << '\n'
+           << "profile.bio " << std::quoted(preferences.profile.bio) << '\n'
+           << "profile.region " << std::quoted(preferences.profile.region) << '\n'
+           << "profile.share_instrument "
+           << static_cast<int>(preferences.profile.shareInstrument) << '\n'
+           << "profile.share_genres "
+           << static_cast<int>(preferences.profile.shareGenres) << '\n'
+           << "profile.share_bio "
+           << static_cast<int>(preferences.profile.shareBio) << '\n'
+           << "profile.share_region "
+           << static_cast<int>(preferences.profile.shareRegion) << '\n';
 }
 
 PreferencesSaveResult replaceFile(

@@ -9,7 +9,7 @@ ComboBox {
     implicitHeight: 34
     leftPadding: 11
     rightPadding: 28
-    font.family: "Segoe UI Variable Text"
+    font.family: "Segoe UI"
     font.pixelSize: 10
 
     indicator: JamIcon {

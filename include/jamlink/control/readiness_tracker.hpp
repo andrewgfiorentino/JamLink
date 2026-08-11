@@ -26,6 +26,7 @@ struct JoinSafetyDecision final {
 class ReadinessTracker final {
 public:
     void setConfiguration(SetupComponent component, std::uint64_t fingerprint) noexcept;
+    void invalidate(SetupComponent component) noexcept;
     [[nodiscard]] bool markVerified(
         SetupComponent component,
         std::uint64_t fingerprint) noexcept;

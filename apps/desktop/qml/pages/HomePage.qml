@@ -32,7 +32,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: "JamLink"
                 color: "#f2f4f5"
-                font.family: "Segoe UI Variable Display"
+                font.family: "Segoe UI"
                 font.pixelSize: 20
                 font.weight: Font.DemiBold
             }
@@ -43,6 +43,16 @@ Item {
             anchors.rightMargin: 18
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
+            ProfileAvatar {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 32
+                height: 32
+                avatarId: root.controller.profileAvatarId
+                customSource: root.controller.profileCustomAvatarSource
+                Accessible.name: "Open musician profile"
+                Accessible.role: Accessible.Button
+                TapHandler { onTapped: root.controller.navigate("profile") }
+            }
             IconButton {
                 iconSource: Qt.resolvedUrl("../../assets/tune.svg")
                 Accessible.name: "Open tuner"
@@ -74,16 +84,16 @@ Item {
         spacing: 12
 
         Text {
-            text: "Your sound starts here"
+            text: "Ready to jam, " + root.controller.profileDisplayName
             color: "#f4f5f6"
-            font.family: "Segoe UI Variable Display"
+            font.family: "Segoe UI"
             font.pixelSize: 22
             font.weight: Font.DemiBold
         }
         Text {
             text: "Set up a private monitor before entering any room."
             color: "#a4acb2"
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 12
         }
 
@@ -98,7 +108,7 @@ Item {
                 Text {
                     text: "YOUR SETUP"
                     color: "#dfe3e5"
-                    font.family: "Segoe UI Variable Text"
+                    font.family: "Segoe UI"
                     font.pixelSize: 10
                     font.weight: Font.Medium
                 }
@@ -124,7 +134,7 @@ Item {
                             width: 88
                             text: setupRow.modelData.name
                             color: "#eff1f2"
-                            font.family: "Segoe UI Variable Text"
+                            font.family: "Segoe UI"
                             font.pixelSize: 11
                             font.weight: Font.Medium
                         }
@@ -133,7 +143,7 @@ Item {
                             text: setupRow.modelData.detail
                             color: "#a5adb2"
                             elide: Text.ElideRight
-                            font.family: "Segoe UI Variable Text"
+                            font.family: "Segoe UI"
                             font.pixelSize: 10
                         }
                         Row {
@@ -152,7 +162,7 @@ Item {
                                 color: root.controller.devicesAvailable && root.controller.allReady
                                     ? "#42db63"
                                     : "#7b848a"
-                                font.family: "Segoe UI Variable Text"
+                                font.family: "Segoe UI"
                                 font.pixelSize: 9
                             }
                         }
@@ -193,7 +203,7 @@ Item {
                         width: parent.width - hostButton.width - 40
                         text: "Two-person private room"
                         color: "#e8ebed"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 12
                         font.weight: Font.Medium
                     }
@@ -220,7 +230,7 @@ Item {
                         placeholderTextColor: "#68737a"
                         selectionColor: "#6938c5"
                         selectedTextColor: "#ffffff"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                         background: Rectangle {
                             radius: 6
@@ -254,7 +264,7 @@ Item {
                 : "Settings save automatically"
             color: "#667178"
             horizontalAlignment: Text.AlignHCenter
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 10
         }
     }

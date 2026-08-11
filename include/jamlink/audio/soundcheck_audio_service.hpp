@@ -17,6 +17,11 @@ class IPeerAudioExchange;
 
 namespace jamlink::audio {
 
+enum class SoundcheckBackend : std::uint8_t {
+    WasapiShared,
+    Asio
+};
+
 struct SoundcheckEndpointOption final {
     std::string endpointId;
     std::string displayName;
@@ -25,6 +30,10 @@ struct SoundcheckEndpointOption final {
     bool hasSecondaryChannel{false};
     std::uint32_t mixSampleRate{0U};
     std::vector<std::uint32_t> bufferFrameOptions;
+    SoundcheckBackend backend{SoundcheckBackend::WasapiShared};
+    // ASIO uses the driver name here. WASAPI leaves it empty and identifies
+    // the endpoint entirely with endpointId.
+    std::string backendId;
 };
 
 struct SoundcheckDeviceInventory final {
@@ -65,6 +74,14 @@ struct SoundcheckAudioTelemetry final {
     std::uint64_t overruns{0U};
     bool rawMode{false};
     std::int32_t nativeError{0};
+    bool secondaryVoiceActive{true};
+    std::int32_t secondaryVoiceNativeError{0};
+};
+
+enum class VoiceEndpointChangeResult : std::uint8_t {
+    NotSupported,
+    Applied,
+    Failed
 };
 
 // Qt-free control boundary for the private local monitor. Platform APIs remain
@@ -100,6 +117,12 @@ public:
     // pointer. A null exchange is the enforced Private Soundcheck state.
     virtual void setPeerAudioExchange(
         jamlink::network::IPeerAudioExchange* exchange) noexcept = 0;
+    // Allows a secondary independently clocked voice capture endpoint to be
+    // replaced without stopping the master instrument/output stream.
+    [[nodiscard]] virtual VoiceEndpointChangeResult tryReplaceVoiceEndpoint(
+        const SoundcheckEndpointOption&) {
+        return VoiceEndpointChangeResult::NotSupported;
+    }
     [[nodiscard]] virtual SoundcheckAudioTelemetry telemetry() const noexcept = 0;
 };
 

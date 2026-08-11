@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import "../components"
 
@@ -35,7 +34,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: "Settings"
             color: "#f2f4f5"
-            font.family: "Segoe UI Variable Display"
+            font.family: "Segoe UI"
             font.pixelSize: 17
             font.weight: Font.DemiBold
         }
@@ -97,7 +96,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: navigationItem.modelData.label
                             color: root.section === navigationItem.index ? "#f5f1fb" : "#8c959b"
-                            font.family: "Segoe UI Variable Text"
+                            font.family: "Segoe UI"
                             font.pixelSize: 11
                             font.weight: root.section === navigationItem.index
                                 ? Font.Medium : Font.Normal
@@ -150,7 +149,7 @@ Item {
                                 Text {
                                     text: deviceRow.modelData.label
                                     color: "#dfe3e5"
-                                    font.family: "Segoe UI Variable Text"
+                                    font.family: "Segoe UI"
                                     font.pixelSize: 10
                                 }
                                 DeviceSelector {
@@ -215,7 +214,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: root.controller.audioStatus
                                 color: root.controller.audioActive ? "#47d969" : "#889198"
-                                font.family: "Segoe UI Variable Text"
+                                font.family: "Segoe UI"
                                 font.pixelSize: 10
                             }
                         }
@@ -310,7 +309,7 @@ Item {
                                 Text {
                                     text: "Ask the router to open the port"
                                     color: "#dfe3e5"
-                                    font.family: "Segoe UI Variable Text"
+                                    font.family: "Segoe UI"
                                     font.pixelSize: 10
                                 }
                                 Text {
@@ -319,7 +318,7 @@ Item {
                                     color: "#78838a"
                                     width: parent.width
                                     wrapMode: Text.WordWrap
-                                    font.family: "Segoe UI Variable Text"
+                                    font.family: "Segoe UI"
                                     font.pixelSize: 9
                                 }
                             }
@@ -426,7 +425,7 @@ Item {
                                     leftPadding: 12
                                     text: shortcutRow.modelData.action
                                     color: "#b6bfc5"
-                                    font.family: "Segoe UI Variable Text"
+                                    font.family: "Segoe UI"
                                     font.pixelSize: 10
                                 }
                             }
@@ -459,7 +458,7 @@ Item {
                                     width: 86
                                     text: aboutRow.modelData.label
                                     color: "#78838a"
-                                    font.family: "Segoe UI Variable Text"
+                                    font.family: "Segoe UI"
                                     font.pixelSize: 10
                                 }
                                 Text {
@@ -472,14 +471,61 @@ Item {
                         }
 
                         SettingsRule {}
+                        SettingsHeading { text: "Updates" }
+                        Text {
+                            width: pane.width
+                            text: root.controller.updateStatus
+                            color: root.controller.updateAvailable
+                                ? "#d7b7ff" : "#8f999f"
+                            wrapMode: Text.WordWrap
+                            font.family: "Segoe UI"
+                            font.pixelSize: 10
+                        }
+                        Rectangle {
+                            visible: root.controller.updateBusy
+                                && root.controller.updateProgress > 0
+                            width: pane.width
+                            height: 4
+                            radius: 2
+                            color: "#202a31"
+                            Rectangle {
+                                width: parent.width * root.controller.updateProgress
+                                height: parent.height
+                                radius: 2
+                                color: "#9355e8"
+                            }
+                        }
+                        JamButton {
+                            width: 142
+                            height: 32
+                            primary: root.controller.updateAvailable
+                            text: root.controller.updateBusy
+                                ? "Working…"
+                                : root.controller.updateAvailable
+                                    ? "Update Now"
+                                    : "Check for Updates"
+                            enabled: !root.controller.updateBusy
+                                && (!root.controller.updateAvailable
+                                    || !root.controller.roomActive)
+                            Accessible.name: text
+                            onClicked: {
+                                if (root.controller.updateAvailable)
+                                    root.controller.installUpdate()
+                                else
+                                    root.controller.checkForUpdates()
+                            }
+                        }
+                        SettingsNote {
+                            visible: root.controller.roomActive
+                                && root.controller.updateAvailable
+                            text: "Leave the room before installing so the update cannot compete with your music."
+                        }
+
+                        SettingsRule {}
                         SettingsNote {
                             text: "JamLink is free software. The exact source for this "
                                 + "build ships beside the application, together with the "
                                 + "full licence and third-party notices."
-                        }
-                        SettingsNote {
-                            text: "This is an early test build. Audio quality over the "
-                                + "Internet has not been validated between two homes."
                         }
                     }
                 }
@@ -496,7 +542,7 @@ Item {
 
     component SettingsHeading: Text {
         color: "#eef0f2"
-        font.family: "Segoe UI Variable Text"
+        font.family: "Segoe UI"
         font.pixelSize: 12
         font.weight: Font.DemiBold
     }
@@ -512,7 +558,7 @@ Item {
         color: "#78838a"
         wrapMode: Text.WordWrap
         lineHeight: 1.3
-        font.family: "Segoe UI Variable Text"
+        font.family: "Segoe UI"
         font.pixelSize: 9
     }
 
@@ -525,7 +571,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - 168
             color: "#dfe3e5"
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 10
         }
     }

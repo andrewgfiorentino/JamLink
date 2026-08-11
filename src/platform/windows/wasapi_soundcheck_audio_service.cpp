@@ -7,6 +7,7 @@
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/soundcheck_audio_service.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
+#include "windows_audio_services.hpp"
 
 #include <audioclient.h>
 #include <avrt.h>
@@ -1113,7 +1114,7 @@ private:
 
 } // namespace
 
-std::unique_ptr<ISoundcheckAudioService> createPlatformSoundcheckAudioService() {
+std::unique_ptr<ISoundcheckAudioService> createWasapiSoundcheckAudioService() {
     return std::make_unique<WasapiSoundcheckAudioService>();
 }
 

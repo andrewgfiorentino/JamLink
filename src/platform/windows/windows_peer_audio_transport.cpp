@@ -34,9 +34,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -62,7 +65,10 @@ enum class PacketType : std::uint8_t {
     HelloAck = 2U,
     Audio = 3U,
     Ping = 4U,
-    Pong = 5U
+    Pong = 5U,
+    VersionMismatch = 6U,
+    Chat = 7U,
+    ChatAck = 8U
 };
 
 // Both peers know the same room secret, so a single key would let an attacker
@@ -241,6 +247,162 @@ void writeU16(std::uint8_t* data, std::uint16_t value) noexcept {
 void writeU32(std::uint8_t* data, std::uint32_t value) noexcept {
     value = htonl(value);
     std::memcpy(data, &value, sizeof(value));
+}
+
+[[nodiscard]] std::uint64_t readU64(const std::uint8_t* data) noexcept {
+    return static_cast<std::uint64_t>(readU32(data))
+        | (static_cast<std::uint64_t>(readU32(data + 4U)) << 32U);
+}
+
+void writeU64(std::uint8_t* data, std::uint64_t value) noexcept {
+    writeU32(data, static_cast<std::uint32_t>(value));
+    writeU32(data + 4U, static_cast<std::uint32_t>(value >> 32U));
+}
+
+[[nodiscard]] bool validUtf8(std::string_view text, bool allowNewlines) noexcept {
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(text.data());
+    std::size_t index = 0U;
+    while (index < text.size()) {
+        const std::uint8_t first = bytes[index];
+        if (first < 0x80U) {
+            if ((first < 0x20U && first != '\t' && (!allowNewlines || first != '\n'))
+                || first == 0x7FU) {
+                return false;
+            }
+            ++index;
+            continue;
+        }
+        std::size_t continuation = 0U;
+        std::uint32_t codePoint = 0U;
+        if (first >= 0xC2U && first <= 0xDFU) {
+            continuation = 1U;
+            codePoint = first & 0x1FU;
+        } else if (first >= 0xE0U && first <= 0xEFU) {
+            continuation = 2U;
+            codePoint = first & 0x0FU;
+        } else if (first >= 0xF0U && first <= 0xF4U) {
+            continuation = 3U;
+            codePoint = first & 0x07U;
+        } else {
+            return false;
+        }
+        if (index + continuation >= text.size()) {
+            return false;
+        }
+        for (std::size_t offset = 1U; offset <= continuation; ++offset) {
+            const std::uint8_t next = bytes[index + offset];
+            if ((next & 0xC0U) != 0x80U) {
+                return false;
+            }
+            codePoint = (codePoint << 6U) | (next & 0x3FU);
+        }
+        if ((continuation == 2U && codePoint < 0x800U)
+            || (continuation == 3U && codePoint < 0x10000U)
+            || (codePoint >= 0xD800U && codePoint <= 0xDFFFU)
+            || codePoint > 0x10FFFFU) {
+            return false;
+        }
+        index += continuation + 1U;
+    }
+    return true;
+}
+
+[[nodiscard]] bool validParticipant(const PeerParticipantInfo& value) noexcept {
+    const auto validField = [](const std::string& field, std::size_t maximum) {
+        return !field.empty() && field.size() <= maximum && validUtf8(field, false);
+    };
+    return validField(value.profileId, 64U)
+        && value.handle.size() <= 32U && validUtf8(value.handle, false)
+        && validField(value.displayName, 64U)
+        && validField(value.avatarId, 64U)
+        && validField(value.primaryInstrument, 32U)
+        && validField(value.applicationVersion, 32U)
+        && validField(value.buildIdentity, 64U)
+        && validField(value.releaseChannel, 16U)
+        && value.mediaProtocolVersion != 0U
+        && value.controlProtocolVersion != 0U;
+}
+
+[[nodiscard]] bool appendField(
+    std::span<std::uint8_t> destination,
+    std::size_t& offset,
+    const std::string& value) noexcept {
+    if (value.size() > 255U || offset + 1U + value.size() > destination.size()) {
+        return false;
+    }
+    destination[offset++] = static_cast<std::uint8_t>(value.size());
+    std::memcpy(destination.data() + offset, value.data(), value.size());
+    offset += value.size();
+    return true;
+}
+
+[[nodiscard]] std::size_t encodeParticipant(
+    const PeerParticipantInfo& participant,
+    std::span<std::uint8_t> destination) noexcept {
+    if (!validParticipant(participant) || destination.size() < 4U) {
+        return 0U;
+    }
+    writeU16(destination.data(), participant.mediaProtocolVersion);
+    writeU16(destination.data() + 2U, participant.controlProtocolVersion);
+    std::size_t offset = 4U;
+    if (!appendField(destination, offset, participant.profileId)
+        || !appendField(destination, offset, participant.handle)
+        || !appendField(destination, offset, participant.displayName)
+        || !appendField(destination, offset, participant.avatarId)
+        || !appendField(destination, offset, participant.primaryInstrument)
+        || !appendField(destination, offset, participant.applicationVersion)
+        || !appendField(destination, offset, participant.buildIdentity)
+        || !appendField(destination, offset, participant.releaseChannel)) {
+        return 0U;
+    }
+    return offset;
+}
+
+[[nodiscard]] bool readField(
+    std::span<const std::uint8_t> source,
+    std::size_t& offset,
+    std::string& value) {
+    if (offset >= source.size()) {
+        return false;
+    }
+    const std::size_t bytes = source[offset++];
+    if (offset + bytes > source.size()) {
+        return false;
+    }
+    value.assign(reinterpret_cast<const char*>(source.data() + offset), bytes);
+    offset += bytes;
+    return true;
+}
+
+[[nodiscard]] bool decodeParticipant(
+    std::span<const std::uint8_t> source,
+    PeerParticipantInfo& participant) {
+    if (source.size() < 4U) {
+        return false;
+    }
+    participant = {};
+    participant.mediaProtocolVersion = readU16(source.data());
+    participant.controlProtocolVersion = readU16(source.data() + 2U);
+    std::size_t offset = 4U;
+    return readField(source, offset, participant.profileId)
+        && readField(source, offset, participant.handle)
+        && readField(source, offset, participant.displayName)
+        && readField(source, offset, participant.avatarId)
+        && readField(source, offset, participant.primaryInstrument)
+        && readField(source, offset, participant.applicationVersion)
+        && readField(source, offset, participant.buildIdentity)
+        && readField(source, offset, participant.releaseChannel)
+        && offset == source.size() && validParticipant(participant);
+}
+
+[[nodiscard]] bool compatibleParticipants(
+    const PeerParticipantInfo& local,
+    const PeerParticipantInfo& remote) noexcept {
+    return local.mediaProtocolVersion == remote.mediaProtocolVersion
+        && local.controlProtocolVersion == remote.controlProtocolVersion
+        && local.applicationVersion == remote.applicationVersion
+        && local.buildIdentity == remote.buildIdentity
+        && local.releaseChannel == remote.releaseChannel;
 }
 
 [[nodiscard]] std::string hexEncode(std::span<const std::uint8_t> bytes) {
@@ -608,6 +770,12 @@ struct StunEndpoint final {
         + ((ticks % frequency) * 1'000'000ULL) / frequency;
 }
 
+[[nodiscard]] std::uint64_t systemTimeMilliseconds() noexcept {
+    const auto value = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return value > 0 ? static_cast<std::uint64_t>(value) : 0U;
+}
+
 [[nodiscard]] AudioStreamReceiverSettings receiverSettings() noexcept {
     AudioStreamReceiverSettings settings;
     settings.sampleRate = networkSampleRate;
@@ -717,6 +885,17 @@ public:
         mappedPort_ = false;
         localPort_ = 0U;
         inviteCode_.clear();
+        {
+            const std::scoped_lock lock(controlMutex_);
+            pendingChat_.clear();
+            controlEvents_.clear();
+            remoteParticipant_ = {};
+            outboundChatTimes_.clear();
+        }
+        receivedChatIds_.fill(0U);
+        receivedChatCount_ = 0U;
+        receivedChatCursor_ = 0U;
+        inboundChatTimes_.clear();
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
             localAudio_[index].clear();
             receivers_[index].reset();
@@ -724,6 +903,53 @@ public:
             sendSequence_[index] = 0U;
         }
         state_.store(PeerConnectionState::Idle, std::memory_order_release);
+    }
+
+    void setLocalParticipant(PeerParticipantInfo participant) override {
+        if (state_.load(std::memory_order_acquire) != PeerConnectionState::Idle
+            || !validParticipant(participant)) {
+            return;
+        }
+        const std::scoped_lock lock(controlMutex_);
+        localParticipant_ = std::move(participant);
+    }
+
+    [[nodiscard]] bool sendChatMessage(const std::string& plainText) override {
+        if (state_.load(std::memory_order_acquire) != PeerConnectionState::Connected
+            || plainText.empty() || plainText.size() > maximumChatMessageBytes
+            || !validUtf8(plainText, true)) {
+            return false;
+        }
+        const ULONGLONG now = GetTickCount64();
+        const std::scoped_lock lock(controlMutex_);
+        while (!outboundChatTimes_.empty()
+               && now - outboundChatTimes_.front() >= chatRateWindowMilliseconds) {
+            outboundChatTimes_.pop_front();
+        }
+        if (outboundChatTimes_.size() >= maximumChatMessagesPerWindow
+            || pendingChat_.size() >= maximumPendingChatMessages) {
+            return false;
+        }
+        outboundChatTimes_.push_back(now);
+        pendingChat_.push_back(PendingChat{
+            nextChatMessageId_++, systemTimeMilliseconds(), plainText, 0U, 0U});
+        return true;
+    }
+
+    [[nodiscard]] std::vector<RoomControlEvent> takeControlEvents() override {
+        std::vector<RoomControlEvent> result;
+        const std::scoped_lock lock(controlMutex_);
+        result.reserve(controlEvents_.size());
+        while (!controlEvents_.empty()) {
+            result.push_back(std::move(controlEvents_.front()));
+            controlEvents_.pop_front();
+        }
+        return result;
+    }
+
+    [[nodiscard]] PeerParticipantInfo remoteParticipant() const override {
+        const std::scoped_lock lock(controlMutex_);
+        return remoteParticipant_;
     }
 
     void setSendMuted(bool muted) noexcept override {
@@ -830,6 +1056,53 @@ public:
     }
 
 private:
+    struct PendingChat final {
+        std::uint64_t messageId{0U};
+        std::uint64_t timestampMilliseconds{0U};
+        std::string text;
+        ULONGLONG lastAttemptMilliseconds{0U};
+        std::uint32_t attempts{0U};
+    };
+
+    static constexpr std::size_t maximumPendingChatMessages = 64U;
+    static constexpr std::size_t maximumControlEvents = 128U;
+    static constexpr std::size_t maximumRememberedChatIds = 128U;
+    static constexpr std::size_t maximumChatMessagesPerWindow = 8U;
+    static constexpr ULONGLONG chatRateWindowMilliseconds = 2'000U;
+    static constexpr ULONGLONG chatRetryMilliseconds = 250U;
+    static constexpr std::uint32_t maximumChatAttempts = 12U;
+
+    [[nodiscard]] PeerParticipantInfo localParticipantSnapshot() const {
+        const std::scoped_lock lock(controlMutex_);
+        return localParticipant_;
+    }
+
+    void setRemoteParticipant(const PeerParticipantInfo& participant) {
+        const std::scoped_lock lock(controlMutex_);
+        remoteParticipant_ = participant;
+    }
+
+    void appendControlEvent(RoomControlEvent event) {
+        const std::scoped_lock lock(controlMutex_);
+        if (controlEvents_.size() >= maximumControlEvents) {
+            controlEvents_.pop_front();
+        }
+        controlEvents_.push_back(std::move(event));
+    }
+
+    [[nodiscard]] bool rememberChatMessage(std::uint64_t messageId) noexcept {
+        const std::size_t count = std::min(receivedChatCount_, receivedChatIds_.size());
+        for (std::size_t index = 0U; index < count; ++index) {
+            if (receivedChatIds_[index] == messageId) {
+                return false;
+            }
+        }
+        receivedChatIds_[receivedChatCursor_] = messageId;
+        receivedChatCursor_ = (receivedChatCursor_ + 1U) % receivedChatIds_.size();
+        receivedChatCount_ = std::min(receivedChatCount_ + 1U, receivedChatIds_.size());
+        return true;
+    }
+
     [[nodiscard]] static bool parseInvite(
         const std::string& invite,
         std::string& address,
@@ -984,6 +1257,111 @@ private:
         return false;
     }
 
+    void servicePendingChat(
+        AesGcmCipher& cipher,
+        bool connected,
+        ULONGLONG now) noexcept {
+        if (!connected) {
+            return;
+        }
+        const std::scoped_lock lock(controlMutex_);
+        std::size_t sentThisPass = 0U;
+        for (auto iterator = pendingChat_.begin();
+             iterator != pendingChat_.end() && sentThisPass < 2U;) {
+            PendingChat& pending = *iterator;
+            if (pending.attempts > 0U
+                && now - pending.lastAttemptMilliseconds < chatRetryMilliseconds) {
+                ++iterator;
+                continue;
+            }
+            if (pending.attempts >= maximumChatAttempts) {
+                if (controlEvents_.size() >= maximumControlEvents) {
+                    controlEvents_.pop_front();
+                }
+                controlEvents_.push_back(RoomControlEvent{
+                    RoomControlEventType::ChatDeliveryFailed,
+                    pending.messageId,
+                    pending.timestampMilliseconds,
+                    localParticipant_,
+                    pending.text});
+                iterator = pendingChat_.erase(iterator);
+                continue;
+            }
+            std::array<std::uint8_t, 18U + maximumChatMessageBytes> payload{};
+            writeU64(payload.data(), pending.messageId);
+            writeU64(payload.data() + 8U, pending.timestampMilliseconds);
+            writeU16(payload.data() + 16U, static_cast<std::uint16_t>(pending.text.size()));
+            std::memcpy(payload.data() + 18U, pending.text.data(), pending.text.size());
+            static_cast<void>(sendPacket(
+                cipher, PacketType::Chat, 0U, 0U,
+                std::span<const std::uint8_t>(payload.data(), 18U + pending.text.size())));
+            pending.lastAttemptMilliseconds = now;
+            ++pending.attempts;
+            ++sentThisPass;
+            ++iterator;
+        }
+    }
+
+    void acknowledgeChat(AesGcmCipher& cipher, std::uint64_t messageId) noexcept {
+        std::array<std::uint8_t, 8U> acknowledgement{};
+        writeU64(acknowledgement.data(), messageId);
+        static_cast<void>(sendPacket(
+            cipher, PacketType::ChatAck, 0U, 0U, acknowledgement));
+    }
+
+    void receiveChatAcknowledgement(std::uint64_t messageId) {
+        const std::scoped_lock lock(controlMutex_);
+        const auto found = std::find_if(
+            pendingChat_.begin(), pendingChat_.end(),
+            [messageId](const PendingChat& pending) {
+                return pending.messageId == messageId;
+            });
+        if (found != pendingChat_.end()) {
+            pendingChat_.erase(found);
+        }
+    }
+
+    [[nodiscard]] bool receiveChatMessage(
+        AesGcmCipher& sendCipher,
+        std::span<const std::uint8_t> payload) {
+        if (payload.size() < 18U) {
+            return false;
+        }
+        const std::uint64_t messageId = readU64(payload.data());
+        const std::uint64_t timestamp = readU64(payload.data() + 8U);
+        const std::size_t textBytes = readU16(payload.data() + 16U);
+        if (messageId == 0U || textBytes == 0U || textBytes > maximumChatMessageBytes
+            || payload.size() != 18U + textBytes) {
+            return false;
+        }
+        const std::string text(
+            reinterpret_cast<const char*>(payload.data() + 18U), textBytes);
+        if (!validUtf8(text, true)) {
+            return false;
+        }
+        acknowledgeChat(sendCipher, messageId);
+        if (!rememberChatMessage(messageId)) {
+            return true;
+        }
+
+        const ULONGLONG now = GetTickCount64();
+        while (!inboundChatTimes_.empty()
+               && now - inboundChatTimes_.front() >= chatRateWindowMilliseconds) {
+            inboundChatTimes_.pop_front();
+        }
+        if (inboundChatTimes_.size() >= maximumChatMessagesPerWindow) {
+            return true;
+        }
+        inboundChatTimes_.push_back(now);
+        appendControlEvent(RoomControlEvent{
+            RoomControlEventType::ChatMessage,
+            messageId,
+            timestamp,
+            remoteParticipant(),
+            text});
+        return true;
+    }
+
     void run() noexcept {
         try {
             sendDirection_ = hostMode_ ? Direction::HostToGuest : Direction::GuestToHost;
@@ -1009,6 +1387,16 @@ private:
                 state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
                 return;
             }
+            const PeerParticipantInfo localParticipant = localParticipantSnapshot();
+            std::array<std::uint8_t, 512U> participantPayload{};
+            const std::size_t participantBytes = encodeParticipant(
+                localParticipant, participantPayload);
+            if (participantBytes == 0U) {
+                state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
+                return;
+            }
+            const auto encodedParticipant = std::span<const std::uint8_t>(
+                participantPayload.data(), participantBytes);
             std::array<audio::AsyncMonoResampler, audioStreamCount> outgoingResamplers{
                 audio::AsyncMonoResampler(65'536U),
                 audio::AsyncMonoResampler(65'536U)};
@@ -1029,10 +1417,12 @@ private:
 
             while (!stopRequested_.load(std::memory_order_acquire)) {
                 const ULONGLONG now = GetTickCount64();
-                if (!hostMode_ && !connected && now - lastHello >= 250U) {
-                    constexpr std::array<std::uint8_t, 4U> hello{{'J', 'O', 'I', 'N'}};
+                if (!hostMode_ && !connected
+                    && state_.load(std::memory_order_acquire)
+                        != PeerConnectionState::VersionMismatch
+                    && now - lastHello >= 250U) {
                     static_cast<void>(sendPacket(
-                        sendCipher, PacketType::Hello, 0U, 0U, hello));
+                        sendCipher, PacketType::Hello, 0U, 0U, encodedParticipant));
                     lastHello = now;
                 }
                 if (connected && now - lastPing >= 500U) {
@@ -1046,6 +1436,7 @@ private:
                 drainOutgoingAudio(
                     sendCipher, outgoingResamplers, outgoingRate,
                     localScratch, networkFloat, networkPcm, connected);
+                servicePendingChat(sendCipher, connected, now);
 
                 fd_set readSet;
                 FD_ZERO(&readSet);
@@ -1084,7 +1475,8 @@ private:
                                 sendCipher, receiveCipher,
                                 std::span<const std::uint8_t>(receivedPacket.data(),
                                     static_cast<std::size_t>(bytes)),
-                                decrypted, source, connected, lastReceive,
+                                decrypted, source, localParticipant, encodedParticipant,
+                                connected, lastReceive,
                                 networkFloat)) {
                             packetsReceived_.fetch_add(1U, std::memory_order_relaxed);
                         } else {
@@ -1094,6 +1486,9 @@ private:
                 }
                 if (connected && GetTickCount64() - lastReceive > 5'000U) {
                     connected = false;
+                    appendControlEvent(RoomControlEvent{
+                        RoomControlEventType::PeerLeft, 0U, systemTimeMilliseconds(),
+                        remoteParticipant(), "Connection lost"});
                     state_.store(
                         hostMode_ ? PeerConnectionState::WaitingForPeer
                                   : PeerConnectionState::ConnectionLost,
@@ -1164,6 +1559,8 @@ private:
         std::span<const std::uint8_t> packet,
         std::array<std::uint8_t, maximumPlaintextBytes>& plaintext,
         const sockaddr_in& source,
+        const PeerParticipantInfo& localParticipant,
+        std::span<const std::uint8_t> encodedLocalParticipant,
         bool& connected,
         ULONGLONG& lastReceive,
         std::array<float, networkPacketFrames>& networkFloat) noexcept {
@@ -1210,18 +1607,78 @@ private:
             return false;
         }
         lastReceive = GetTickCount64();
+        const auto payload = std::span<const std::uint8_t>(
+            plaintext.data(), payloadBytes);
 
         if (type == PacketType::Hello && hostMode_) {
+            PeerParticipantInfo participant;
+            if (!decodeParticipant(payload, participant)) {
+                return false;
+            }
             remoteAddress_ = source;
+            setRemoteParticipant(participant);
+            if (!compatibleParticipants(localParticipant, participant)) {
+                connected = false;
+                state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
+                appendControlEvent(RoomControlEvent{
+                    RoomControlEventType::VersionMismatch, 0U,
+                    systemTimeMilliseconds(), participant,
+                    "This room requires the exact same JamLink build"});
+                static_cast<void>(sendPacket(
+                    sendCipher, PacketType::VersionMismatch, 0U, 0U,
+                    encodedLocalParticipant));
+                return true;
+            }
+            const bool wasConnected = connected;
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
-            constexpr std::array<std::uint8_t, 2U> ack{{'O', 'K'}};
-            static_cast<void>(sendPacket(sendCipher, PacketType::HelloAck, 0U, 0U, ack));
+            static_cast<void>(sendPacket(
+                sendCipher, PacketType::HelloAck, 0U, 0U,
+                encodedLocalParticipant));
+            if (!wasConnected) {
+                appendControlEvent(RoomControlEvent{
+                    RoomControlEventType::PeerJoined, 0U,
+                    systemTimeMilliseconds(), participant, "joined"});
+            }
             return true;
         }
         if (type == PacketType::HelloAck && !hostMode_) {
+            PeerParticipantInfo participant;
+            if (!decodeParticipant(payload, participant)) {
+                return false;
+            }
+            setRemoteParticipant(participant);
+            if (!compatibleParticipants(localParticipant, participant)) {
+                connected = false;
+                state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
+                appendControlEvent(RoomControlEvent{
+                    RoomControlEventType::VersionMismatch, 0U,
+                    systemTimeMilliseconds(), participant,
+                    "This room requires the exact same JamLink build"});
+                return true;
+            }
+            const bool wasConnected = connected;
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
+            if (!wasConnected) {
+                appendControlEvent(RoomControlEvent{
+                    RoomControlEventType::PeerJoined, 0U,
+                    systemTimeMilliseconds(), participant, "joined"});
+            }
+            return true;
+        }
+        if (type == PacketType::VersionMismatch && !hostMode_) {
+            PeerParticipantInfo participant;
+            if (!decodeParticipant(payload, participant)) {
+                return false;
+            }
+            setRemoteParticipant(participant);
+            connected = false;
+            state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
+            appendControlEvent(RoomControlEvent{
+                RoomControlEventType::VersionMismatch, 0U,
+                systemTimeMilliseconds(), participant,
+                "This room requires the exact same JamLink build"});
             return true;
         }
         if (type == PacketType::Ping && payloadBytes == sizeof(std::uint64_t)) {
@@ -1239,6 +1696,14 @@ private:
                     std::min<std::uint64_t>(now - sentAt, 60'000'000ULL),
                     std::memory_order_relaxed);
             }
+            return true;
+        }
+        if (type == PacketType::Chat && connected) {
+            return receiveChatMessage(sendCipher, payload);
+        }
+        if (type == PacketType::ChatAck && connected
+            && payloadBytes == sizeof(std::uint64_t)) {
+            receiveChatAcknowledgement(readU64(plaintext.data()));
             return true;
         }
         if (type != PacketType::Audio || !connected) {
@@ -1288,6 +1753,19 @@ private:
     std::uint32_t nonceCounter_{0U};
     bool nonceExhausted_{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence_{};
+    mutable std::mutex controlMutex_;
+    PeerParticipantInfo localParticipant_{
+        "local-development", "", "Musician", "avatar:guitar-electric",
+        "Guitar", "development", "development", "test"};
+    PeerParticipantInfo remoteParticipant_;
+    std::deque<PendingChat> pendingChat_;
+    std::deque<RoomControlEvent> controlEvents_;
+    std::deque<ULONGLONG> outboundChatTimes_;
+    std::deque<ULONGLONG> inboundChatTimes_;
+    std::array<std::uint64_t, maximumRememberedChatIds> receivedChatIds_{};
+    std::size_t receivedChatCount_{0U};
+    std::size_t receivedChatCursor_{0U};
+    std::uint64_t nextChatMessageId_{1U};
     std::atomic<bool> stopRequested_{false};
     std::atomic<PeerConnectionState> state_{PeerConnectionState::Idle};
     std::atomic<std::uint32_t> sendMuted_{0U};

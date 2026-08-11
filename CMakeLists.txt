@@ -4,11 +4,27 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
 )
+
+set(JAMLINK_BUILD_IDENTITY "source")
+find_package(Git QUIET)
+if(Git_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --verify HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE JAMLINK_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(JAMLINK_GIT_COMMIT MATCHES "^[0-9a-fA-F]{40}$")
+        set(JAMLINK_BUILD_IDENTITY "${JAMLINK_GIT_COMMIT}")
+    endif()
+endif()
+set(JAMLINK_RELEASE_CHANNEL "test" CACHE STRING "JamLink release channel")
 
 set(JAMLINK_LICENSE_ID "GPL-3.0-or-later")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
@@ -43,13 +59,34 @@ target_include_directories(jamlink_core
 jamlink_set_warnings(jamlink_core)
 
 if(WIN32)
+    add_library(jamlink_asio_sdk STATIC
+        third_party/asio-sdk/common/asio.cpp
+        third_party/asio-sdk/host/asiodrivers.cpp
+        third_party/asio-sdk/host/pc/asiolist.cpp
+    )
+    target_compile_features(jamlink_asio_sdk PUBLIC cxx_std_20)
+    set_target_properties(jamlink_asio_sdk PROPERTIES CXX_EXTENSIONS OFF)
+    target_include_directories(jamlink_asio_sdk
+        PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio-sdk/common"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio-sdk/host"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asio-sdk/host/pc"
+    )
+    target_compile_definitions(jamlink_asio_sdk PRIVATE _CRT_SECURE_NO_WARNINGS)
+    if(MSVC)
+        target_compile_options(jamlink_asio_sdk PRIVATE /W0)
+    endif()
+
     add_library(jamlink_platform_audio STATIC
+        src/platform/windows/asio_soundcheck_audio_service.cpp
         src/platform/windows/wasapi_soundcheck_audio_service.cpp
+        src/platform/windows/wasapi_secondary_capture.cpp
+        src/platform/windows/windows_soundcheck_audio_service.cpp
         src/platform/windows/windows_peer_audio_transport.cpp
     )
     target_link_libraries(jamlink_platform_audio
         PUBLIC JamLink::Core
-        PRIVATE avrt bcrypt ole32 oleaut32 propsys ws2_32
+        PRIVATE jamlink_asio_sdk advapi32 avrt bcrypt ole32 oleaut32 propsys ws2_32
     )
 else()
     add_library(jamlink_platform_audio STATIC
@@ -70,12 +107,49 @@ if(JAMLINK_BUILD_TESTS)
     include(CTest)
     enable_testing()
     add_subdirectory(tests)
+    find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME jamlink_directory_tests
+            COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_directory.py
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/services/directory"
+        )
+        set_tests_properties(jamlink_directory_tests PROPERTIES
+            TIMEOUT 30 LABELS "service;directory")
+    endif()
 endif()
 
 if(JAMLINK_BUILD_TOOLS)
     add_subdirectory(tools/core_stress)
+    if(WIN32)
+        add_subdirectory(tools/audio_probe)
+    endif()
+endif()
+
+if(WIN32 AND JAMLINK_BUILD_DESKTOP)
+    add_executable(jamlink_updater tools/updater/main.cpp)
+    target_compile_features(jamlink_updater PRIVATE cxx_std_20)
+    set_target_properties(jamlink_updater PROPERTIES
+        CXX_EXTENSIONS OFF
+        OUTPUT_NAME JamLinkUpdater
+    )
+    jamlink_set_warnings(jamlink_updater)
 endif()
 
 if(JAMLINK_BUILD_DESKTOP)
     add_subdirectory(apps/desktop)
+endif()
+
+if(WIN32 AND JAMLINK_BUILD_DESKTOP)
+    if(BUILD_TESTING)
+        add_test(
+            NAME jamlink_updater_helper_tests
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/updater_helper_test.ps1"
+                -Updater "$<TARGET_FILE:jamlink_updater>"
+                -TestRoot "${CMAKE_CURRENT_BINARY_DIR}/tests/updater-helper-fixture"
+        )
+        set_tests_properties(jamlink_updater_helper_tests PROPERTIES
+            TIMEOUT 30 LABELS "update")
+    endif()
 endif()

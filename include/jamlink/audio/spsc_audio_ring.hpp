@@ -98,7 +98,8 @@ public:
 
     // Control-thread API; both producer and consumer must be stopped.
     void clear() noexcept {
-        std::fill(samples_.begin(), samples_.end(), 0.0F);
+        // Resetting both cursors makes old samples unreachable. The producer
+        // is stopped by contract, so no backing-buffer sweep is necessary.
         readCursor_.value.store(0U, std::memory_order_relaxed);
         writeCursor_.value.store(0U, std::memory_order_relaxed);
         underruns_.store(0U, std::memory_order_relaxed);

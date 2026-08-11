@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace jamlink::network {
 
@@ -18,9 +19,49 @@ enum class PeerConnectionState : std::uint8_t {
     Connecting,
     Connected,
     InviteInvalid,
+    VersionMismatch,
     SocketFailed,
     EncryptionFailed,
     ConnectionLost
+};
+
+inline constexpr std::uint16_t currentMediaProtocolVersion = 2U;
+inline constexpr std::uint16_t currentControlProtocolVersion = 1U;
+inline constexpr std::size_t maximumChatMessageBytes = 512U;
+
+// Identity and compatibility information exchanged inside the authenticated
+// room handshake. The visible handle is never used as the stable identity.
+// These values live on the control/network worker only, never in an audio
+// callback.
+struct PeerParticipantInfo final {
+    std::string profileId;
+    std::string handle;
+    std::string displayName;
+    std::string avatarId;
+    std::string primaryInstrument;
+    std::string applicationVersion;
+    std::string buildIdentity;
+    std::string releaseChannel;
+    std::uint16_t mediaProtocolVersion{currentMediaProtocolVersion};
+    std::uint16_t controlProtocolVersion{currentControlProtocolVersion};
+
+    bool operator==(const PeerParticipantInfo&) const = default;
+};
+
+enum class RoomControlEventType : std::uint8_t {
+    PeerJoined,
+    PeerLeft,
+    ChatMessage,
+    ChatDeliveryFailed,
+    VersionMismatch
+};
+
+struct RoomControlEvent final {
+    RoomControlEventType type{RoomControlEventType::ChatMessage};
+    std::uint64_t messageId{0U};
+    std::uint64_t timestampMilliseconds{0U};
+    PeerParticipantInfo participant;
+    std::string text;
 };
 
 // Independent logical streams. Instrument audio and voice travel separately so
@@ -100,6 +141,17 @@ public:
         bool prepareInternetReachability = true) = 0;
     [[nodiscard]] virtual bool join(const std::string& inviteCode) = 0;
     virtual void stop() noexcept = 0;
+
+    // Must be configured while stopped. The application/build identity is
+    // authenticated by the same AES-GCM session as audio before a peer can be
+    // considered connected.
+    virtual void setLocalParticipant(PeerParticipantInfo participant) = 0;
+
+    // Reliable, bounded room control. Chat uses acknowledgements, retry and
+    // deduplication independently of the non-retransmitted music packets.
+    [[nodiscard]] virtual bool sendChatMessage(const std::string& plainText) = 0;
+    [[nodiscard]] virtual std::vector<RoomControlEvent> takeControlEvents() = 0;
+    [[nodiscard]] virtual PeerParticipantInfo remoteParticipant() const = 0;
 
     // Mutes everything this peer sends, which is the room mute control.
     virtual void setSendMuted(bool muted) noexcept = 0;

@@ -8,7 +8,7 @@ The native desktop shell uses the official MSVC 2022 x64 Qt 6.10.3 kit. JamLink 
 
 Used scope:
 
-- Qt Core, Gui, Qml, and Quick;
+- Qt Core, Gui, Network, Qml, and Quick;
 - QML imports `QtQuick.Controls.Basic`, `QtQuick.Effects`, and `QtQuick.Layouts`;
 - Qt SVG's image-format plugin decodes the project SVG icons;
 - Qt Multimedia is not used.
@@ -26,6 +26,17 @@ The installed kit's `qtbase-6.10.3.spdx.json`, `qtdeclarative-6.10.3.spdx.json`,
 ## Windows platform/runtime components
 
 JamLink directly uses Windows 11 SDK/system interfaces: WASAPI/MMDevice (`IAudioClient3`, capture/render clients, endpoint properties), Multimedia Class Scheduler, Winsock, Windows CNG AES-GCM/random generation, COM automation for UPnP NAT mapping, and shell/graphics facilities used by Qt. These are operating-system interfaces, not third-party libraries vendored in this repository. The package also contains the Microsoft Visual C++ 2022 x64 redistributable files allowed by the installed Visual Studio redist list, with that list copied as `MSVC_REDISTRIBUTABLE_LICENSE.txt`.
+
+### Steinberg ASIO SDK 2.3.4
+
+The Windows native-audio target directly builds an unmodified subset from the
+official `ASIO-SDK_2.3.4_2025-10-15.zip` archive (SHA-256
+`d5ebf0c20dd2c5f43771fd0c1418f4b361bf52434ee670097cfa6b3a335e2eca`).
+JamLink selects the SDK's GPL version 3 alternative for the ASIO interface
+files. The separately licensed host helpers retain their embedded
+three-clause BSD-style terms. The exact retained file list and trademark notice
+are in [`third_party/asio-sdk/README.md`](third_party/asio-sdk/README.md), and
+the SDK license is retained beside it. No hardware-vendor driver is bundled.
 
 ## Runtime network service
 

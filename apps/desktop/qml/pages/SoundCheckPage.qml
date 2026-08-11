@@ -48,7 +48,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Sound Check"
                 color: "#f4f5f6"
-                font.family: "Segoe UI Variable Display"
+                font.family: "Segoe UI"
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
             }
@@ -56,7 +56,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Only you can hear this"
                 color: "#929aa0"
-                font.family: "Segoe UI Variable Text"
+                font.family: "Segoe UI"
                 font.pixelSize: 11
             }
         }
@@ -85,7 +85,7 @@ Item {
                 Text {
                     text: "GUITAR"
                     color: "#f1f2f3"
-                    font.family: "Segoe UI Variable Text"
+                    font.family: "Segoe UI"
                     font.pixelSize: 10
                     font.weight: Font.Medium
                 }
@@ -121,7 +121,7 @@ Item {
                             root.controller.instrumentMonitorGain,
                             root.controller.instrumentMonitorEnabled)
                         color: "#d4d9dc"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                 }
@@ -132,7 +132,7 @@ Item {
                         width: parent.width - instrumentSwitch.width
                         text: "Monitor"
                         color: "#d8dde0"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                     }
                     JamSwitch {
@@ -158,7 +158,7 @@ Item {
                         color: root.controller.audioActive ? "#aeb9b1" : "#757e84"
                         elide: Text.ElideRight
                         width: parent.width - 22
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                 }
@@ -177,7 +177,7 @@ Item {
                 Text {
                     text: "MICROPHONE"
                     color: "#f1f2f3"
-                    font.family: "Segoe UI Variable Text"
+                    font.family: "Segoe UI"
                     font.pixelSize: 10
                     font.weight: Font.Medium
                 }
@@ -213,7 +213,7 @@ Item {
                             root.controller.voiceMonitorGain,
                             root.controller.voiceMonitorEnabled)
                         color: "#d4d9dc"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                 }
@@ -224,7 +224,7 @@ Item {
                         width: parent.width - voiceSwitch.width
                         text: "Monitor"
                         color: "#d8dde0"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                     }
                     JamSwitch {
@@ -252,7 +252,7 @@ Item {
                         color: "#aeb5ba"
                         elide: Text.ElideRight
                         width: parent.width - 22
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 10
                     }
                 }
@@ -276,7 +276,7 @@ Item {
             anchors.margins: 14
             text: "OUTPUT"
             color: "#f1f2f3"
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 10
             font.weight: Font.Medium
         }
@@ -329,7 +329,7 @@ Item {
             text: root.levelText(root.controller.outputLevel)
             color: "#d4d9dc"
             horizontalAlignment: Text.AlignRight
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 10
         }
     }
@@ -357,7 +357,7 @@ Item {
             color: "#89949a"
             elide: Text.ElideRight
             width: parent.width - outputTest.width - 32
-            font.family: "Segoe UI Variable Text"
+            font.family: "Segoe UI"
             font.pixelSize: 10
         }
         JamButton {

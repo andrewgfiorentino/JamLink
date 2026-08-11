@@ -12,7 +12,7 @@ Separately identified protocol specifications, public interoperability headers, 
 
 JamLink-owned files retain their `GPL-3.0-or-later` grant. A distributed combined binary may have to be conveyed under GPL version 3 only when it incorporates a dependency offered under `GPL-3.0-only`; that narrower combined-work condition does not relicense the original JamLink files.
 
-The current Qt 6.10.3 desktop build explicitly selects Qt's `GPL-3.0-only` alternative. Any distributed combined desktop binary must therefore be conveyed under GPL version 3 with complete corresponding source and the required Qt/third-party notices. No JamLink-owned file loses its `GPL-3.0-or-later` grant.
+The current Qt 6.10.3 desktop build explicitly selects Qt's `GPL-3.0-only` alternative, and the included Steinberg ASIO SDK interface files select GPL version 3. Any distributed combined desktop binary must therefore be conveyed under GPL version 3 with complete corresponding source and the required Qt/ASIO/third-party notices. No JamLink-owned file loses its `GPL-3.0-or-later` grant.
 
 ## Third-party dependencies
 

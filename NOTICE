@@ -25,6 +25,11 @@ exact corresponding-source identities and obligations are documented in
 SOURCE_AND_LICENSES.md, THIRD_PARTY_LICENSES.md, and DEPENDENCIES.md.
 Qt and the Qt logo are trademarks of The Qt Company Ltd.
 
+The Windows audio backend includes selected files from the Steinberg ASIO SDK
+2.3.4 under GPL version 3 and embedded three-clause BSD-style helper terms.
+ASIO is a trademark of Steinberg Media Technologies GmbH. The retained SDK
+license and provenance are under third_party/asio-sdk.
+
 The Windows test ZIP contains Microsoft Visual C++ 2022 x64 redistributable
 runtime files under Microsoft's installed Visual Studio redist terms. The
 package includes MSVC_REDISTRIBUTABLE_LICENSE.txt.

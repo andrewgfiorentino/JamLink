@@ -6,11 +6,14 @@
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
+#include "update_manager.hpp"
 
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
+#include <QVariantList>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <cstdint>
@@ -80,6 +83,30 @@ class AppController final : public QObject {
     Q_PROPERTY(QString latencyModeDetail READ latencyModeDetail NOTIFY settingsChanged)
     Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
     Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
+    Q_PROPERTY(QString updateStatus READ updateStatus NOTIFY updateChanged)
+    Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY updateChanged)
+    Q_PROPERTY(bool updateBusy READ updateBusy NOTIFY updateChanged)
+    Q_PROPERTY(double updateProgress READ updateProgress NOTIFY updateChanged)
+
+    Q_PROPERTY(QString profileId READ profileId CONSTANT)
+    Q_PROPERTY(QString profileHandle READ profileHandle WRITE setProfileHandle NOTIFY profileChanged)
+    Q_PROPERTY(QString profileDisplayName READ profileDisplayName WRITE setProfileDisplayName NOTIFY profileChanged)
+    Q_PROPERTY(QString profileAvatarId READ profileAvatarId WRITE setProfileAvatarId NOTIFY profileChanged)
+    Q_PROPERTY(QUrl profileCustomAvatarSource READ profileCustomAvatarSource NOTIFY profileChanged)
+    Q_PROPERTY(QString profilePrimaryInstrument READ profilePrimaryInstrument WRITE setProfilePrimaryInstrument NOTIFY profileChanged)
+    Q_PROPERTY(QString profileGenres READ profileGenres WRITE setProfileGenres NOTIFY profileChanged)
+    Q_PROPERTY(QString profileBio READ profileBio WRITE setProfileBio NOTIFY profileChanged)
+    Q_PROPERTY(QString profileRegion READ profileRegion WRITE setProfileRegion NOTIFY profileChanged)
+    Q_PROPERTY(QStringList profileAvatarIds READ profileAvatarIds CONSTANT)
+    Q_PROPERTY(QStringList profileAvatarLabels READ profileAvatarLabels CONSTANT)
+    Q_PROPERTY(QStringList profileInstrumentOptions READ profileInstrumentOptions CONSTANT)
+
+    Q_PROPERTY(QString remoteDisplayName READ remoteDisplayName NOTIFY roomChanged)
+    Q_PROPERTY(QString remoteHandle READ remoteHandle NOTIFY roomChanged)
+    Q_PROPERTY(QString remoteAvatarId READ remoteAvatarId NOTIFY roomChanged)
+    Q_PROPERTY(QString remotePrimaryInstrument READ remotePrimaryInstrument NOTIFY roomChanged)
+    Q_PROPERTY(QVariantList chatMessages READ chatMessages NOTIFY chatChanged)
+    Q_PROPERTY(int unreadChatCount READ unreadChatCount NOTIFY chatChanged)
 
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingChanged)
@@ -188,6 +215,38 @@ public:
     [[nodiscard]] QString latencyModeDetail() const;
     [[nodiscard]] QString applicationVersion() const;
     [[nodiscard]] QString qtVersion() const;
+    [[nodiscard]] QString updateStatus() const;
+    [[nodiscard]] bool updateAvailable() const noexcept;
+    [[nodiscard]] bool updateBusy() const noexcept;
+    [[nodiscard]] double updateProgress() const noexcept;
+    [[nodiscard]] UpdateManager* updateManager() noexcept;
+
+    [[nodiscard]] QString profileId() const;
+    [[nodiscard]] QString profileHandle() const;
+    void setProfileHandle(const QString& value);
+    [[nodiscard]] QString profileDisplayName() const;
+    void setProfileDisplayName(const QString& value);
+    [[nodiscard]] QString profileAvatarId() const;
+    void setProfileAvatarId(const QString& value);
+    [[nodiscard]] QUrl profileCustomAvatarSource() const;
+    [[nodiscard]] QString profilePrimaryInstrument() const;
+    void setProfilePrimaryInstrument(const QString& value);
+    [[nodiscard]] QString profileGenres() const;
+    void setProfileGenres(const QString& value);
+    [[nodiscard]] QString profileBio() const;
+    void setProfileBio(const QString& value);
+    [[nodiscard]] QString profileRegion() const;
+    void setProfileRegion(const QString& value);
+    [[nodiscard]] QStringList profileAvatarIds() const;
+    [[nodiscard]] QStringList profileAvatarLabels() const;
+    [[nodiscard]] QStringList profileInstrumentOptions() const;
+
+    [[nodiscard]] QString remoteDisplayName() const;
+    [[nodiscard]] QString remoteHandle() const;
+    [[nodiscard]] QString remoteAvatarId() const;
+    [[nodiscard]] QString remotePrimaryInstrument() const;
+    [[nodiscard]] QVariantList chatMessages() const;
+    [[nodiscard]] int unreadChatCount() const noexcept;
 
     [[nodiscard]] bool recording() const noexcept;
     [[nodiscard]] QString recordingElapsed() const;
@@ -219,10 +278,16 @@ public:
     Q_INVOKABLE void joinSession(const QString& inviteCode);
     Q_INVOKABLE void leaveSession();
     Q_INVOKABLE void copyInvite();
+    Q_INVOKABLE bool setCustomAvatar(const QUrl& source);
+    Q_INVOKABLE void clearCustomAvatar();
+    Q_INVOKABLE bool sendChatMessage(const QString& text);
+    Q_INVOKABLE void markChatRead();
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void openRecordingFolder();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
     Q_INVOKABLE void persistNow();
+    Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void installUpdate();
 
 signals:
     void currentPageChanged();
@@ -232,6 +297,9 @@ signals:
     void tunerChanged();
     void recordingChanged();
     void settingsChanged();
+    void profileChanged();
+    void chatChanged();
+    void updateChanged();
 
 private:
     struct DeviceOption final {
@@ -262,6 +330,7 @@ private:
         std::uint32_t widthOverride,
         std::uint32_t heightOverride);
     void loadDeviceInventory();
+    void chooseInitialAudioDefaults();
     void updateOutputCapabilities();
     void applySelectionsToPreferences();
     void updateReadinessConfiguration();
@@ -279,6 +348,15 @@ private:
         float& stored,
         double gain);
     void applyTunerMute();
+    [[nodiscard]] jamlink::network::PeerParticipantInfo localParticipant() const;
+    void processRoomControlEvents();
+    void appendChatEntry(
+        const QString& sender,
+        const QString& handle,
+        const QString& text,
+        std::uint64_t timestampMilliseconds,
+        bool own,
+        bool system);
     [[nodiscard]] std::filesystem::path defaultRecordingDirectory() const;
 
     static constexpr std::size_t instrumentStream =
@@ -287,6 +365,7 @@ private:
         static_cast<std::size_t>(jamlink::network::AudioStreamId::Voice);
 
     jamlink::preferences::PreferencesStore store_;
+    UpdateManager updateManager_;
     jamlink::preferences::UserPreferences preferences_;
     jamlink::control::ReadinessTracker readiness_;
     QTimer saveTimer_;
@@ -311,6 +390,9 @@ private:
     bool tunerActive_{false};
     jamlink::record::RecorderTelemetry recorderTelemetry_;
     QString recordingLocation_;
+    jamlink::network::PeerParticipantInfo remoteParticipant_;
+    QVariantList chatMessages_;
+    int unreadChatCount_{0};
 
     std::vector<DeviceOption> instrumentOptions_;
     std::vector<DeviceOption> voiceOptions_;

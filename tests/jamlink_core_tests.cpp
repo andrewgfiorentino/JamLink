@@ -3,7 +3,9 @@
 #include "jamlink/audio/audio_route_graph.hpp"
 #include "jamlink/audio/async_mono_resampler.hpp"
 #include "jamlink/audio/gain_stage.hpp"
+#include "jamlink/audio/hybrid_clock_bridge.hpp"
 #include "jamlink/audio/level_meter.hpp"
+#include "jamlink/audio/native_sample_conversion.hpp"
 #include "jamlink/audio/private_soundcheck_processor.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/clock/clock_domain_controller.hpp"
@@ -782,6 +784,215 @@ JAMLINK_TEST(clock_drift_estimator_tracks_known_rate_offset) {
     estimator.update(1'000'000U, 1'000'100U);
     EXPECT_TRUE(estimator.hasEstimate());
     EXPECT_NEAR(estimator.driftPpm(), 100.0, 1.0e-6);
+}
+
+JAMLINK_TEST(native_sample_conversion_covers_asio_pcm_and_float_formats) {
+    constexpr std::array<float, 7U> source{
+        -1.0F, -0.5F, -0.125F, 0.0F, 0.125F, 0.5F, 1.0F};
+    constexpr std::array formats{
+        jamlink::audio::NativeSampleFormat::Int16LittleEndian,
+        jamlink::audio::NativeSampleFormat::Int24LittleEndian,
+        jamlink::audio::NativeSampleFormat::Int32LittleEndian,
+        jamlink::audio::NativeSampleFormat::Float32LittleEndian,
+        jamlink::audio::NativeSampleFormat::Float64LittleEndian,
+        jamlink::audio::NativeSampleFormat::Int16BigEndian,
+        jamlink::audio::NativeSampleFormat::Int24BigEndian,
+        jamlink::audio::NativeSampleFormat::Int32BigEndian,
+        jamlink::audio::NativeSampleFormat::Float32BigEndian,
+        jamlink::audio::NativeSampleFormat::Float64BigEndian};
+    std::array<std::uint8_t, 56U> encoded{};
+    std::array<float, source.size()> decoded{};
+
+    for (const auto format : formats) {
+        std::fill(encoded.begin(), encoded.end(), std::uint8_t{0U});
+        std::fill(decoded.begin(), decoded.end(), 0.0F);
+        trackedAllocationCount.store(0U, std::memory_order_relaxed);
+        allocationTrackingEnabled.store(true, std::memory_order_relaxed);
+        jamlink::audio::floatToNativeSamples(format, source, encoded.data());
+        jamlink::audio::nativeSamplesToFloat(format, encoded.data(), decoded);
+        allocationTrackingEnabled.store(false, std::memory_order_relaxed);
+        EXPECT_TRUE(trackedAllocationCount.load(std::memory_order_relaxed) == 0U);
+        const double tolerance = jamlink::audio::bytesPerNativeSample(format) == 2U
+            ? 4.0e-5 : 2.0e-6;
+        for (std::size_t index = 0U; index < source.size(); ++index) {
+            EXPECT_NEAR(decoded[index], source[index], tolerance);
+        }
+    }
+}
+
+JAMLINK_TEST(native_float_conversion_sanitizes_non_finite_values) {
+    const std::array<float, 4U> source{
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+        2.0F};
+    std::array<std::uint8_t, 16U> encoded{};
+    std::array<float, 4U> decoded{};
+    jamlink::audio::floatToNativeSamples(
+        jamlink::audio::NativeSampleFormat::Float32LittleEndian,
+        source,
+        encoded.data());
+    jamlink::audio::nativeSamplesToFloat(
+        jamlink::audio::NativeSampleFormat::Float32LittleEndian,
+        encoded.data(),
+        decoded);
+    EXPECT_NEAR(decoded[0], 0.0, 0.0);
+    EXPECT_NEAR(decoded[1], 0.0, 0.0);
+    EXPECT_NEAR(decoded[2], 0.0, 0.0);
+    EXPECT_NEAR(decoded[3], 1.0, 0.0);
+}
+
+JAMLINK_TEST(hybrid_clock_bridge_resamples_secondary_voice_without_allocating) {
+    jamlink::audio::HybridClockBridge bridge(65'536U, 2'048U, 48'000U);
+    bridge.configureStopped(44'100U);
+    std::array<float, 441U> input{};
+    std::array<float, 480U> output{};
+    for (std::size_t index = 0U; index < input.size(); ++index) {
+        input[index] = static_cast<float>(index) / static_cast<float>(input.size());
+    }
+    trackedAllocationCount.store(0U, std::memory_order_relaxed);
+    allocationTrackingEnabled.store(true, std::memory_order_release);
+    for (std::size_t block = 0U; block < 20U; ++block) {
+        if (block == 10U) {
+            const auto generation = bridge.requestSourceTransition(44'100U);
+            EXPECT_TRUE(generation != 0U);
+            static_cast<void>(bridge.pull(output));
+            EXPECT_TRUE(bridge.transitionApplied(generation));
+        }
+        EXPECT_TRUE(bridge.push(input) == input.size());
+        static_cast<void>(bridge.pull(output));
+    }
+    allocationTrackingEnabled.store(false, std::memory_order_release);
+    EXPECT_TRUE(trackedAllocationCount.load(std::memory_order_relaxed) == 0U);
+    EXPECT_TRUE(std::any_of(output.begin(), output.end(), [](float sample) {
+        return sample > 0.01F;
+    }));
+    EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float sample) {
+        return std::isfinite(sample) && sample >= 0.0F && sample <= 1.0F;
+    }));
+}
+
+JAMLINK_TEST(hybrid_clock_bridge_absorbs_drift_at_48k_and_44k1) {
+    constexpr std::size_t outputFrames = 128U;
+    for (const std::uint32_t sourceRate : std::array{44'100U, 48'000U}) {
+        for (const double driftPpm : std::array{-120.0, 120.0}) {
+            jamlink::audio::HybridClockBridge bridge(65'536U, 2'048U, 48'000U);
+            bridge.configureStopped(sourceRate);
+            std::array<float, 256U> input{};
+            std::array<float, outputFrames> output{};
+            std::fill(input.begin(), input.end(), 0.2F);
+            double sourceAccumulator = 0.0;
+            std::size_t maximumOccupancy = 0U;
+            constexpr std::size_t oneHourBlocks = 1'350'000U;
+            for (std::size_t block = 0U; block < oneHourBlocks; ++block) {
+                sourceAccumulator += static_cast<double>(outputFrames)
+                    * static_cast<double>(sourceRate) / 48'000.0
+                    * (1.0 + driftPpm * 1.0e-6);
+                const auto frames = static_cast<std::size_t>(std::floor(sourceAccumulator));
+                sourceAccumulator -= static_cast<double>(frames);
+                EXPECT_TRUE(frames <= input.size());
+                static_cast<void>(bridge.push(
+                    std::span<const float>(input.data(), frames)));
+                static_cast<void>(bridge.pull(output));
+                maximumOccupancy = std::max(
+                    maximumOccupancy, bridge.sourceOccupancyFrames());
+                EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float sample) {
+                    return std::isfinite(sample) && std::abs(sample) <= 0.21F;
+                }));
+            }
+            EXPECT_TRUE(maximumOccupancy < 2'048U);
+            EXPECT_TRUE(bridge.overrunCount() == 0U);
+            EXPECT_TRUE(std::abs(bridge.correctionPpm()) <= 500.0);
+        }
+    }
+}
+
+JAMLINK_TEST(hybrid_clock_bridge_recovers_from_disconnect_and_source_replacement) {
+    jamlink::audio::HybridClockBridge bridge(65'536U, 2'048U, 48'000U);
+    bridge.configureStopped(48'000U);
+    std::array<float, 128U> input{};
+    std::array<float, 128U> output{};
+    std::fill(input.begin(), input.end(), 0.25F);
+    for (std::size_t block = 0U; block < 8U; ++block) {
+        static_cast<void>(bridge.push(input));
+        static_cast<void>(bridge.pull(output));
+    }
+    for (std::size_t block = 0U; block < 1'000U; ++block) {
+        static_cast<void>(bridge.pull(output));
+    }
+    EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float sample) {
+        return sample == 0.0F;
+    }));
+
+    const std::uint32_t transition = bridge.requestSourceTransition(44'100U);
+    static_cast<void>(bridge.pull(output));
+    EXPECT_TRUE(bridge.transitionApplied(transition));
+    std::array<float, 118U> replacement{};
+    std::fill(replacement.begin(), replacement.end(), -0.2F);
+    for (std::size_t block = 0U; block < 12U; ++block) {
+        static_cast<void>(bridge.push(replacement));
+        static_cast<void>(bridge.pull(output));
+    }
+    EXPECT_TRUE(std::any_of(output.begin(), output.end(), [](float sample) {
+        return sample < -0.01F;
+    }));
+    EXPECT_TRUE(bridge.overrunCount() == 0U);
+}
+
+JAMLINK_TEST(hybrid_clock_bridge_is_lock_free_under_concurrent_capture_and_render) {
+    jamlink::audio::HybridClockBridge bridge(65'536U, 2'048U, 48'000U);
+    bridge.configureStopped(48'000U);
+    constexpr std::size_t blockFrames = 128U;
+    constexpr std::size_t blockCount = 20'000U;
+    std::atomic<std::size_t> publishedBlocks{0U};
+    std::atomic<std::size_t> consumedBlocks{0U};
+    std::atomic<bool> producerFinished{false};
+    std::atomic<bool> validOutput{true};
+    std::atomic<std::size_t> nonSilentBlocks{0U};
+
+    std::thread producer([&] {
+        std::array<float, blockFrames> input{};
+        for (std::size_t block = 0U; block < blockCount; ++block) {
+            while (block > consumedBlocks.load(std::memory_order_acquire) + 16U) {
+                std::this_thread::yield();
+            }
+            const float value = (block & 1U) == 0U ? 0.25F : -0.25F;
+            std::fill(input.begin(), input.end(), value);
+            while (bridge.push(input) != input.size()) {
+                std::this_thread::yield();
+            }
+            publishedBlocks.store(block + 1U, std::memory_order_release);
+        }
+        producerFinished.store(true, std::memory_order_release);
+    });
+    std::thread consumer([&] {
+        std::array<float, blockFrames> output{};
+        while (!producerFinished.load(std::memory_order_acquire)
+               || consumedBlocks.load(std::memory_order_acquire)
+                    < publishedBlocks.load(std::memory_order_acquire)) {
+            static_cast<void>(bridge.pull(output));
+            if (!std::all_of(output.begin(), output.end(), [](float sample) {
+                    return std::isfinite(sample) && std::abs(sample) <= 0.251F;
+                })) {
+                validOutput.store(false, std::memory_order_relaxed);
+            }
+            if (std::any_of(output.begin(), output.end(), [](float sample) {
+                    return std::abs(sample) > 0.01F;
+                })) {
+                nonSilentBlocks.fetch_add(1U, std::memory_order_relaxed);
+            }
+            const auto consumed = consumedBlocks.load(std::memory_order_relaxed);
+            consumedBlocks.store(
+                std::min(publishedBlocks.load(std::memory_order_acquire), consumed + 1U),
+                std::memory_order_release);
+        }
+    });
+    producer.join();
+    consumer.join();
+
+    EXPECT_TRUE(validOutput.load(std::memory_order_relaxed));
+    EXPECT_TRUE(nonSilentBlocks.load(std::memory_order_relaxed) > blockCount / 2U);
+    EXPECT_TRUE(bridge.overrunCount() == 0U);
 }
 
 JAMLINK_TEST(clock_controller_bounds_occupancy_for_virtual_eight_hour_drift) {

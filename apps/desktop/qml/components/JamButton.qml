@@ -14,7 +14,7 @@ Button {
     }
     hoverEnabled: true
     implicitHeight: 38
-    font.family: "Segoe UI Variable Text"
+    font.family: "Segoe UI"
     font.pixelSize: 13
     font.weight: Font.Medium
 

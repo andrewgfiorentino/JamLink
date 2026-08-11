@@ -26,17 +26,28 @@ public:
           samples_(capacityFrames_, 0.0F) {}
 
     void configure(std::uint32_t sourceRate, std::uint32_t destinationRate) {
+        if (!tryConfigure(sourceRate, destinationRate)) {
+            throw std::invalid_argument("AsyncMonoResampler rate is outside the supported range");
+        }
+    }
+
+    [[nodiscard]] bool tryConfigure(
+        std::uint32_t sourceRate,
+        std::uint32_t destinationRate) noexcept {
         if (sourceRate < 8'000U || sourceRate > 384'000U
             || destinationRate < 8'000U || destinationRate > 384'000U) {
-            throw std::invalid_argument("AsyncMonoResampler rate is outside the supported range");
+            return false;
         }
         sourceRate_ = sourceRate;
         destinationRate_ = destinationRate;
         clear();
+        return true;
     }
 
     void clear() noexcept {
-        std::fill(samples_.begin(), samples_.end(), 0.0F);
+        // Cursor reset makes old storage unreachable. Avoid clearing the full
+        // backing array so a device transition remains constant-time in the
+        // master realtime callback.
         writeCursor_ = 0U;
         readCursor_ = 0.0;
         primed_ = false;

@@ -1,18 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-find_package(Qt6 6.10.3 REQUIRED COMPONENTS Core Gui Qml Quick)
+find_package(Qt6 6.10.3 REQUIRED COMPONENTS Core Gui Network Qml Quick)
 
 qt_standard_project_setup(REQUIRES 6.10.3)
 
 qt_add_executable(jamlink_desktop
     app_controller.cpp
-    app_controller.hpp
     main.cpp
+    update_manager.cpp
+    update_manager.hpp
 )
 
 qt_add_qml_module(jamlink_desktop
     URI JamLinkDesktop
     VERSION 1.0
+    SOURCES
+        app_controller.hpp
     QML_FILES
         qml/Main.qml
         qml/components/DeviceSelector.qml
@@ -23,12 +26,22 @@ qt_add_qml_module(jamlink_desktop
         qml/components/JamSlider.qml
         qml/components/JamSwitch.qml
         qml/components/LevelBar.qml
+        qml/components/ProfileAvatar.qml
         qml/pages/HomePage.qml
+        qml/pages/ProfilePage.qml
         qml/pages/RoomPage.qml
         qml/pages/SettingsPage.qml
         qml/pages/SoundCheckPage.qml
         qml/pages/TunerPage.qml
     RESOURCES
+        assets/avatar_bass.svg
+        assets/avatar_drums.svg
+        assets/avatar_guitar_acoustic.svg
+        assets/avatar_guitar_electric.svg
+        assets/avatar_keys.svg
+        assets/avatar_listener.svg
+        assets/avatar_synth.svg
+        assets/avatar_vocals.svg
         assets/arrow_back.svg
         assets/check_circle.svg
         assets/close.svg
@@ -47,17 +60,30 @@ target_link_libraries(jamlink_desktop
         JamLink::PlatformAudio
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Qml
         Qt6::Quick
 )
 target_compile_features(jamlink_desktop PRIVATE cxx_std_20)
 target_compile_definitions(jamlink_desktop
-    PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
+    PRIVATE
+        JAMLINK_VERSION_STRING="${PROJECT_VERSION}"
+        JAMLINK_BUILD_IDENTITY_STRING="${JAMLINK_BUILD_IDENTITY}"
+        JAMLINK_RELEASE_CHANNEL_STRING="${JAMLINK_RELEASE_CHANNEL}"
+)
 set_target_properties(jamlink_desktop PROPERTIES
     CXX_EXTENSIONS OFF
     OUTPUT_NAME JamLink
 )
 jamlink_set_warnings(jamlink_desktop)
+if(TARGET jamlink_updater)
+    add_dependencies(jamlink_desktop jamlink_updater)
+    add_custom_command(TARGET jamlink_desktop POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:jamlink_updater>"
+            "$<TARGET_FILE_DIR:jamlink_desktop>/JamLinkUpdater.exe"
+    )
+endif()
 if(MSVC)
     # Keep /W4 /WX for JamLink sources. Qt's generated QML cache translation
     # units instantiate code that emits the audited C4702 diagnostic internally.
@@ -65,17 +91,41 @@ if(MSVC)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(jamlink_desktop_updater_tests
+        update_manager.cpp
+        update_manager.hpp
+        updater_tests.cpp
+    )
+    target_link_libraries(
+        jamlink_desktop_updater_tests
+        PRIVATE Qt6::Core Qt6::Network Qt6::Qml)
+    target_compile_features(jamlink_desktop_updater_tests PRIVATE cxx_std_20)
+    set_target_properties(jamlink_desktop_updater_tests PROPERTIES CXX_EXTENSIONS OFF)
+    jamlink_set_warnings(jamlink_desktop_updater_tests)
+    if(MSVC)
+        target_compile_options(jamlink_desktop_updater_tests PRIVATE /external:W0)
+    endif()
+    add_test(NAME jamlink_desktop_updater_tests COMMAND jamlink_desktop_updater_tests)
+    set_tests_properties(jamlink_desktop_updater_tests PROPERTIES
+        TIMEOUT 30 LABELS "gui;update")
+
     add_executable(jamlink_desktop_controller_tests
         app_controller.cpp
         app_controller.hpp
         controller_tests.cpp
+        update_manager.cpp
+        update_manager.hpp
     )
     target_link_libraries(
         jamlink_desktop_controller_tests
-        PRIVATE JamLink::Core JamLink::PlatformAudio Qt6::Core Qt6::Gui Qt6::Qml)
+        PRIVATE JamLink::Core JamLink::PlatformAudio Qt6::Core Qt6::Gui Qt6::Network Qt6::Qml)
     target_compile_features(jamlink_desktop_controller_tests PRIVATE cxx_std_20)
     target_compile_definitions(jamlink_desktop_controller_tests
-        PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
+        PRIVATE
+            JAMLINK_VERSION_STRING="${PROJECT_VERSION}"
+            JAMLINK_BUILD_IDENTITY_STRING="${JAMLINK_BUILD_IDENTITY}"
+            JAMLINK_RELEASE_CHANNEL_STRING="${JAMLINK_RELEASE_CHANNEL}"
+    )
     set_target_properties(jamlink_desktop_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_desktop_controller_tests)
     if(MSVC)
@@ -178,6 +228,8 @@ if(BUILD_TESTING)
     )
     set_tests_properties(jamlink_desktop_controller_tests PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
+    set_tests_properties(jamlink_desktop_updater_tests PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
     set_tests_properties(
         jamlink_desktop_visual_second_launch
         PROPERTIES DEPENDS jamlink_desktop_visual_first_launch)
@@ -190,9 +242,26 @@ if(BUILD_TESTING)
     set_tests_properties(
         jamlink_desktop_visual_tuner
         PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    add_test(
+        NAME jamlink_desktop_visual_profile
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page profile
+            --width 532
+            --height 780
+            --minimum-capture-height 780
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-profile.png"
+    )
+    set_tests_properties(jamlink_desktop_visual_profile PROPERTIES
+        TIMEOUT 30
+        LABELS "gui;visual"
+        ENVIRONMENT_MODIFICATION "${_jamlink_visual_environment}"
+        DEPENDS jamlink_desktop_visual_tuner)
     set_tests_properties(
         jamlink_desktop_visual_high_dpi
-        PROPERTIES DEPENDS jamlink_desktop_visual_tuner)
+        PROPERTIES DEPENDS jamlink_desktop_visual_profile)
     set_property(
         TEST jamlink_desktop_visual_high_dpi APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "QT_SCREEN_SCALE_FACTORS=set:1.5")

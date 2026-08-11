@@ -15,6 +15,8 @@
 *.pdb
 *.ilk
 *.exe
+__pycache__/
+*.pyc
 
 # Local test and benchmark output
 /Testing/

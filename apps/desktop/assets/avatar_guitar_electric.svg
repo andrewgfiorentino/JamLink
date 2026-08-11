@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="#6d3fd0"/><stop offset="1" stop-color="#20123f"/></linearGradient></defs>
+  <circle cx="128" cy="128" r="124" fill="url(#b)"/><circle cx="128" cy="128" r="120" fill="none" stroke="#a888ee" stroke-width="3"/>
+  <path d="M79 166c-21-12-13-45 10-43 12 1 16-9 25-1l48-62 17 13-50 61c5 12-5 15-2 26 6 25-27 33-48 6Z" fill="#f3f0fb"/>
+  <path d="m153 70 17 13m-51 49 17 14m-37-6 13 9" fill="none" stroke="#8b56df" stroke-width="5" stroke-linecap="round"/>
+</svg>

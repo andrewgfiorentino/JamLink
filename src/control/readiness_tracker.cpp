@@ -18,6 +18,12 @@ void ReadinessTracker::setConfiguration(
     }
 }
 
+void ReadinessTracker::invalidate(SetupComponent component) noexcept {
+    auto& state = states_[index(component)];
+    state.verified = false;
+    state.verifiedFingerprint = 0U;
+}
+
 bool ReadinessTracker::markVerified(
     SetupComponent component,
     std::uint64_t fingerprint) noexcept {

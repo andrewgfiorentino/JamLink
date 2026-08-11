@@ -29,6 +29,26 @@ struct WindowPlacement final {
     bool operator==(const WindowPlacement&) const = default;
 };
 
+struct MusicianProfile final {
+    // Stable generated identity. Handles and display names may change without
+    // changing the identity exchanged in authenticated rooms.
+    std::string profileId;
+    std::string handle;
+    std::string displayName{"Musician"};
+    std::string avatarId{"avatar:guitar-electric"};
+    std::string customAvatarPath;
+    std::string primaryInstrument{"Guitar"};
+    std::string genres;
+    std::string bio;
+    std::string region;
+    bool shareInstrument{true};
+    bool shareGenres{true};
+    bool shareBio{false};
+    bool shareRegion{false};
+
+    bool operator==(const MusicianProfile&) const = default;
+};
+
 // Readiness is deliberately excluded. A restored device selection must be
 // revalidated before it can be treated as safe for room entry.
 struct UserPreferences final {
@@ -57,6 +77,7 @@ struct UserPreferences final {
     // How the receive buffer trades latency against tolerance of a rough
     // network: 0 lowest latency, 1 balanced, 2 most stable.
     std::uint32_t latencyMode{1U};
+    MusicianProfile profile;
     WindowPlacement window;
 
     bool operator==(const UserPreferences&) const = default;

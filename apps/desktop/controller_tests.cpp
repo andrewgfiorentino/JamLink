@@ -3,6 +3,10 @@
 #include "app_controller.hpp"
 
 #include <QCoreApplication>
+#include <QColor>
+#include <QImage>
+#include <QImageReader>
+#include <QUrl>
 
 #include <cmath>
 #include <filesystem>
@@ -35,13 +39,21 @@ public:
 class DeterministicAudioService final : public jamlink::audio::ISoundcheckAudioService {
 public:
     [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
-        const jamlink::audio::SoundcheckEndpointOption input{
-            "test:capture", "Test Capture — Input 1", 0U, 0U, false,
+        const jamlink::audio::SoundcheckEndpointOption asioInput{
+            "asio:test", "Test ASIO · Input 2", 1U, 0U, false,
+            48'000U, {64U, 128U, 256U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Test ASIO"};
+        const jamlink::audio::SoundcheckEndpointOption voiceA{
+            "test:voice-a", "USB Microphone A · Input 1", 0U, 0U, false,
             48'000U, {128U, 256U}};
+        const jamlink::audio::SoundcheckEndpointOption voiceB{
+            "test:voice-b", "USB Microphone B · Input 1", 0U, 0U, false,
+            44'100U, {128U, 256U}};
         const jamlink::audio::SoundcheckEndpointOption output{
-            "test:render", "Test Render — Output 1–2", 0U, 1U, true,
-            48'000U, {128U, 256U}};
-        return {{input}, {output}};
+            "asio:test", "Test ASIO · Outputs 1–2", 0U, 1U, true,
+            48'000U, {64U, 128U, 256U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Test ASIO"};
+        return {{asioInput, voiceA, voiceB}, {output}};
     }
     [[nodiscard]] bool start(
         const jamlink::audio::SoundcheckAudioConfiguration& configuration) override {
@@ -81,6 +93,12 @@ public:
     [[nodiscard]] jamlink::record::RecorderTelemetry recorderTelemetry()
         const noexcept override { return recorder; }
     void setPeerAudioExchange(jamlink::network::IPeerAudioExchange*) noexcept override {}
+    [[nodiscard]] jamlink::audio::VoiceEndpointChangeResult tryReplaceVoiceEndpoint(
+        const jamlink::audio::SoundcheckEndpointOption& option) override {
+        lastReplacement = option;
+        ++replacementCount;
+        return replacementResult;
+    }
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return current;
     }
@@ -99,6 +117,10 @@ public:
     float lastVoiceGain{0.0F};
     bool lastInstrumentEnabled{false};
     bool lastVoiceEnabled{false};
+    jamlink::audio::SoundcheckEndpointOption lastReplacement;
+    jamlink::audio::VoiceEndpointChangeResult replacementResult{
+        jamlink::audio::VoiceEndpointChangeResult::Applied};
+    std::size_t replacementCount{0U};
 };
 
 bool near(double left, double right) {
@@ -146,10 +168,33 @@ int main(int argc, char* argv[]) {
     first.setRemoteInstrumentGain(0.62);
     first.setRemoteVoiceGain(0.88);
     first.setTunerMutesInstrument(false);
+    const QString generatedProfileId = first.profileId();
+    passed = expect(!generatedProfileId.isEmpty(), "first launch generates a stable profile ID")
+        && passed;
+    first.setProfileDisplayName(QStringLiteral("Andrew"));
+    first.setProfileHandle(QStringLiteral("@Andrew.F"));
+    first.setProfilePrimaryInstrument(QStringLiteral("Guitar"));
+    first.setProfileGenres(QStringLiteral("Rock, Alternative"));
+    first.setProfileBio(QStringLiteral("Guitarist in Delaware"));
+    first.setProfileAvatarId(QStringLiteral("avatar:guitar-acoustic"));
     first.saveSoundcheck();
     passed = expect(first.allReady(), "explicit Sound Check save verifies current selections")
         && passed;
     first.updateWindowPlacement(120, 80, 532, 534);
+    const auto avatarInput = directory / "avatar-input.png";
+    QImage sourceAvatar(640, 480, QImage::Format_RGB32);
+    sourceAvatar.fill(QColor(QStringLiteral("#6a35bd")));
+    passed = expect(sourceAvatar.save(QString::fromStdWString(avatarInput.wstring()), "PNG"),
+                    "avatar input fixture is written")
+        && passed;
+    passed = expect(first.setCustomAvatar(
+                        QUrl::fromLocalFile(QString::fromStdWString(avatarInput.wstring()))),
+                    "custom avatar is decoded and sanitized")
+        && passed;
+    QImageReader sanitized(first.profileCustomAvatarSource().toLocalFile());
+    passed = expect(sanitized.size() == QSize(256, 256),
+                    "custom avatar is cropped to a bounded square thumbnail")
+        && passed;
     first.persistNow();
 
     jamlink::desktop::AppController second(path, true, QStringLiteral("auto"), 0U, 0U);
@@ -171,6 +216,22 @@ int main(int argc, char* argv[]) {
     passed = expect(near(second.remoteVoiceGain(), 0.88), "remote voice level restores")
         && passed;
     passed = expect(!second.tunerMutesInstrument(), "tuner mute preference restores") && passed;
+    passed = expect(second.profileId() == generatedProfileId,
+                    "stable profile ID survives restart")
+        && passed;
+    passed = expect(second.profileDisplayName() == QStringLiteral("Andrew")
+                        && second.profileHandle() == QStringLiteral("andrew.f"),
+                    "display name and normalized handle restore")
+        && passed;
+    passed = expect(second.profilePrimaryInstrument() == QStringLiteral("Guitar")
+                        && second.profileGenres() == QStringLiteral("Rock, Alternative")
+                        && second.profileBio() == QStringLiteral("Guitarist in Delaware"),
+                    "musician profile details restore")
+        && passed;
+    passed = expect(second.profileAvatarId() == QStringLiteral("avatar:custom")
+                        && second.profileCustomAvatarSource().isLocalFile(),
+                    "sanitized custom avatar restores")
+        && passed;
     passed = expect(second.hasPreferredWindowPosition(), "window placement flag restores")
         && passed;
     passed = expect(second.preferredWindowX() == 120 && second.preferredWindowY() == 80,
@@ -276,6 +337,26 @@ int main(int argc, char* argv[]) {
                     "unavailable production backend never skips Sound Check")
         && passed;
 
+    const auto missingHardwarePath = directory / "missing-hardware-preferences.jlpf";
+    jamlink::preferences::UserPreferences missingHardwarePreferences;
+    missingHardwarePreferences.instrument = {"missing:asio", "input:1", ""};
+    missingHardwarePreferences.voice = {"missing:usb-mic", "input:0", ""};
+    missingHardwarePreferences.output = {"missing:asio", "output:0", "output:1"};
+    passed = expect(jamlink::preferences::PreferencesStore(missingHardwarePath)
+                        .save(missingHardwarePreferences).succeeded,
+                    "missing-hardware production fixture is written")
+        && passed;
+    auto missingHardwareService = std::make_unique<DeterministicAudioService>();
+    auto* missingHardwareServiceView = missingHardwareService.get();
+    jamlink::desktop::AppController missingHardware(
+        missingHardwarePath, false, QStringLiteral("auto"), 0U, 0U, nullptr,
+        std::move(missingHardwareService));
+    QCoreApplication::processEvents();
+    passed = expect(missingHardware.currentPage() == QStringLiteral("soundcheck")
+                        && missingHardwareServiceView->startCount == 0U,
+                    "missing restored devices never silently fall back or auto-start")
+        && passed;
+
     const auto activePath = directory / "active-audio-preferences.jlpf";
     auto deterministicService = std::make_unique<DeterministicAudioService>();
     auto* deterministicServiceView = deterministicService.get();
@@ -304,6 +385,30 @@ int main(int argc, char* argv[]) {
     active.testOutput();
     passed = expect(deterministicServiceView->outputTestCount == 1U,
                     "output test reaches only the active local service")
+        && passed;
+    active.saveSoundcheck();
+    passed = expect(active.allReady(), "active hybrid setup can be verified") && passed;
+    passed = expect(active.instrumentDeviceIndex() == 0
+                        && active.voiceDeviceIndex() == 1
+                        && active.outputDeviceIndex() == 0,
+                    "fresh setup favors an ASIO master with a separate WASAPI microphone")
+        && passed;
+    active.setVoiceDeviceIndex(2);
+    passed = expect(deterministicServiceView->replacementCount == 1U
+                        && deterministicServiceView->startCount == 1U,
+                    "WASAPI microphone replacement does not restart the ASIO master")
+        && passed;
+    passed = expect(deterministicServiceView->lastReplacement.endpointId == "test:voice-b"
+                        && active.audioActive() && !active.allReady(),
+                    "microphone replacement invalidates readiness without stopping audio")
+        && passed;
+    deterministicServiceView->replacementResult =
+        jamlink::audio::VoiceEndpointChangeResult::Failed;
+    active.setVoiceDeviceIndex(1);
+    passed = expect(deterministicServiceView->replacementCount == 2U
+                        && deterministicServiceView->startCount == 1U
+                        && active.audioActive(),
+                    "failed replacement leaves the ASIO instrument/output stream active")
         && passed;
 
     std::filesystem::remove_all(directory, cleanupError);

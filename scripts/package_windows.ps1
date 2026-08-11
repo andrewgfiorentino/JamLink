@@ -13,13 +13,19 @@ $deployTool = Join-Path $qtBin "windeployqt.exe"
 $qtPaths = Join-Path $qtBin "qtpaths.exe"
 $binary = Join-Path $repositoryRoot (
     "build\windows-gui-vs2022\apps\desktop\{0}\JamLink.exe" -f $Configuration)
+$updaterBinary = Join-Path $repositoryRoot (
+    "build\windows-gui-vs2022\{0}\JamLinkUpdater.exe" -f $Configuration)
 $distRoot = Join-Path $repositoryRoot "dist"
-$packageName = "JamLink-0.2.0-test-windows-x64"
+$packageName = "JamLink-0.3.0-test-windows-x64"
 $packageDirectory = Join-Path $distRoot $packageName
 $archivePath = Join-Path $distRoot ($packageName + ".zip")
+$archiveChecksumPath = $archivePath + ".sha256"
 
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
     throw "Build JamLink first: cmake --build --preset windows-gui-release"
+}
+if (-not (Test-Path -LiteralPath $updaterBinary -PathType Leaf)) {
+    throw "Build the JamLink updater helper before packaging"
 }
 if (-not (Test-Path -LiteralPath $deployTool -PathType Leaf)) {
     throw "The pinned Qt 6.10.3 MSVC 2022 x64 kit is missing at $qtRoot"
@@ -36,6 +42,8 @@ if (Test-Path -LiteralPath $packageDirectory) {
 }
 New-Item -ItemType Directory -Path $packageDirectory | Out-Null
 Copy-Item -LiteralPath $binary -Destination (Join-Path $packageDirectory "JamLink.exe")
+Copy-Item -LiteralPath $updaterBinary `
+    -Destination (Join-Path $packageDirectory "JamLinkUpdater.exe")
 
 $env:PATH = $qtBin + ";" + $env:PATH
 & $deployTool `
@@ -92,6 +100,10 @@ foreach ($document in $documents) {
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\material-design-icons\LICENSE") `
     -Destination (Join-Path $packageDirectory "MATERIAL_DESIGN_ICONS_LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\asio-sdk\LICENSE.txt") `
+    -Destination (Join-Path $packageDirectory "ASIO_SDK_LICENSE.txt")
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\asio-sdk\README.md") `
+    -Destination (Join-Path $packageDirectory "ASIO_SDK_PROVENANCE.md")
 
 & git -C $repositoryRoot diff --quiet
 if ($LASTEXITCODE -ne 0) {
@@ -102,7 +114,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Commit staged JamLink source changes before creating a distributable package"
 }
 $sourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
-$sourceArchive = Join-Path $packageDirectory "JamLink-0.2.0-source.zip"
+$sourceArchive = Join-Path $packageDirectory "JamLink-0.3.0-source.zip"
 & git -C $repositoryRoot archive --format=zip --output=$sourceArchive HEAD
 if ($LASTEXITCODE -ne 0) {
     throw "Could not create the exact JamLink corresponding-source archive"
@@ -126,10 +138,16 @@ Set-Content -LiteralPath $manifestPath -Value $manifestLines -Encoding utf8
 if (Test-Path -LiteralPath $archivePath) {
     Remove-Item -LiteralPath $archivePath -Force
 }
+if (Test-Path -LiteralPath $archiveChecksumPath) {
+    Remove-Item -LiteralPath $archiveChecksumPath -Force
+}
 Compress-Archive -Path (Join-Path $packageDirectory "*") -DestinationPath $archivePath `
     -CompressionLevel Optimal
 
 $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath $archiveChecksumPath `
+    -Value ($archiveHash + "  " + (Split-Path -Leaf $archivePath) + "`n") -Encoding ascii
 Write-Output ("PACKAGE=" + $packageDirectory)
 Write-Output ("ARCHIVE=" + $archivePath)
+Write-Output ("CHECKSUM=" + $archiveChecksumPath)
 Write-Output ("SHA256=" + $archiveHash)

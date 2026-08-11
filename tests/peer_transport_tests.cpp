@@ -19,12 +19,30 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using jamlink::network::IPeerAudioTransport;
 using jamlink::network::PeerConnectionState;
+
+jamlink::network::PeerParticipantInfo participant(
+    std::string profileId,
+    std::string displayName,
+    std::string applicationVersion = "0.3.0",
+    std::string buildIdentity = "test-build") {
+    jamlink::network::PeerParticipantInfo result;
+    result.profileId = std::move(profileId);
+    result.handle = "musician";
+    result.displayName = std::move(displayName);
+    result.avatarId = "avatar:guitar-electric";
+    result.primaryInstrument = "Guitar";
+    result.applicationVersion = std::move(applicationVersion);
+    result.buildIdentity = std::move(buildIdentity);
+    result.releaseChannel = "test";
+    return result;
+}
 
 bool waitForConnected(IPeerAudioTransport& first, IPeerAudioTransport& second) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -516,6 +534,86 @@ void reconnectsAfterGuestRestart() {
     guest->stop();
 }
 
+void negotiatesExactBuildAndExchangesReliableChat() {
+    using jamlink::network::RoomControlEventType;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "room control harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    guest->setLocalParticipant(participant("profile-guest", "Mike"));
+    const std::string invite = forceLoopback(host->host(0U, false));
+    const bool connected = !invite.empty() && guest->join(invite)
+        && waitForConnected(*host, *guest);
+    check(connected, "authenticated build negotiation accepts the exact build");
+    if (!connected) {
+        return;
+    }
+    check(host->remoteParticipant().displayName == "Mike"
+              && guest->remoteParticipant().displayName == "Andrew",
+          "authenticated participant identity reaches both peers");
+    static_cast<void>(host->takeControlEvents());
+    static_cast<void>(guest->takeControlEvents());
+
+    const std::string message = "Sounds good \xF0\x9F\x8E\xB8";
+    check(host->sendChatMessage(message), "valid UTF-8 chat enters bounded send queue");
+    bool received = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline && !received) {
+        for (const auto& event : guest->takeControlEvents()) {
+            if (event.type == RoomControlEventType::ChatMessage
+                && event.text == message && event.participant.displayName == "Andrew") {
+                received = true;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(received, "encrypted reliable chat carries text and sender identity");
+
+    const std::string invalidUtf8{"\xC0\xAF", 2U};
+    check(!host->sendChatMessage(invalidUtf8), "invalid UTF-8 chat is rejected");
+    check(!host->sendChatMessage(std::string(
+              jamlink::network::maximumChatMessageBytes + 1U, 'x')),
+          "oversized chat is rejected");
+
+    host->stop();
+    guest->stop();
+}
+
+void rejectsIncompatibleApplicationBuild() {
+    using jamlink::network::RoomControlEventType;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "version mismatch harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew", "0.3.0", "build-a"));
+    guest->setLocalParticipant(participant("profile-guest", "Mike", "0.3.0", "build-b"));
+    const std::string invite = forceLoopback(host->host(0U, false));
+    check(!invite.empty() && guest->join(invite), "version mismatch handshake starts");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline
+           && guest->telemetry().state != PeerConnectionState::VersionMismatch) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(host->telemetry().state == PeerConnectionState::VersionMismatch
+              && guest->telemetry().state == PeerConnectionState::VersionMismatch,
+          "authenticated handshake rejects a different build identity");
+    bool mismatchEvent = false;
+    for (const auto& event : guest->takeControlEvents()) {
+        mismatchEvent = mismatchEvent || event.type == RoomControlEventType::VersionMismatch;
+    }
+    check(mismatchEvent, "version mismatch produces a user-facing control event");
+    check(host->telemetry().packetsReceived > 0U
+              && guest->telemetry().packetsReceived > 0U,
+          "version rejection is an authenticated exchange");
+    host->stop();
+    guest->stop();
+}
+
 } // namespace
 
 int main() {
@@ -531,6 +629,8 @@ int main() {
     survivesHostileDatagrams();
     remoteStreamsAreIndependentlyControllable();
     reconnectsAfterGuestRestart();
+    negotiatesExactBuildAndExchangesReliableChat();
+    rejectsIncompatibleApplicationBuild();
 
     static_cast<void>(WSACleanup());
     std::cout << (failures == 0U ? "all peer transport checks passed\n"

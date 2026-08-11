@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import QtQuick
-import QtQuick.Controls.Basic
 import "../components"
 
 Item {
@@ -38,7 +37,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Tuner"
                 color: "#f2f4f5"
-                font.family: "Segoe UI Variable Display"
+                font.family: "Segoe UI"
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
             }
@@ -48,7 +47,7 @@ Item {
                     ? "Your friend cannot hear you tuning"
                     : "Chromatic · A4 = 440 Hz"
                 color: "#929ba1"
-                font.family: "Segoe UI Variable Text"
+                font.family: "Segoe UI"
                 font.pixelSize: 10
             }
         }
@@ -86,7 +85,7 @@ Item {
                     color: root.controller.tunerDetected
                         ? (root.inTune ? "#38d65d" : "#f2f4f5")
                         : "#4f5960"
-                    font.family: "Segoe UI Variable Display"
+                    font.family: "Segoe UI"
                     font.pixelSize: 76
                     font.weight: Font.Light
                     Behavior on color { ColorAnimation { duration: 120 } }
@@ -150,7 +149,7 @@ Item {
                                 + root.controller.tunerCents.toFixed(1) + " cents"
                             : "Play a single string"
                         color: root.inTune ? "#38d65d" : "#a4acb2"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                     }
                     Text {
@@ -190,7 +189,7 @@ Item {
                     Text {
                         text: "Mute my guitar while tuning"
                         color: "#dfe3e5"
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 11
                     }
                     Text {
@@ -198,7 +197,7 @@ Item {
                         color: "#78838a"
                         width: parent.width
                         elide: Text.ElideRight
-                        font.family: "Segoe UI Variable Text"
+                        font.family: "Segoe UI"
                         font.pixelSize: 9
                     }
                 }

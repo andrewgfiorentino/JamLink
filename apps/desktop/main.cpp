@@ -44,6 +44,7 @@ int main(int argc, char* argv[]) {
     QGuiApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("JamLink"));
     QCoreApplication::setOrganizationName(QStringLiteral("JamLink"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(JAMLINK_VERSION_STRING));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("JamLink desktop application"));
@@ -96,6 +97,9 @@ int main(int argc, char* argv[]) {
         parser.value(pageOption),
         dimension(parser, widthOption),
         dimension(parser, heightOption));
+    QObject::connect(
+        controller.updateManager(), &jamlink::desktop::UpdateManager::restartRequested,
+        &application, &QCoreApplication::quit);
     if (parser.isSet(expectRestoredOption) && !controller.restoredPreferences()) {
         return 5;
     }

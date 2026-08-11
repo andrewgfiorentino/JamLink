@@ -1,5 +1,20 @@
 # Third-Party Licenses
 
+## Steinberg ASIO SDK 2.3.4
+
+JamLink vendors an unmodified build subset from Steinberg's official
+`ASIO-SDK_2.3.4_2025-10-15.zip` archive. JamLink selects GPL version 3 for the
+ASIO interface files; the SDK host helper files carry their own embedded
+three-clause BSD-style terms.
+
+- Upstream: <https://www.steinberg.net/developers/asio/>
+- Exact archive, hash, retained files, and trademark notice:
+  [`third_party/asio-sdk/README.md`](third_party/asio-sdk/README.md)
+- SDK license: [`third_party/asio-sdk/LICENSE.txt`](third_party/asio-sdk/LICENSE.txt)
+
+ASIO is a trademark of Steinberg Media Technologies GmbH. Hardware-vendor
+drivers are not included in JamLink.
+
 ## Material Design Icons
 
 JamLink vendors ten Material Design Icons Round SVG files from Google at revision `50f0603134ce7b70b2d71b686cc13e8b57ccb74c` under Apache-2.0.
@@ -12,7 +27,7 @@ JamLink vendors ten Material Design Icons Round SVG files from Google at revisio
 
 The optional desktop target links an external official Qt 6.10.3 MSVC 2022 x64 kit. JamLink selects the `GPL-3.0-only` alternative from Qt's ordinary library expression `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`. JamLink does not select a commercial Qt license or the LGPL alternative for this combined application.
 
-Current module/runtime scope is Qt Core, Gui, Qml, Quick, QML Basic Controls, Quick Effects, Quick Layouts, and the Qt SVG image plugin. Qt Multimedia is excluded. The Basic style is pinned; optional Material, Fusion, Imagine, Universal, FluentWinUI3, native, and other Controls styles are outside the intended package.
+Current module/runtime scope is Qt Core, Gui, Network, Qml, Quick, QML Basic Controls, Quick Effects, Quick Layouts, and the Qt SVG image plugin. Qt Multimedia is excluded. The Basic style is pinned; optional Material, Fusion, Imagine, Universal, FluentWinUI3, native, and other Controls styles are outside the intended package.
 
 Official source archive identities and hashes are recorded in [`DEPENDENCIES.md`](DEPENDENCIES.md) and [`dependencies.json`](dependencies.json). The installed kit's SPDX 2.3 SBOMs are authoritative for the build. Relevant bundled/attributed material identified there includes:
 
