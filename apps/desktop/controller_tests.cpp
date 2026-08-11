@@ -151,6 +151,35 @@ int main(int argc, char* argv[]) {
                     "reference-size window geometry restores")
         && passed;
 
+    // Entering and leaving the tuner drives the instrument tap and the tuner
+    // mute together, and leaving must always release the mute so a user cannot
+    // navigate away and stay silently muted to the room.
+    auto tunerService = std::make_unique<DeterministicAudioService>();
+    auto* tunerServiceView = tunerService.get();
+    jamlink::desktop::AppController tuner(
+        path, false, QStringLiteral("home"), 0U, 0U, nullptr, std::move(tunerService));
+    passed = expect(!tuner.tunerActive(), "tuner starts inactive") && passed;
+    passed = expect(!tunerServiceView->tunerEnabled, "instrument tap starts off") && passed;
+    passed = expect(tuner.tunerMutesInstrument(),
+                    "tuner mutes the instrument to the room by default")
+        && passed;
+
+    tuner.navigate(QStringLiteral("tuner"));
+    passed = expect(tuner.tunerActive(), "opening the tuner activates it") && passed;
+    passed = expect(tunerServiceView->tunerEnabled, "opening the tuner taps the instrument")
+        && passed;
+
+    tunerServiceView->tuner = {true, 110.0, 45, -4.5, 0.4F, 0.95F};
+    passed = expect(!tuner.tunerDetected(), "readings only arrive from the audio poll")
+        && passed;
+
+    tuner.navigate(QStringLiteral("home"));
+    passed = expect(!tuner.tunerActive(), "leaving the tuner deactivates it") && passed;
+    passed = expect(!tunerServiceView->tunerEnabled, "leaving the tuner releases the tap")
+        && passed;
+    passed = expect(!tuner.tunerDetected(), "leaving the tuner clears the last reading")
+        && passed;
+
     auto stalePreferences = jamlink::preferences::PreferencesStore(path).load().preferences;
     stalePreferences.instrument.deviceId = "fixture:missing";
     passed = expect(jamlink::preferences::PreferencesStore(path).save(stalePreferences).succeeded,

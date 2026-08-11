@@ -43,9 +43,11 @@ AppController::AppController(
     if (!automaticPage && currentPage_ != QStringLiteral("home")
         && currentPage_ != QStringLiteral("soundcheck")
         && currentPage_ != QStringLiteral("settings")
-        && currentPage_ != QStringLiteral("room")) {
+        && currentPage_ != QStringLiteral("room")
+        && currentPage_ != QStringLiteral("tuner")) {
         currentPage_ = QStringLiteral("home");
     }
+    tunerActive_ = currentPage_ == QStringLiteral("tuner");
 
     if (visualFixture_) {
         sampleRateValues_ = {44'100U, 48'000U, 96'000U};
@@ -105,13 +107,85 @@ QString AppController::currentPage() const { return currentPage_; }
 
 void AppController::setCurrentPage(const QString& page) {
     if (page != QStringLiteral("home") && page != QStringLiteral("soundcheck")
-        && page != QStringLiteral("settings") && page != QStringLiteral("room")) {
+        && page != QStringLiteral("settings") && page != QStringLiteral("room")
+        && page != QStringLiteral("tuner")) {
         return;
     }
     if (page != currentPage_) {
+        // Leaving the tuner always releases the tuner mute, so a user cannot
+        // navigate away and silently stay muted to the room.
+        if (currentPage_ == QStringLiteral("tuner")) {
+            setTunerActive(false);
+        }
         currentPage_ = page;
+        if (page == QStringLiteral("tuner")) {
+            setTunerActive(true);
+        }
         emit currentPageChanged();
     }
+}
+
+bool AppController::tunerActive() const noexcept { return tunerActive_; }
+
+void AppController::setTunerActive(bool active) {
+    if (tunerActive_ == active) {
+        return;
+    }
+    tunerActive_ = active;
+    if (audioService_) {
+        audioService_->setTunerEnabled(active);
+    }
+    applyTunerMute();
+    if (!active) {
+        tunerReading_ = {};
+    }
+    emit tunerChanged();
+}
+
+bool AppController::tunerMutesInstrument() const noexcept { return tunerMutesInstrument_; }
+
+void AppController::setTunerMutesInstrument(bool muted) {
+    if (tunerMutesInstrument_ == muted) {
+        return;
+    }
+    tunerMutesInstrument_ = muted;
+    applyTunerMute();
+    emit tunerChanged();
+}
+
+// "Give me a second to tune" — the instrument stops reaching the room while
+// voice keeps flowing, which is only possible because they are separate
+// streams on the wire.
+void AppController::applyTunerMute() {
+    if (!peerTransport_) {
+        return;
+    }
+    peerTransport_->setLocalStreamMuted(
+        jamlink::network::AudioStreamId::Instrument,
+        tunerActive_ && tunerMutesInstrument_);
+}
+
+bool AppController::tunerDetected() const noexcept { return tunerReading_.detected; }
+QString AppController::tunerNote() const {
+    if (!tunerReading_.detected) {
+        return QStringLiteral("—");
+    }
+    return QString::fromUtf8(
+        jamlink::audio::InstrumentTuner::noteName(tunerReading_.midiNote).data(),
+        static_cast<int>(
+            jamlink::audio::InstrumentTuner::noteName(tunerReading_.midiNote).size()));
+}
+int AppController::tunerOctave() const noexcept {
+    return tunerReading_.detected
+        ? jamlink::audio::InstrumentTuner::noteOctave(tunerReading_.midiNote)
+        : 0;
+}
+double AppController::tunerCents() const noexcept {
+    return tunerReading_.detected ? tunerReading_.cents : 0.0;
+}
+double AppController::tunerFrequency() const noexcept { return tunerReading_.frequency; }
+double AppController::tunerLevel() const noexcept {
+    return static_cast<double>(tunerReading_.level);
 }
 
 bool AppController::visualFixture() const noexcept { return visualFixture_; }
@@ -590,6 +664,7 @@ void AppController::hostSession() {
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
+    applyTunerMute();
     inviteCode_ = QString::fromStdString(invite);
     sendMuted_ = false;
     restartAudio();
@@ -630,6 +705,7 @@ void AppController::joinSession(const QString& inviteCode) {
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
+    applyTunerMute();
     inviteCode_.clear();
     sendMuted_ = false;
     restartAudio();
@@ -978,6 +1054,10 @@ void AppController::pollAudioTelemetry() {
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
         emit roomChanged();
+    }
+    if (tunerActive_) {
+        tunerReading_ = audioService_->tunerReading();
+        emit tunerChanged();
     }
     emit setupChanged();
 }

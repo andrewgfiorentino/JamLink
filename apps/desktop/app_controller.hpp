@@ -73,6 +73,15 @@ class AppController final : public QObject {
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
 
+    Q_PROPERTY(bool tunerActive READ tunerActive WRITE setTunerActive NOTIFY tunerChanged)
+    Q_PROPERTY(bool tunerMutesInstrument READ tunerMutesInstrument WRITE setTunerMutesInstrument NOTIFY tunerChanged)
+    Q_PROPERTY(bool tunerDetected READ tunerDetected NOTIFY tunerChanged)
+    Q_PROPERTY(QString tunerNote READ tunerNote NOTIFY tunerChanged)
+    Q_PROPERTY(int tunerOctave READ tunerOctave NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerCents READ tunerCents NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerFrequency READ tunerFrequency NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerLevel READ tunerLevel NOTIFY tunerChanged)
+
     Q_PROPERTY(int preferredWindowX READ preferredWindowX CONSTANT)
     Q_PROPERTY(int preferredWindowY READ preferredWindowY CONSTANT)
     Q_PROPERTY(int preferredWindowWidth READ preferredWindowWidth CONSTANT)
@@ -155,6 +164,17 @@ public:
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
 
+    [[nodiscard]] bool tunerActive() const noexcept;
+    void setTunerActive(bool active);
+    [[nodiscard]] bool tunerMutesInstrument() const noexcept;
+    void setTunerMutesInstrument(bool muted);
+    [[nodiscard]] bool tunerDetected() const noexcept;
+    [[nodiscard]] QString tunerNote() const;
+    [[nodiscard]] int tunerOctave() const noexcept;
+    [[nodiscard]] double tunerCents() const noexcept;
+    [[nodiscard]] double tunerFrequency() const noexcept;
+    [[nodiscard]] double tunerLevel() const noexcept;
+
     [[nodiscard]] int preferredWindowX() const noexcept;
     [[nodiscard]] int preferredWindowY() const noexcept;
     [[nodiscard]] int preferredWindowWidth() const noexcept;
@@ -177,6 +197,7 @@ signals:
     void setupChanged();
     void saveMessageChanged();
     void roomChanged();
+    void tunerChanged();
 
 private:
     struct DeviceOption final {
@@ -223,6 +244,7 @@ private:
         jamlink::network::AudioStreamId stream,
         double& stored,
         double gain);
+    void applyTunerMute();
 
     static constexpr std::size_t instrumentStream =
         static_cast<std::size_t>(jamlink::network::AudioStreamId::Instrument);
@@ -252,6 +274,9 @@ private:
     double remoteVoiceGain_{1.0};
     bool remoteInstrumentMuted_{false};
     bool remoteVoiceMuted_{false};
+    jamlink::audio::TunerReading tunerReading_;
+    bool tunerActive_{false};
+    bool tunerMutesInstrument_{true};
 
     std::vector<DeviceOption> instrumentOptions_;
     std::vector<DeviceOption> voiceOptions_;

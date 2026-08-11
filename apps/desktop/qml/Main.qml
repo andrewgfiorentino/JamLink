@@ -38,11 +38,13 @@ ApplicationWindow {
         sourceComponent: window.controller.currentPage === "soundcheck"
             ? soundCheckPage
             : window.controller.currentPage === "settings" ? settingsPage
-            : window.controller.currentPage === "room" ? roomPage : homePage
+            : window.controller.currentPage === "room" ? roomPage
+            : window.controller.currentPage === "tuner" ? tunerPage : homePage
     }
 
     Component { id: homePage; HomePage { controller: window.controller } }
     Component { id: roomPage; RoomPage { controller: window.controller } }
     Component { id: soundCheckPage; SoundCheckPage { controller: window.controller } }
     Component { id: settingsPage; SettingsPage { controller: window.controller } }
+    Component { id: tunerPage; TunerPage { controller: window.controller } }
 }

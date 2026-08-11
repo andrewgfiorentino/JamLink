@@ -36,16 +36,26 @@ Item {
                 font.pixelSize: 10
             }
         }
-        JamButton {
+        Row {
             anchors.right: parent.right
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            width: 84
-            height: 32
-            text: "Leave"
-            enabled: root.controller.roomActive
-            Accessible.name: "Leave private room"
-            onClicked: root.controller.leaveSession()
+            spacing: 6
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                iconSource: Qt.resolvedUrl("../../assets/tune.svg")
+                Accessible.name: "Open tuner"
+                onClicked: root.controller.navigate("tuner")
+            }
+            JamButton {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 84
+                height: 32
+                text: "Leave"
+                enabled: root.controller.roomActive
+                Accessible.name: "Leave private room"
+                onClicked: root.controller.leaveSession()
+            }
         }
         Rectangle {
             anchors.left: parent.left

@@ -37,13 +37,21 @@ Item {
             }
         }
 
-        IconButton {
+        Row {
             anchors.right: parent.right
             anchors.rightMargin: 18
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: Qt.resolvedUrl("../../assets/settings.svg")
-            Accessible.name: "Open settings"
-            onClicked: root.controller.navigate("settings")
+            spacing: 2
+            IconButton {
+                iconSource: Qt.resolvedUrl("../../assets/tune.svg")
+                Accessible.name: "Open tuner"
+                onClicked: root.controller.navigate("tuner")
+            }
+            IconButton {
+                iconSource: Qt.resolvedUrl("../../assets/settings.svg")
+                Accessible.name: "Open settings"
+                onClicked: root.controller.navigate("settings")
+            }
         }
         Rectangle {
             anchors.left: parent.left
