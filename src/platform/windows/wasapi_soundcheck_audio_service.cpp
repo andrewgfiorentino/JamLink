@@ -18,6 +18,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -38,6 +39,9 @@ using Microsoft::WRL::ComPtr;
 
 constexpr std::size_t resamplerCapacityFrames = 65'536U;
 constexpr float outputCeiling = 0.98F;
+// The transport always delivers 48 kHz packets of this size.
+constexpr std::uint32_t networkSampleRate = 48'000U;
+constexpr std::size_t networkPacketFrames = 240U;
 
 class UniqueHandle final {
 public:
@@ -627,6 +631,34 @@ public:
         testToneRequest_.fetch_add(1U, std::memory_order_release);
     }
 
+    void setTunerEnabled(bool enabled) noexcept override {
+        tunerEnabled_.store(enabled ? 1U : 0U, std::memory_order_release);
+    }
+
+    [[nodiscard]] TunerReading tunerReading() override {
+        if (tunerEnabled_.load(std::memory_order_acquire) == 0U) {
+            return {};
+        }
+        return tuner_.analyse();
+    }
+
+    [[nodiscard]] bool startRecording(
+        const std::filesystem::path& directory,
+        const std::string& sessionName) override {
+        const std::uint32_t rate = outputSampleRate_.load(std::memory_order_relaxed);
+        if (rate == 0U) {
+            return false;
+        }
+        return recorder_.start(directory, sessionName, rate);
+    }
+
+    void stopRecording() noexcept override { recorder_.stop(); }
+
+    [[nodiscard]] jamlink::record::RecorderTelemetry recorderTelemetry()
+        const noexcept override {
+        return recorder_.telemetry();
+    }
+
     void setPeerAudioExchange(
         jamlink::network::IPeerAudioExchange* exchange) noexcept override {
         peerExchange_ = exchange;
@@ -717,15 +749,20 @@ private:
 
             AsyncMonoResampler instrumentBuffer(resamplerCapacityFrames);
             AsyncMonoResampler voiceBuffer(resamplerCapacityFrames);
-            AsyncMonoResampler remoteBuffer(resamplerCapacityFrames);
+            std::array<AsyncMonoResampler, jamlink::network::audioStreamCount> remoteBuffers{
+                AsyncMonoResampler(resamplerCapacityFrames),
+                AsyncMonoResampler(resamplerCapacityFrames)};
             instrumentBuffer.configure(instrument.format.sampleRate, output.format.sampleRate);
             voiceBuffer.configure(voice.format.sampleRate, output.format.sampleRate);
-            remoteBuffer.configure(48'000U, output.format.sampleRate);
+            for (auto& buffer : remoteBuffers) {
+                buffer.configure(networkSampleRate, output.format.sampleRate);
+            }
             std::vector<float> instrumentCapture(instrument.bufferFrames, 0.0F);
             std::vector<float> voiceCapture(voice.bufferFrames, 0.0F);
             std::vector<float> instrumentRender(output.bufferFrames, 0.0F);
             std::vector<float> voiceRender(output.bufferFrames, 0.0F);
             std::vector<float> remoteRender(output.bufferFrames, 0.0F);
+            std::vector<float> remoteStreamRender(output.bufferFrames, 0.0F);
             std::vector<float> remoteNetworkFrames(
                 std::max<UINT32>(output.bufferFrames * 2U, 1'024U), 0.0F);
 
@@ -773,11 +810,11 @@ private:
                     break;
                 case WAIT_OBJECT_0 + 1U:
                     keepRunning = processCapture(
-                        instrument, instrumentCapture, instrumentBuffer, instrumentPeak_);
+                        instrument, instrumentCapture, instrumentBuffer, instrumentPeak_, true);
                     break;
                 case WAIT_OBJECT_0 + 2U:
                     keepRunning = processCapture(
-                        voice, voiceCapture, voiceBuffer, voicePeak_);
+                        voice, voiceCapture, voiceBuffer, voicePeak_, false);
                     break;
                 case WAIT_OBJECT_0 + 3U:
                     keepRunning = processRender(
@@ -787,8 +824,9 @@ private:
                         instrumentRender,
                         voiceRender,
                         remoteRender,
+                        remoteStreamRender,
                         remoteNetworkFrames,
-                        remoteBuffer,
+                        remoteBuffers,
                         currentInstrumentGain,
                         currentVoiceGain,
                         observedToneRequest,
@@ -823,7 +861,8 @@ private:
         WasapiStream& stream,
         std::vector<float>& scratch,
         AsyncMonoResampler& destination,
-        RealtimeAtomicFloat& peakTarget) noexcept {
+        RealtimeAtomicFloat& peakTarget,
+        bool feedTuner) noexcept {
         UINT32 packetFrames = 0U;
         HRESULT result = stream.capture->GetNextPacketSize(&packetFrames);
         while (SUCCEEDED(result) && packetFrames != 0U) {
@@ -850,6 +889,13 @@ private:
                 peak = std::max(peak, std::abs(sample));
             }
             peakTarget.store(std::clamp(peak, 0.0F, 1.0F));
+            if (feedTuner && tunerEnabled_.load(std::memory_order_acquire) != 0U) {
+                // A copy taken at the input, before monitoring or transmission,
+                // so tuning never changes what is heard or sent.
+                tuner_.write(
+                    std::span<const float>(scratch.data(), frames),
+                    stream.format.sampleRate);
+            }
             static_cast<void>(destination.write(
                 std::span<const float>(scratch.data(), frames)));
             result = stream.capture->ReleaseBuffer(frames);
@@ -873,8 +919,9 @@ private:
         std::vector<float>& instrumentScratch,
         std::vector<float>& voiceScratch,
         std::vector<float>& remoteScratch,
+        std::vector<float>& remoteStreamScratch,
         std::vector<float>& remoteNetworkScratch,
-        AsyncMonoResampler& remoteBuffer,
+        std::array<AsyncMonoResampler, jamlink::network::audioStreamCount>& remoteBuffers,
         float& currentInstrumentGain,
         float& currentVoiceGain,
         std::uint32_t& observedToneRequest,
@@ -899,26 +946,83 @@ private:
         static_cast<void>(voiceBuffer.read(
             std::span<float>(voiceScratch.data(), frames)));
         std::fill(remoteScratch.begin(), remoteScratch.begin() + frames, 0.0F);
+
+        // Recording taps the sources, not the mix, so the take stays separable.
+        // Every track advances by the same frame count on every callback, with
+        // silence where a source is absent, which keeps the files aligned to a
+        // single timeline.
+        const bool capturing = recorder_.recording();
+        if (capturing) {
+            recorder_.write(
+                jamlink::record::RecordTrack::LocalInstrument,
+                std::span<const float>(instrumentScratch.data(), frames));
+            recorder_.write(
+                jamlink::record::RecordTrack::LocalVoice,
+                std::span<const float>(voiceScratch.data(), frames));
+        }
+
         if (peerExchange_ != nullptr) {
-            while (peerExchange_->availableRemote48k() > 0U) {
-                const std::size_t remoteFrames = std::min(
-                    remoteNetworkScratch.size(), peerExchange_->availableRemote48k());
-                static_cast<void>(peerExchange_->pullRemote48k(
-                    std::span<float>(remoteNetworkScratch.data(), remoteFrames)));
-                static_cast<void>(remoteBuffer.write(
-                    std::span<const float>(remoteNetworkScratch.data(), remoteFrames)));
-            }
-            static_cast<void>(remoteBuffer.read(
-                std::span<float>(remoteScratch.data(), frames)));
-            for (UINT32 frame = 0U; frame < frames; ++frame) {
-                const float networkSend = std::clamp(
-                    instrumentScratch[frame] * 0.65F + voiceScratch[frame] * 0.65F,
-                    -outputCeiling, outputCeiling);
-                remoteNetworkScratch[frame] = networkSend;
-            }
+            // Instrument and voice travel as independent streams, so each has
+            // its own receive buffer and neither is summed before transmission.
+            // The old combined path attenuated both by 0.65 purely to leave
+            // headroom for the sum.
             peerExchange_->pushLocalAudio(
-                std::span<const float>(remoteNetworkScratch.data(), frames),
+                jamlink::network::AudioStreamId::Instrument,
+                std::span<const float>(instrumentScratch.data(), frames),
                 output.format.sampleRate);
+            peerExchange_->pushLocalAudio(
+                jamlink::network::AudioStreamId::Voice,
+                std::span<const float>(voiceScratch.data(), frames),
+                output.format.sampleRate);
+
+            for (std::size_t index = 0U;
+                 index < jamlink::network::audioStreamCount; ++index) {
+                const auto stream = static_cast<jamlink::network::AudioStreamId>(index);
+                auto& streamBuffer = remoteBuffers[index];
+                if (output.format.sampleRate == networkSampleRate) {
+                    // Rates already match, so skip the converter entirely and
+                    // avoid paying its buffering latency in the common case.
+                    static_cast<void>(peerExchange_->pullRemote48k(
+                        stream, std::span<float>(remoteStreamScratch.data(), frames)));
+                } else {
+                    const std::size_t perCallback = static_cast<std::size_t>(
+                        (static_cast<std::uint64_t>(frames) * networkSampleRate
+                         + output.format.sampleRate - 1U)
+                        / output.format.sampleRate);
+                    const std::size_t target = perCallback * 2U + networkPacketFrames;
+                    while (streamBuffer.availableFrames() < target
+                           && networkPacketFrames <= remoteNetworkScratch.size()) {
+                        static_cast<void>(peerExchange_->pullRemote48k(
+                            stream,
+                            std::span<float>(
+                                remoteNetworkScratch.data(), networkPacketFrames)));
+                        static_cast<void>(streamBuffer.write(
+                            std::span<const float>(
+                                remoteNetworkScratch.data(), networkPacketFrames)));
+                    }
+                    static_cast<void>(streamBuffer.read(
+                        std::span<float>(remoteStreamScratch.data(), frames)));
+                }
+                for (UINT32 frame = 0U; frame < frames; ++frame) {
+                    remoteScratch[frame] += remoteStreamScratch[frame];
+                }
+                if (capturing) {
+                    recorder_.write(
+                        index == 0U
+                            ? jamlink::record::RecordTrack::RemoteInstrument
+                            : jamlink::record::RecordTrack::RemoteVoice,
+                        std::span<const float>(remoteStreamScratch.data(), frames));
+                }
+            }
+        } else if (capturing) {
+            // No room, so the friend's tracks record silence rather than
+            // falling behind and shifting the timeline.
+            recorder_.write(
+                jamlink::record::RecordTrack::RemoteInstrument,
+                std::span<const float>(remoteScratch.data(), frames));
+            recorder_.write(
+                jamlink::record::RecordTrack::RemoteVoice,
+                std::span<const float>(remoteScratch.data(), frames));
         }
 
         BYTE* data = nullptr;
@@ -1000,7 +1104,10 @@ private:
     std::atomic<std::uint64_t> underruns_{0U};
     std::atomic<std::uint64_t> overruns_{0U};
     std::atomic<std::uint32_t> testToneRequest_{0U};
+    std::atomic<std::uint32_t> tunerEnabled_{0U};
     std::atomic<std::int32_t> nativeError_{0};
+    InstrumentTuner tuner_;
+    jamlink::record::SessionRecorder recorder_;
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
 };
 

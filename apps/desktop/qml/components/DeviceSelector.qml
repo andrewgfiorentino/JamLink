@@ -22,9 +22,9 @@ ComboBox {
     }
 
     background: Rectangle {
-        radius: 6
+        radius: 9
         color: control.enabled ? (control.down ? "#202930" : "#192127") : "#151b20"
-        border.color: control.activeFocus ? "#37c9ff" : "#202a30"
+        border.color: control.activeFocus ? "#8b56df" : "#202a30"
     }
 
     contentItem: Text {
@@ -45,7 +45,7 @@ ComboBox {
         background: Rectangle {
             color: "#151c21"
             border.color: "#344049"
-            radius: 7
+            radius: 10
         }
         contentItem: ListView {
             clip: true
@@ -71,7 +71,7 @@ ComboBox {
             elide: Text.ElideRight
         }
         background: Rectangle {
-            radius: 5
+            radius: 7
             color: delegateItem.highlighted ? "#29343c" : "transparent"
         }
     }

@@ -4,7 +4,11 @@
 
 #include <QByteArray>
 #include <QClipboard>
+#include <QDateTime>
+#include <QDesktopServices>
 #include <QGuiApplication>
+#include <QStandardPaths>
+#include <QUrl>
 
 #include <algorithm>
 #include <cmath>
@@ -43,9 +47,11 @@ AppController::AppController(
     if (!automaticPage && currentPage_ != QStringLiteral("home")
         && currentPage_ != QStringLiteral("soundcheck")
         && currentPage_ != QStringLiteral("settings")
-        && currentPage_ != QStringLiteral("room")) {
+        && currentPage_ != QStringLiteral("room")
+        && currentPage_ != QStringLiteral("tuner")) {
         currentPage_ = QStringLiteral("home");
     }
+    tunerActive_ = currentPage_ == QStringLiteral("tuner");
 
     if (visualFixture_) {
         sampleRateValues_ = {44'100U, 48'000U, 96'000U};
@@ -105,13 +111,249 @@ QString AppController::currentPage() const { return currentPage_; }
 
 void AppController::setCurrentPage(const QString& page) {
     if (page != QStringLiteral("home") && page != QStringLiteral("soundcheck")
-        && page != QStringLiteral("settings") && page != QStringLiteral("room")) {
+        && page != QStringLiteral("settings") && page != QStringLiteral("room")
+        && page != QStringLiteral("tuner")) {
         return;
     }
     if (page != currentPage_) {
+        // Leaving the tuner always releases the tuner mute, so a user cannot
+        // navigate away and silently stay muted to the room.
+        if (currentPage_ == QStringLiteral("tuner")) {
+            setTunerActive(false);
+        }
         currentPage_ = page;
+        if (page == QStringLiteral("tuner")) {
+            setTunerActive(true);
+        }
         emit currentPageChanged();
     }
+}
+
+bool AppController::tunerActive() const noexcept { return tunerActive_; }
+
+void AppController::setTunerActive(bool active) {
+    if (tunerActive_ == active) {
+        return;
+    }
+    tunerActive_ = active;
+    if (audioService_) {
+        audioService_->setTunerEnabled(active);
+    }
+    applyTunerMute();
+    if (!active) {
+        tunerReading_ = {};
+    }
+    emit tunerChanged();
+}
+
+bool AppController::tunerMutesInstrument() const noexcept {
+    return preferences_.tunerMutesInstrument;
+}
+
+void AppController::setTunerMutesInstrument(bool muted) {
+    if (preferences_.tunerMutesInstrument == muted) {
+        return;
+    }
+    preferences_.tunerMutesInstrument = muted;
+    applyTunerMute();
+    scheduleSave();
+    emit tunerChanged();
+}
+
+// "Give me a second to tune" — the instrument stops reaching the room while
+// voice keeps flowing, which is only possible because they are separate
+// streams on the wire.
+void AppController::applyTunerMute() {
+    if (!peerTransport_) {
+        return;
+    }
+    peerTransport_->setLocalStreamMuted(
+        jamlink::network::AudioStreamId::Instrument,
+        tunerActive_ && preferences_.tunerMutesInstrument);
+}
+
+QString AppController::recordingDirectory() const {
+    if (!preferences_.recordingDirectory.empty()) {
+        return QString::fromStdString(preferences_.recordingDirectory);
+    }
+    return QString::fromStdWString(defaultRecordingDirectory().wstring());
+}
+
+void AppController::setRecordingDirectory(const QString& directory) {
+    const std::string chosen = directory.trimmed().toStdString();
+    if (preferences_.recordingDirectory == chosen) {
+        return;
+    }
+    preferences_.recordingDirectory = chosen;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+std::filesystem::path AppController::defaultRecordingDirectory() const {
+    const QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    if (music.isEmpty()) {
+        return store_.path().parent_path() / "Recordings";
+    }
+    return std::filesystem::path(music.toStdWString()) / L"JamLink";
+}
+
+void AppController::openRecordingFolder() {
+    std::error_code error;
+    std::filesystem::create_directories(
+        std::filesystem::path(recordingDirectory().toStdWString()), error);
+    static_cast<void>(QDesktopServices::openUrl(
+        QUrl::fromLocalFile(recordingDirectory())));
+}
+
+int AppController::preferredUdpPort() const noexcept {
+    return static_cast<int>(preferences_.preferredUdpPort);
+}
+
+void AppController::setPreferredUdpPort(int port) {
+    // Zero means "ask the operating system", which is the right default. Ports
+    // below 1024 are privileged and would fail to bind.
+    const auto bounded = static_cast<std::uint32_t>(
+        port <= 0 ? 0 : std::clamp(port, 1'024, 65'535));
+    if (preferences_.preferredUdpPort == bounded) {
+        return;
+    }
+    preferences_.preferredUdpPort = bounded;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+bool AppController::automaticRouterMapping() const noexcept {
+    return preferences_.automaticPortMapping;
+}
+
+void AppController::setAutomaticRouterMapping(bool enabled) {
+    if (preferences_.automaticPortMapping == enabled) {
+        return;
+    }
+    preferences_.automaticPortMapping = enabled;
+    scheduleSave();
+    emit settingsChanged();
+}
+
+int AppController::latencyMode() const noexcept {
+    return static_cast<int>(preferences_.latencyMode);
+}
+
+void AppController::setLatencyMode(int mode) {
+    const auto bounded = static_cast<std::uint32_t>(std::clamp(mode, 0, 2));
+    if (preferences_.latencyMode == bounded) {
+        return;
+    }
+    preferences_.latencyMode = bounded;
+    if (peerTransport_) {
+        peerTransport_->setLatencyPreference(
+            static_cast<jamlink::network::LatencyPreference>(bounded));
+    }
+    scheduleSave();
+    emit settingsChanged();
+}
+
+QString AppController::latencyModeDetail() const {
+    switch (preferences_.latencyMode) {
+    case 0U:
+        return QStringLiteral(
+            "Smallest receive buffer. Best on a good wired path; a rough "
+            "network will be audible as dropouts.");
+    case 2U:
+        return QStringLiteral(
+            "Largest receive buffer. Rides out an unstable network, at delay "
+            "that eventually makes playing in time impossible.");
+    default:
+        return QStringLiteral(
+            "Follows measured jitter and keeps the buffer only as deep as the "
+            "network actually needs.");
+    }
+}
+
+QString AppController::applicationVersion() const {
+    return QStringLiteral(JAMLINK_VERSION_STRING);
+}
+
+QString AppController::qtVersion() const { return QStringLiteral(QT_VERSION_STR); }
+
+bool AppController::recording() const noexcept { return recorderTelemetry_.recording; }
+
+QString AppController::recordingElapsed() const {
+    const std::uint32_t seconds = recorderTelemetry_.elapsedSeconds;
+    return QStringLiteral("%1:%2")
+        .arg(seconds / 60U)
+        .arg(seconds % 60U, 2, 10, QLatin1Char('0'));
+}
+
+QString AppController::recordingMessage() const {
+    if (recorderTelemetry_.failed) {
+        return QStringLiteral("Recording could not be written to disk");
+    }
+    if (!recorderTelemetry_.recording) {
+        return recordingLocation_.isEmpty()
+            ? QStringLiteral("Records your parts and your friend's separately")
+            : QStringLiteral("Saved to %1").arg(recordingLocation_);
+    }
+    if (recorderTelemetry_.droppedFrames > 0U) {
+        // Never quietly ship a take with holes in it.
+        return QStringLiteral("Recording · disk fell behind, this take has gaps");
+    }
+    return QStringLiteral("Recording · 4 separate tracks");
+}
+
+QString AppController::recordingLocation() const { return recordingLocation_; }
+
+void AppController::toggleRecording() {
+    if (visualFixture_ || !audioService_) {
+        return;
+    }
+    if (recorderTelemetry_.recording) {
+        audioService_->stopRecording();
+        recorderTelemetry_ = audioService_->recorderTelemetry();
+        emit recordingChanged();
+        return;
+    }
+    if (!audioActive()) {
+        setupMessage_ = QStringLiteral("Start the audio setup before recording");
+        emit setupChanged();
+        return;
+    }
+
+    const std::filesystem::path directory(recordingDirectory().toStdWString());
+    // A sortable, human-readable folder per take.
+    const QString name = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyy-MM-dd HH-mm-ss"));
+    if (!audioService_->startRecording(directory, name.toStdString())) {
+        setupMessage_ = QStringLiteral("Recording could not be started");
+        emit setupChanged();
+        return;
+    }
+    recordingLocation_ = QString::fromStdWString((directory / name.toStdWString()).wstring());
+    recorderTelemetry_ = audioService_->recorderTelemetry();
+    emit recordingChanged();
+}
+
+bool AppController::tunerDetected() const noexcept { return tunerReading_.detected; }
+QString AppController::tunerNote() const {
+    if (!tunerReading_.detected) {
+        return QStringLiteral("—");
+    }
+    return QString::fromUtf8(
+        jamlink::audio::InstrumentTuner::noteName(tunerReading_.midiNote).data(),
+        static_cast<int>(
+            jamlink::audio::InstrumentTuner::noteName(tunerReading_.midiNote).size()));
+}
+int AppController::tunerOctave() const noexcept {
+    return tunerReading_.detected
+        ? jamlink::audio::InstrumentTuner::noteOctave(tunerReading_.midiNote)
+        : 0;
+}
+double AppController::tunerCents() const noexcept {
+    return tunerReading_.detected ? tunerReading_.cents : 0.0;
+}
+double AppController::tunerFrequency() const noexcept { return tunerReading_.frequency; }
+double AppController::tunerLevel() const noexcept {
+    return static_cast<double>(tunerReading_.level);
 }
 
 bool AppController::visualFixture() const noexcept { return visualFixture_; }
@@ -323,8 +565,8 @@ QString AppController::roomStatus() const {
         return QStringLiteral("No room session");
     }
     if (peerConnected()) {
-        return QStringLiteral("Connected · encrypted direct audio · %1 ms")
-            .arg(peerTelemetry_.roundTripMilliseconds);
+        return QStringLiteral("Connected · encrypted direct audio · %1")
+            .arg(connectionQuality());
     }
     if (peerTelemetry_.state == jamlink::network::PeerConnectionState::WaitingForPeer
         && !peerTelemetry_.automaticPortMapping) {
@@ -341,9 +583,134 @@ int AppController::roomPort() const noexcept {
     return peerTransport_ ? static_cast<int>(peerTransport_->localPort()) : 0;
 }
 int AppController::roundTripMilliseconds() const noexcept {
-    return static_cast<int>(peerTelemetry_.roundTripMilliseconds);
+    return static_cast<int>((peerTelemetry_.roundTripMicroseconds + 500U) / 1'000U);
 }
-double AppController::remoteLevel() const noexcept { return peerTelemetry_.remotePeak; }
+double AppController::remoteLevel() const noexcept {
+    return std::max(
+        peerTelemetry_.streams[instrumentStream].peak,
+        peerTelemetry_.streams[voiceStream].peak);
+}
+double AppController::remoteInstrumentLevel() const noexcept {
+    return peerTelemetry_.streams[instrumentStream].peak;
+}
+double AppController::remoteVoiceLevel() const noexcept {
+    return peerTelemetry_.streams[voiceStream].peak;
+}
+
+double AppController::remoteInstrumentGain() const noexcept {
+    return static_cast<double>(preferences_.remoteInstrumentGain);
+}
+double AppController::remoteVoiceGain() const noexcept {
+    return static_cast<double>(preferences_.remoteVoiceGain);
+}
+bool AppController::remoteInstrumentMuted() const noexcept { return remoteInstrumentMuted_; }
+bool AppController::remoteVoiceMuted() const noexcept { return remoteVoiceMuted_; }
+
+void AppController::setRemoteInstrumentGain(double gain) {
+    applyRemoteStream(
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain, gain);
+}
+void AppController::setRemoteVoiceGain(double gain) {
+    applyRemoteStream(
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain, gain);
+}
+void AppController::setRemoteInstrumentMuted(bool muted) {
+    if (remoteInstrumentMuted_ == muted) {
+        return;
+    }
+    remoteInstrumentMuted_ = muted;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamMuted(
+            jamlink::network::AudioStreamId::Instrument, muted);
+    }
+    emit roomChanged();
+}
+void AppController::setRemoteVoiceMuted(bool muted) {
+    if (remoteVoiceMuted_ == muted) {
+        return;
+    }
+    remoteVoiceMuted_ = muted;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamMuted(jamlink::network::AudioStreamId::Voice, muted);
+    }
+    emit roomChanged();
+}
+
+void AppController::applyRemoteStream(
+    jamlink::network::AudioStreamId stream,
+    float& stored,
+    double gain) {
+    const auto bounded = static_cast<float>(std::clamp(gain, 0.0, 1.0));
+    if (std::abs(stored - bounded) < 0.0005F) {
+        return;
+    }
+    stored = bounded;
+    if (peerTransport_) {
+        peerTransport_->setRemoteStreamGain(stream, bounded);
+    }
+    // How loud a friend sits in the mix is exactly the kind of thing worth
+    // remembering between sessions.
+    scheduleSave();
+    emit roomChanged();
+}
+
+// Buffering latency is measured; one-way delay is estimated from half the
+// round trip. The two are reported separately so an estimate is never shown as
+// a measurement.
+QString AppController::connectionQuality() const {
+    if (!peerConnected()) {
+        return QStringLiteral("Not connected");
+    }
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    const double oneWayMilliseconds =
+        static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 2'000.0;
+    const double bufferMilliseconds = instrument.bufferedFrames == 0U
+        ? 0.0
+        : static_cast<double>(instrument.bufferedFrames) / 48.0;
+    const double playableMilliseconds = oneWayMilliseconds + bufferMilliseconds;
+    const double concealRatio = peerTelemetry_.packetsReceived == 0U
+        ? 0.0
+        : static_cast<double>(instrument.packetsConcealed)
+            / static_cast<double>(peerTelemetry_.packetsReceived);
+
+    QString grade;
+    if (concealRatio > 0.05 || playableMilliseconds > 60.0) {
+        grade = QStringLiteral("Conversation only");
+    } else if (concealRatio > 0.02 || playableMilliseconds > 40.0) {
+        grade = QStringLiteral("Poor");
+    } else if (concealRatio > 0.005 || playableMilliseconds > 25.0) {
+        grade = QStringLiteral("Playable");
+    } else if (playableMilliseconds > 15.0) {
+        grade = QStringLiteral("Good");
+    } else {
+        grade = QStringLiteral("Excellent");
+    }
+    return QStringLiteral("%1 · about %2 ms one way · %3 ms buffer")
+        .arg(grade)
+        .arg(oneWayMilliseconds, 0, 'f', 1)
+        .arg(bufferMilliseconds, 0, 'f', 1);
+}
+
+QString AppController::networkDiagnostics() const {
+    if (!peerTransport_) {
+        return QStringLiteral("No room session");
+    }
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    const auto& voice = peerTelemetry_.streams[voiceStream];
+    return QStringLiteral(
+               "round trip %1 ms measured · jitter %2 ms\n"
+               "instrument concealed %3 · late %4 · buffer %5 ms\n"
+               "voice concealed %6 · late %7 · buffer %8 ms")
+        .arg(static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 1'000.0, 0, 'f', 1)
+        .arg(static_cast<double>(instrument.jitterMicroseconds) / 1'000.0, 0, 'f', 1)
+        .arg(instrument.packetsConcealed)
+        .arg(instrument.packetsLate)
+        .arg(static_cast<double>(instrument.bufferedFrames) / 48.0, 0, 'f', 1)
+        .arg(voice.packetsConcealed)
+        .arg(voice.packetsLate)
+        .arg(static_cast<double>(voice.bufferedFrames) / 48.0, 0, 'f', 1);
+}
+
 QString AppController::packetSummary() const {
     return QStringLiteral("%1 received · %2 sent · %3 rejected")
         .arg(peerTelemetry_.packetsReceived)
@@ -452,7 +819,11 @@ void AppController::hostSession() {
         emit setupChanged();
         return;
     }
-    const std::string invite = transport->host();
+    transport->setLatencyPreference(
+        static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
+    const std::string invite = transport->host(
+        static_cast<std::uint16_t>(preferences_.preferredUdpPort),
+        preferences_.automaticPortMapping);
     peerTelemetry_ = transport->telemetry();
     if (invite.empty()) {
         setupMessage_ = peerStateText(peerTelemetry_.state);
@@ -461,7 +832,18 @@ void AppController::hostSession() {
     }
     audioService_->stop();
     audioService_->setPeerAudioExchange(transport.get());
+    // Carry the listener's remote mix preferences into the new session rather
+    // than silently resetting them on every join.
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain);
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
+    applyTunerMute();
     inviteCode_ = QString::fromStdString(invite);
     sendMuted_ = false;
     restartAudio();
@@ -478,6 +860,10 @@ void AppController::joinSession(const QString& inviteCode) {
     }
     leaveSession();
     auto transport = jamlink::network::createPlatformPeerAudioTransport();
+    if (transport) {
+        transport->setLatencyPreference(
+            static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
+    }
     if (!transport || !transport->join(inviteCode.trimmed().toStdString())) {
         if (transport) {
             peerTelemetry_ = transport->telemetry();
@@ -490,7 +876,18 @@ void AppController::joinSession(const QString& inviteCode) {
     }
     audioService_->stop();
     audioService_->setPeerAudioExchange(transport.get());
+    // Carry the listener's remote mix preferences into the new session rather
+    // than silently resetting them on every join.
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Instrument, preferences_.remoteInstrumentGain);
+    transport->setRemoteStreamGain(
+        jamlink::network::AudioStreamId::Voice, preferences_.remoteVoiceGain);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Instrument, remoteInstrumentMuted_);
+    transport->setRemoteStreamMuted(
+        jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
+    applyTunerMute();
     inviteCode_.clear();
     sendMuted_ = false;
     restartAudio();
@@ -839,6 +1236,18 @@ void AppController::pollAudioTelemetry() {
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
         emit roomChanged();
+    }
+    if (tunerActive_) {
+        tunerReading_ = audioService_->tunerReading();
+        emit tunerChanged();
+    }
+    const auto previousRecorder = recorderTelemetry_;
+    recorderTelemetry_ = audioService_->recorderTelemetry();
+    if (previousRecorder.recording != recorderTelemetry_.recording
+        || previousRecorder.elapsedSeconds != recorderTelemetry_.elapsedSeconds
+        || previousRecorder.failed != recorderTelemetry_.failed
+        || (previousRecorder.droppedFrames == 0U) != (recorderTelemetry_.droppedFrames == 0U)) {
+        emit recordingChanged();
     }
     emit setupChanged();
 }

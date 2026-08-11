@@ -29,7 +29,8 @@ Item {
                 level: 0.7
             }
             Text {
-                text: "JAM"
+                anchors.verticalCenter: parent.verticalCenter
+                text: "JamLink"
                 color: "#f2f4f5"
                 font.family: "Segoe UI Variable Display"
                 font.pixelSize: 20
@@ -37,13 +38,21 @@ Item {
             }
         }
 
-        IconButton {
+        Row {
             anchors.right: parent.right
             anchors.rightMargin: 18
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: Qt.resolvedUrl("../../assets/settings.svg")
-            Accessible.name: "Open settings"
-            onClicked: root.controller.navigate("settings")
+            spacing: 2
+            IconButton {
+                iconSource: Qt.resolvedUrl("../../assets/tune.svg")
+                Accessible.name: "Open tuner"
+                onClicked: root.controller.navigate("tuner")
+            }
+            IconButton {
+                iconSource: Qt.resolvedUrl("../../assets/settings.svg")
+                Accessible.name: "Open settings"
+                onClicked: root.controller.navigate("settings")
+            }
         }
         Rectangle {
             anchors.left: parent.left
@@ -216,7 +225,7 @@ Item {
                         background: Rectangle {
                             radius: 6
                             color: "#182127"
-                            border.color: inviteField.activeFocus ? "#3bbfe9" : "#28343b"
+                            border.color: inviteField.activeFocus ? "#8b56df" : "#28343b"
                         }
                         Accessible.name: "Invite code"
                     }

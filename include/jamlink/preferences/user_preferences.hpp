@@ -20,8 +20,10 @@ struct AudioSelection final {
 struct WindowPlacement final {
     std::int32_t x{0};
     std::int32_t y{0};
-    std::uint32_t width{1'400U};
-    std::uint32_t height{900U};
+    // Sized to the single-column layout. The old 1400x900 default stretched a
+    // narrow design across a wide window on first launch.
+    std::uint32_t width{560U};
+    std::uint32_t height{780U};
     bool hasPosition{false};
 
     bool operator==(const WindowPlacement&) const = default;
@@ -40,6 +42,21 @@ struct UserPreferences final {
     float voiceMonitorGain{0.55F};
     bool instrumentMonitorEnabled{false};
     bool voiceMonitorEnabled{false};
+    // How loudly this user hears each of a friend's streams, and whether the
+    // tuner silences the instrument to the room. Appended after the fields
+    // above and treated as optional on read, so a preferences file written by
+    // an earlier build still restores everything it did before.
+    float remoteInstrumentGain{1.0F};
+    float remoteVoiceGain{1.0F};
+    bool tunerMutesInstrument{true};
+    // Where takes are written. Empty means the platform music folder.
+    std::string recordingDirectory;
+    // Zero asks the operating system for any free UDP port.
+    std::uint32_t preferredUdpPort{0U};
+    bool automaticPortMapping{true};
+    // How the receive buffer trades latency against tolerance of a rough
+    // network: 0 lowest latency, 1 balanced, 2 most stable.
+    std::uint32_t latencyMode{1U};
     WindowPlacement window;
 
     bool operator==(const UserPreferences&) const = default;

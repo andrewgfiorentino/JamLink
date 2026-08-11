@@ -6,5 +6,5 @@ Rectangle {
     color: "#11171c"
     border.color: "#242d33"
     border.width: 1
-    radius: 9
+    radius: 13
 }

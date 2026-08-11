@@ -36,16 +36,26 @@ Item {
                 font.pixelSize: 10
             }
         }
-        JamButton {
+        Row {
             anchors.right: parent.right
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            width: 84
-            height: 32
-            text: "Leave"
-            enabled: root.controller.roomActive
-            Accessible.name: "Leave private room"
-            onClicked: root.controller.leaveSession()
+            spacing: 6
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                iconSource: Qt.resolvedUrl("../../assets/tune.svg")
+                Accessible.name: "Open tuner"
+                onClicked: root.controller.navigate("tuner")
+            }
+            JamButton {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 84
+                height: 32
+                text: "Leave"
+                enabled: root.controller.roomActive
+                Accessible.name: "Leave private room"
+                onClicked: root.controller.leaveSession()
+            }
         }
         Rectangle {
             anchors.left: parent.left
@@ -154,17 +164,17 @@ Item {
 
         JamCard {
             width: parent.width
-            height: 126
+            height: 166
 
             Column {
                 anchors.fill: parent
                 anchors.margins: 14
-                spacing: 10
+                spacing: 9
                 Row {
                     width: parent.width
                     Text {
                         width: parent.width - latencyText.width
-                        text: "FRIEND AUDIO"
+                        text: "WHAT YOU HEAR"
                         color: "#eef1f2"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
@@ -173,25 +183,108 @@ Item {
                     Text {
                         id: latencyText
                         text: root.controller.peerConnected
-                            ? root.controller.roundTripMilliseconds + " ms network RTT"
+                            ? root.controller.roundTripMilliseconds + " ms round trip"
                             : "Waiting"
                         color: root.controller.peerConnected ? "#43d96a" : "#7b858b"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
                     }
                 }
-                LevelBar {
-                    width: parent.width
-                    height: 20
-                    level: root.controller.remoteLevel
+
+                // Instrument and voice arrive as independent streams, so each
+                // gets its own meter, level, and mute.
+                Repeater {
+                    model: [
+                        {
+                            label: "Their guitar",
+                            icon: "music_note.svg",
+                            tint: "#8b56df"
+                        },
+                        {
+                            label: "Their voice",
+                            icon: "mic.svg",
+                            tint: "#42d97a"
+                        }
+                    ]
+                    Row {
+                        id: streamRow
+                        required property int index
+                        required property var modelData
+                        width: parent.width
+                        height: 30
+                        spacing: 9
+
+                        readonly property bool isInstrument: streamRow.index === 0
+                        readonly property real streamLevel: streamRow.isInstrument
+                            ? root.controller.remoteInstrumentLevel
+                            : root.controller.remoteVoiceLevel
+                        readonly property bool streamMuted: streamRow.isInstrument
+                            ? root.controller.remoteInstrumentMuted
+                            : root.controller.remoteVoiceMuted
+
+                        JamIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 15
+                            height: 15
+                            source: Qt.resolvedUrl("../../assets/" + streamRow.modelData.icon)
+                            color: streamRow.streamMuted ? "#5d666c" : streamRow.modelData.tint
+                        }
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 15 - streamLevelSlider.width
+                                - streamSwitch.width - 27
+                            spacing: 3
+                            Text {
+                                text: streamRow.modelData.label
+                                color: streamRow.streamMuted ? "#7b858b" : "#cbd2d6"
+                                font.family: "Segoe UI Variable Text"
+                                font.pixelSize: 10
+                            }
+                            LevelBar {
+                                width: parent.width
+                                height: 12
+                                segmentCount: 34
+                                level: streamRow.streamMuted ? 0 : streamRow.streamLevel
+                            }
+                        }
+                        JamSlider {
+                            id: streamLevelSlider
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 86
+                            enabled: root.controller.roomActive
+                            value: streamRow.isInstrument
+                                ? root.controller.remoteInstrumentGain
+                                : root.controller.remoteVoiceGain
+                            Accessible.name: streamRow.modelData.label + " level"
+                            onMoved: {
+                                if (streamRow.isInstrument)
+                                    root.controller.remoteInstrumentGain = value
+                                else
+                                    root.controller.remoteVoiceGain = value
+                            }
+                        }
+                        JamSwitch {
+                            id: streamSwitch
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: !streamRow.streamMuted
+                            enabled: root.controller.roomActive
+                            Accessible.name: "Hear " + streamRow.modelData.label
+                            onToggled: {
+                                if (streamRow.isInstrument)
+                                    root.controller.remoteInstrumentMuted = !checked
+                                else
+                                    root.controller.remoteVoiceMuted = !checked
+                            }
+                        }
+                    }
                 }
-                Text {
+
+                Rectangle {
                     width: parent.width
-                    text: root.controller.packetSummary
-                    color: "#778289"
-                    font.family: "Segoe UI Variable Text"
-                    font.pixelSize: 9
+                    height: 1
+                    color: "#1d272d"
                 }
+
                 Row {
                     width: parent.width
                     Text {
@@ -201,7 +294,7 @@ Item {
                             ? "No audio is being sent"
                             : root.controller.sendMuted
                             ? "Your audio is muted to your friend"
-                            : "Your guitar and microphone are being sent"
+                            : "Your guitar and microphone are being sent separately"
                         color: root.controller.sendMuted ? "#e4b352" : "#cbd2d6"
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 10
@@ -217,9 +310,72 @@ Item {
             }
         }
 
+        // One button. The four separate tracks are an implementation detail the
+        // musician only meets afterwards, in the folder.
         JamCard {
             width: parent.width
-            height: 80
+            height: 68
+
+            Row {
+                anchors.fill: parent
+                anchors.margins: 13
+                spacing: 12
+
+                Rectangle {
+                    id: recordDot
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 15
+                    height: 15
+                    radius: 8
+                    color: root.controller.recording ? "#e0473f" : "#3a444b"
+                    SequentialAnimation on opacity {
+                        running: root.controller.recording
+                        loops: Animation.Infinite
+                        NumberAnimation { from: 1.0; to: 0.35; duration: 700 }
+                        NumberAnimation { from: 0.35; to: 1.0; duration: 700 }
+                        onStopped: recordDot.opacity = 1.0
+                    }
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - recordDot.width - recordButton.width - 36
+                    spacing: 3
+                    Text {
+                        text: root.controller.recording
+                            ? "Recording " + root.controller.recordingElapsed
+                            : "Record this jam"
+                        color: root.controller.recording ? "#f2f4f5" : "#dfe3e5"
+                        font.family: "Segoe UI Variable Text"
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                    }
+                    Text {
+                        width: parent.width
+                        text: root.controller.recordingMessage
+                        color: "#78838a"
+                        elide: Text.ElideRight
+                        font.family: "Segoe UI Variable Text"
+                        font.pixelSize: 9
+                    }
+                }
+                JamButton {
+                    id: recordButton
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 92
+                    height: 32
+                    text: root.controller.recording ? "Stop" : "Record"
+                    primary: !root.controller.recording
+                    enabled: root.controller.audioActive
+                    Accessible.name: root.controller.recording
+                        ? "Stop recording" : "Start recording"
+                    onClicked: root.controller.toggleRecording()
+                }
+            }
+        }
+
+        JamCard {
+            width: parent.width
+            height: 84
             Row {
                 anchors.fill: parent
                 anchors.margins: 14
@@ -229,21 +385,30 @@ Item {
                     width: 22
                     height: 22
                     source: Qt.resolvedUrl("../../assets/headphones.svg")
-                    color: "#3bc8ee"
+                    color: "#8b56df"
                 }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - 34
                     spacing: 4
                     Text {
-                        text: "Direct encrypted UDP audio"
+                        text: root.controller.peerConnected
+                            ? root.controller.connectionQuality
+                            : "Direct encrypted UDP audio"
                         color: "#e7eaec"
+                        wrapMode: Text.WordWrap
+                        width: parent.width
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 11
                         font.weight: Font.Medium
                     }
                     Text {
-                        text: "5 ms PCM packets · no relay fallback in this test build"
+                        text: root.controller.roomActive
+                            ? root.controller.packetSummary
+                            : "5 ms PCM packets · no relay fallback in this test build"
                         color: "#818c92"
+                        width: parent.width
+                        wrapMode: Text.WordWrap
                         font.family: "Segoe UI Variable Text"
                         font.pixelSize: 9
                     }

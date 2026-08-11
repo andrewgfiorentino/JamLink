@@ -62,8 +62,38 @@ class AppController final : public QObject {
     Q_PROPERTY(int roomPort READ roomPort NOTIFY roomChanged)
     Q_PROPERTY(int roundTripMilliseconds READ roundTripMilliseconds NOTIFY roomChanged)
     Q_PROPERTY(double remoteLevel READ remoteLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteInstrumentLevel READ remoteInstrumentLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteVoiceLevel READ remoteVoiceLevel NOTIFY roomChanged)
+    Q_PROPERTY(double remoteInstrumentGain READ remoteInstrumentGain WRITE setRemoteInstrumentGain NOTIFY roomChanged)
+    Q_PROPERTY(double remoteVoiceGain READ remoteVoiceGain WRITE setRemoteVoiceGain NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteInstrumentMuted READ remoteInstrumentMuted WRITE setRemoteInstrumentMuted NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteVoiceMuted READ remoteVoiceMuted WRITE setRemoteVoiceMuted NOTIFY roomChanged)
+    Q_PROPERTY(QString connectionQuality READ connectionQuality NOTIFY roomChanged)
+    Q_PROPERTY(QString networkDiagnostics READ networkDiagnostics NOTIFY roomChanged)
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
+
+    Q_PROPERTY(QString recordingDirectory READ recordingDirectory WRITE setRecordingDirectory NOTIFY settingsChanged)
+    Q_PROPERTY(int preferredUdpPort READ preferredUdpPort WRITE setPreferredUdpPort NOTIFY settingsChanged)
+    Q_PROPERTY(bool automaticRouterMapping READ automaticRouterMapping WRITE setAutomaticRouterMapping NOTIFY settingsChanged)
+    Q_PROPERTY(int latencyMode READ latencyMode WRITE setLatencyMode NOTIFY settingsChanged)
+    Q_PROPERTY(QString latencyModeDetail READ latencyModeDetail NOTIFY settingsChanged)
+    Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
+    Q_PROPERTY(QString qtVersion READ qtVersion CONSTANT)
+
+    Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingMessage READ recordingMessage NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingLocation READ recordingLocation NOTIFY recordingChanged)
+
+    Q_PROPERTY(bool tunerActive READ tunerActive WRITE setTunerActive NOTIFY tunerChanged)
+    Q_PROPERTY(bool tunerMutesInstrument READ tunerMutesInstrument WRITE setTunerMutesInstrument NOTIFY tunerChanged)
+    Q_PROPERTY(bool tunerDetected READ tunerDetected NOTIFY tunerChanged)
+    Q_PROPERTY(QString tunerNote READ tunerNote NOTIFY tunerChanged)
+    Q_PROPERTY(int tunerOctave READ tunerOctave NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerCents READ tunerCents NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerFrequency READ tunerFrequency NOTIFY tunerChanged)
+    Q_PROPERTY(double tunerLevel READ tunerLevel NOTIFY tunerChanged)
 
     Q_PROPERTY(int preferredWindowX READ preferredWindowX CONSTANT)
     Q_PROPERTY(int preferredWindowY READ preferredWindowY CONSTANT)
@@ -131,9 +161,49 @@ public:
     [[nodiscard]] int roomPort() const noexcept;
     [[nodiscard]] int roundTripMilliseconds() const noexcept;
     [[nodiscard]] double remoteLevel() const noexcept;
+    [[nodiscard]] double remoteInstrumentLevel() const noexcept;
+    [[nodiscard]] double remoteVoiceLevel() const noexcept;
+    [[nodiscard]] double remoteInstrumentGain() const noexcept;
+    [[nodiscard]] double remoteVoiceGain() const noexcept;
+    [[nodiscard]] bool remoteInstrumentMuted() const noexcept;
+    [[nodiscard]] bool remoteVoiceMuted() const noexcept;
+    void setRemoteInstrumentGain(double gain);
+    void setRemoteVoiceGain(double gain);
+    void setRemoteInstrumentMuted(bool muted);
+    void setRemoteVoiceMuted(bool muted);
+    [[nodiscard]] QString connectionQuality() const;
+    [[nodiscard]] QString networkDiagnostics() const;
     [[nodiscard]] QString packetSummary() const;
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
+
+    [[nodiscard]] QString recordingDirectory() const;
+    void setRecordingDirectory(const QString& directory);
+    [[nodiscard]] int preferredUdpPort() const noexcept;
+    void setPreferredUdpPort(int port);
+    [[nodiscard]] bool automaticRouterMapping() const noexcept;
+    void setAutomaticRouterMapping(bool enabled);
+    [[nodiscard]] int latencyMode() const noexcept;
+    void setLatencyMode(int mode);
+    [[nodiscard]] QString latencyModeDetail() const;
+    [[nodiscard]] QString applicationVersion() const;
+    [[nodiscard]] QString qtVersion() const;
+
+    [[nodiscard]] bool recording() const noexcept;
+    [[nodiscard]] QString recordingElapsed() const;
+    [[nodiscard]] QString recordingMessage() const;
+    [[nodiscard]] QString recordingLocation() const;
+
+    [[nodiscard]] bool tunerActive() const noexcept;
+    void setTunerActive(bool active);
+    [[nodiscard]] bool tunerMutesInstrument() const noexcept;
+    void setTunerMutesInstrument(bool muted);
+    [[nodiscard]] bool tunerDetected() const noexcept;
+    [[nodiscard]] QString tunerNote() const;
+    [[nodiscard]] int tunerOctave() const noexcept;
+    [[nodiscard]] double tunerCents() const noexcept;
+    [[nodiscard]] double tunerFrequency() const noexcept;
+    [[nodiscard]] double tunerLevel() const noexcept;
 
     [[nodiscard]] int preferredWindowX() const noexcept;
     [[nodiscard]] int preferredWindowY() const noexcept;
@@ -149,6 +219,8 @@ public:
     Q_INVOKABLE void joinSession(const QString& inviteCode);
     Q_INVOKABLE void leaveSession();
     Q_INVOKABLE void copyInvite();
+    Q_INVOKABLE void toggleRecording();
+    Q_INVOKABLE void openRecordingFolder();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
     Q_INVOKABLE void persistNow();
 
@@ -157,6 +229,9 @@ signals:
     void setupChanged();
     void saveMessageChanged();
     void roomChanged();
+    void tunerChanged();
+    void recordingChanged();
+    void settingsChanged();
 
 private:
     struct DeviceOption final {
@@ -199,6 +274,17 @@ private:
         jamlink::audio::SoundcheckAudioState state);
     [[nodiscard]] static QString peerStateText(
         jamlink::network::PeerConnectionState state);
+    void applyRemoteStream(
+        jamlink::network::AudioStreamId stream,
+        float& stored,
+        double gain);
+    void applyTunerMute();
+    [[nodiscard]] std::filesystem::path defaultRecordingDirectory() const;
+
+    static constexpr std::size_t instrumentStream =
+        static_cast<std::size_t>(jamlink::network::AudioStreamId::Instrument);
+    static constexpr std::size_t voiceStream =
+        static_cast<std::size_t>(jamlink::network::AudioStreamId::Voice);
 
     jamlink::preferences::PreferencesStore store_;
     jamlink::preferences::UserPreferences preferences_;
@@ -219,6 +305,12 @@ private:
     jamlink::network::PeerTransportTelemetry peerTelemetry_;
     QString inviteCode_;
     bool sendMuted_{false};
+    bool remoteInstrumentMuted_{false};
+    bool remoteVoiceMuted_{false};
+    jamlink::audio::TunerReading tunerReading_;
+    bool tunerActive_{false};
+    jamlink::record::RecorderTelemetry recorderTelemetry_;
+    QString recordingLocation_;
 
     std::vector<DeviceOption> instrumentOptions_;
     std::vector<DeviceOption> voiceOptions_;

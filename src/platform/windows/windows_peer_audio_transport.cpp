@@ -4,11 +4,19 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 #include <Windows.h>
 
+#ifndef SIO_UDP_CONNRESET
+// Documented Winsock control code that is absent from some SDK header sets.
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+
 #include "jamlink/audio/async_mono_resampler.hpp"
+#include "jamlink/audio/gain_stage.hpp"
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
+#include "jamlink/network/audio_stream_receiver.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 
 #include <bcrypt.h>
@@ -43,9 +51,11 @@ constexpr std::size_t tagBytes = 16U;
 constexpr std::size_t maximumPlaintextBytes = 960U;
 constexpr std::size_t maximumDatagramBytes = headerBytes + maximumPlaintextBytes + tagBytes;
 constexpr std::uint32_t protocolMagic = 0x4A4C4B31U; // JLK1
-constexpr std::uint8_t protocolVersion = 1U;
+constexpr std::uint8_t protocolVersion = 2U;
 constexpr std::uint32_t networkSampleRate = 48'000U;
 constexpr std::size_t networkPacketFrames = 240U;
+constexpr std::size_t noncePrefixBytes = 8U;
+constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 
 enum class PacketType : std::uint8_t {
     Hello = 1U,
@@ -53,6 +63,97 @@ enum class PacketType : std::uint8_t {
     Audio = 3U,
     Ping = 4U,
     Pong = 5U
+};
+
+// Both peers know the same room secret, so a single key would let an attacker
+// reflect a peer's own authenticated packets back at it, and would leave two
+// independent nonce sequences under one key. Each direction gets its own key
+// derived from the secret instead.
+enum class Direction : std::uint8_t {
+    HostToGuest = 1U,
+    GuestToHost = 2U
+};
+
+[[nodiscard]] bool hmacSha256(
+    std::span<const std::uint8_t> key,
+    std::span<const std::uint8_t> message,
+    std::span<std::uint8_t, 32U> digest) noexcept {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(
+            &algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG))) {
+        return false;
+    }
+    const bool succeeded = BCRYPT_SUCCESS(BCryptHash(
+        algorithm,
+        const_cast<PUCHAR>(key.data()), static_cast<ULONG>(key.size()),
+        const_cast<PUCHAR>(message.data()), static_cast<ULONG>(message.size()),
+        digest.data(), static_cast<ULONG>(digest.size())));
+    static_cast<void>(BCryptCloseAlgorithmProvider(algorithm, 0U));
+    return succeeded;
+}
+
+// One HMAC-SHA256 invocation with a distinct label per direction. This is
+// HKDF-Expand with a single output block, not a bespoke construction.
+[[nodiscard]] bool deriveDirectionKey(
+    std::span<const std::uint8_t, 32U> secret,
+    Direction direction,
+    std::span<std::uint8_t, 32U> key) noexcept {
+    static constexpr char hostToGuest[] = "JamLink JL1 protocol 2 host-to-guest audio key";
+    static constexpr char guestToHost[] = "JamLink JL1 protocol 2 guest-to-host audio key";
+    const char* label = direction == Direction::HostToGuest ? hostToGuest : guestToHost;
+    const std::size_t labelBytes = direction == Direction::HostToGuest
+        ? sizeof(hostToGuest) - 1U
+        : sizeof(guestToHost) - 1U;
+    return hmacSha256(
+        secret,
+        std::span<const std::uint8_t>(
+            reinterpret_cast<const std::uint8_t*>(label), labelBytes),
+        key);
+}
+
+// Sliding replay window. A strictly increasing counter would also reject every
+// reordered packet, which the network genuinely produces and the receive
+// jitter buffer is able to use.
+class ReplayWindow final {
+public:
+    [[nodiscard]] bool accept(std::uint32_t sequence) noexcept {
+        if (!started_) {
+            started_ = true;
+            highest_ = sequence;
+            bitmap_ = 1U;
+            return true;
+        }
+        const auto delta = static_cast<std::int32_t>(sequence - highest_);
+        if (delta > 0) {
+            bitmap_ = delta >= static_cast<std::int32_t>(windowBits)
+                ? 1U
+                : ((bitmap_ << static_cast<unsigned>(delta)) | 1U);
+            highest_ = sequence;
+            return true;
+        }
+        const auto behind = static_cast<std::uint32_t>(-delta);
+        if (behind >= windowBits) {
+            return false;
+        }
+        const std::uint64_t mask = std::uint64_t{1} << behind;
+        if ((bitmap_ & mask) != 0U) {
+            return false;
+        }
+        bitmap_ |= mask;
+        return true;
+    }
+
+    void reset() noexcept {
+        started_ = false;
+        highest_ = 0U;
+        bitmap_ = 0U;
+    }
+
+private:
+    static constexpr std::uint32_t windowBits = 64U;
+    std::uint32_t highest_{0U};
+    std::uint64_t bitmap_{0U};
+    bool started_{false};
 };
 
 class WinsockLifetime final {
@@ -488,10 +589,47 @@ struct StunEndpoint final {
         && left.sin_addr.s_addr == right.sin_addr.s_addr;
 }
 
+// GetTickCount64 resolution is 10 to 16 ms, which is larger than the round
+// trips JamLink is trying to report and far larger than a 5 ms packet.
+[[nodiscard]] std::uint64_t nowMicroseconds() noexcept {
+    static const std::uint64_t frequency = [] {
+        LARGE_INTEGER value{};
+        return QueryPerformanceFrequency(&value) != 0
+            ? static_cast<std::uint64_t>(value.QuadPart)
+            : 1'000'000ULL;
+    }();
+    LARGE_INTEGER counter{};
+    if (QueryPerformanceCounter(&counter) == 0) {
+        return 0U;
+    }
+    const auto ticks = static_cast<std::uint64_t>(counter.QuadPart);
+    // Split the conversion so a long uptime cannot overflow the multiply.
+    return (ticks / frequency) * 1'000'000ULL
+        + ((ticks % frequency) * 1'000'000ULL) / frequency;
+}
+
+[[nodiscard]] AudioStreamReceiverSettings receiverSettings() noexcept {
+    AudioStreamReceiverSettings settings;
+    settings.sampleRate = networkSampleRate;
+    settings.packetFrames = networkPacketFrames;
+    settings.slotCount = 128U;
+    // Two packets is 10 ms, which is the floor a musician should ever pay for
+    // buffering; 32 packets caps it at 160 ms, past which playing together is
+    // no longer realistic and the user needs to be told rather than buffered.
+    settings.minimumDepthPackets = 2U;
+    settings.maximumDepthPackets = 32U;
+    return settings;
+}
+
 class WindowsPeerAudioTransport final : public IPeerAudioTransport {
 public:
     WindowsPeerAudioTransport()
-        : localAudio_(32'768U, 1U), remoteAudio_(32'768U, 1U) {}
+        : localAudio_{
+              audio::SpscAudioRing(32'768U, 1U),
+              audio::SpscAudioRing(32'768U, 1U)},
+          receivers_{
+              AudioStreamReceiver(receiverSettings()),
+              AudioStreamReceiver(receiverSettings())} {}
     ~WindowsPeerAudioTransport() override { stop(); }
 
     [[nodiscard]] std::string host(
@@ -579,8 +717,12 @@ public:
         mappedPort_ = false;
         localPort_ = 0U;
         inviteCode_.clear();
-        localAudio_.clear();
-        remoteAudio_.clear();
+        for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+            localAudio_[index].clear();
+            receivers_[index].reset();
+            remotePeak_[index].store(0.0F);
+            sendSequence_[index] = 0U;
+        }
         state_.store(PeerConnectionState::Idle, std::memory_order_release);
     }
 
@@ -588,41 +730,103 @@ public:
         sendMuted_.store(muted ? 1U : 0U, std::memory_order_release);
     }
 
+    void setLocalStreamMuted(AudioStreamId stream, bool muted) noexcept override {
+        localStreamMuted_[streamIndex(stream)].store(
+            muted ? 1U : 0U, std::memory_order_release);
+    }
+
+    void setRemoteStreamGain(AudioStreamId stream, float gain) noexcept override {
+        remoteGain_[streamIndex(stream)].setLinearGain(gain);
+    }
+
+    void setRemoteStreamMuted(AudioStreamId stream, bool muted) noexcept override {
+        remoteGain_[streamIndex(stream)].setMuted(muted);
+    }
+
+    void setLatencyPreference(LatencyPreference preference) noexcept override {
+        // Minimum depth sets the floor a musician always pays; the maximum is
+        // the point past which playing together is no longer realistic and the
+        // connection grade should be saying so instead.
+        std::size_t minimumPackets = 2U;
+        std::size_t maximumPackets = 32U;
+        double safety = 2.5;
+        if (preference == LatencyPreference::Lowest) {
+            minimumPackets = 1U;
+            maximumPackets = 12U;
+            safety = 1.75;
+        } else if (preference == LatencyPreference::MostStable) {
+            minimumPackets = 4U;
+            maximumPackets = 48U;
+            safety = 3.5;
+        }
+        for (auto& receiver : receivers_) {
+            receiver.configureDepth(minimumPackets, maximumPackets, safety);
+        }
+    }
+
     [[nodiscard]] std::string inviteCode() const override { return inviteCode_; }
     [[nodiscard]] std::uint16_t localPort() const noexcept override { return localPort_; }
 
     [[nodiscard]] PeerTransportTelemetry telemetry() const noexcept override {
-        return {
-            state_.load(std::memory_order_acquire),
-            packetsSent_.load(std::memory_order_relaxed),
-            packetsReceived_.load(std::memory_order_relaxed),
-            packetsRejected_.load(std::memory_order_relaxed),
-            localAudio_.overrunCount(),
-            remoteAudio_.overrunCount(),
-            remotePeak_.load(),
-            roundTripMilliseconds_.load(std::memory_order_relaxed),
-            automaticPortMapping_.load(std::memory_order_relaxed)};
+        PeerTransportTelemetry snapshot;
+        snapshot.state = state_.load(std::memory_order_acquire);
+        snapshot.packetsSent = packetsSent_.load(std::memory_order_relaxed);
+        snapshot.packetsReceived = packetsReceived_.load(std::memory_order_relaxed);
+        snapshot.packetsRejected = packetsRejected_.load(std::memory_order_relaxed);
+        snapshot.roundTripMicroseconds =
+            roundTripMicroseconds_.load(std::memory_order_relaxed);
+        snapshot.automaticPortMapping =
+            automaticPortMapping_.load(std::memory_order_relaxed);
+        for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+            snapshot.localAudioDrops += localAudio_[index].overrunCount();
+            const auto receiver = receivers_[index].telemetry();
+            RemoteStreamTelemetry& stream = snapshot.streams[index];
+            stream.peak = remotePeak_[index].load();
+            stream.packetsConcealed = receiver.packetsConcealed;
+            stream.packetsLate = receiver.packetsLate;
+            stream.bufferStretches = receiver.bufferStretches;
+            stream.latencyTrims = receiver.latencyTrims;
+            stream.jitterMicroseconds = receiver.jitterMicroseconds;
+            stream.bufferedFrames = receiver.currentDepthFrames;
+            stream.targetFrames = receiver.targetDepthFrames;
+            stream.playing = receiver.playing;
+        }
+        return snapshot;
     }
 
     void pushLocalAudio(
+        AudioStreamId stream,
         std::span<const float> monoSamples,
         std::uint32_t sampleRate) noexcept override {
-        if (state_.load(std::memory_order_acquire) != PeerConnectionState::Connected
+        const std::size_t index = streamIndex(stream);
+        if (index >= audioStreamCount
+            || state_.load(std::memory_order_acquire) != PeerConnectionState::Connected
             || sendMuted_.load(std::memory_order_acquire) != 0U
+            || localStreamMuted_[index].load(std::memory_order_acquire) != 0U
             || sampleRate < 8'000U || sampleRate > 384'000U) {
             return;
         }
         localSampleRate_.store(sampleRate, std::memory_order_relaxed);
-        static_cast<void>(localAudio_.write(monoSamples));
+        static_cast<void>(localAudio_[index].write(monoSamples));
     }
 
     [[nodiscard]] std::size_t pullRemote48k(
+        AudioStreamId stream,
         std::span<float> monoSamples) noexcept override {
-        return remoteAudio_.readAndZeroFill(monoSamples);
-    }
-
-    [[nodiscard]] std::size_t availableRemote48k() const noexcept override {
-        return remoteAudio_.availableReadFrames();
+        const std::size_t index = streamIndex(stream);
+        if (index >= audioStreamCount) {
+            std::fill(monoSamples.begin(), monoSamples.end(), 0.0F);
+            return 0U;
+        }
+        const std::size_t live = receivers_[index].pull(monoSamples);
+        remoteGain_[index].process(
+            audio::InterleavedAudioBlock{monoSamples, 1U});
+        float peak = 0.0F;
+        for (const float sample : monoSamples) {
+            peak = std::max(peak, std::abs(sample));
+        }
+        remotePeak_[index].store(std::clamp(peak, 0.0F, 1.0F));
+        return live;
     }
 
 private:
@@ -682,6 +886,13 @@ private:
         localPort_ = ntohs(local.sin_port);
         u_long nonBlocking = 1UL;
         static_cast<void>(ioctlsocket(socket_.get(), FIONBIO, &nonBlocking));
+        // Without this, an ICMP port-unreachable from any probed address makes
+        // the next recvfrom fail with WSAECONNRESET on Windows.
+        BOOL reportConnectionReset = FALSE;
+        DWORD returned = 0U;
+        static_cast<void>(WSAIoctl(
+            socket_.get(), SIO_UDP_CONNRESET, &reportConnectionReset,
+            sizeof(reportConnectionReset), nullptr, 0U, &returned, nullptr, nullptr));
         return true;
     }
 
@@ -690,8 +901,10 @@ private:
         packetsSent_.store(0U, std::memory_order_relaxed);
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
-        roundTripMilliseconds_.store(0U, std::memory_order_relaxed);
-        remotePeak_.store(0.0F);
+        roundTripMicroseconds_.store(0U, std::memory_order_relaxed);
+        for (auto& peak : remotePeak_) {
+            peak.store(0.0F);
+        }
         worker_ = std::thread([this] { run(); });
     }
 
@@ -701,6 +914,7 @@ private:
         std::uint32_t sequence,
         std::uint32_t sampleRate,
         std::uint16_t frameCount,
+        std::uint8_t stream,
         std::span<const std::uint8_t> plaintext,
         std::span<std::uint8_t, maximumDatagramBytes> destination) noexcept {
         if (plaintext.size() > maximumPlaintextBytes) {
@@ -713,14 +927,22 @@ private:
         writeU32(destination.data() + 8U, sequence);
         writeU32(destination.data() + 12U, sampleRate);
         writeU16(destination.data() + 16U, frameCount);
-        destination[18U] = 0U;
-        destination[19U] = 0U;
-        std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefix_.size());
-        const std::uint64_t nonceCounter = ++nonceCounter_;
-        for (std::size_t index = 0U; index < 8U; ++index) {
-            destination[24U + index] = static_cast<std::uint8_t>(
-                nonceCounter >> ((7U - index) * 8U));
+        destination[18U] = static_cast<std::uint8_t>(sendDirection_);
+        destination[19U] = stream;
+        std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefixBytes);
+        if (nonceExhausted_) {
+            return 0U;
         }
+        const std::uint32_t nonceCounter = ++nonceCounter_;
+        if (nonceCounter >= maximumNonceCounter) {
+            // Never reuse a nonce. Refusing to send is the only safe response,
+            // and it has to latch: without the flag the counter keeps climbing
+            // on every refused attempt, wraps past 2^32, and starts handing out
+            // nonces that have already been used under this key.
+            nonceExhausted_ = true;
+            return 0U;
+        }
+        writeU32(destination.data() + 20U + noncePrefixBytes, nonceCounter);
         auto ciphertext = destination.subspan(headerBytes, plaintext.size());
         auto tag = std::span<std::uint8_t, tagBytes>(
             destination.data() + headerBytes + plaintext.size(), tagBytes);
@@ -735,10 +957,19 @@ private:
         PacketType type,
         std::uint32_t sampleRate,
         std::uint16_t frameCount,
-        std::span<const std::uint8_t> plaintext) noexcept {
+        std::span<const std::uint8_t> plaintext,
+        AudioStreamId stream = AudioStreamId::Instrument) noexcept {
         std::array<std::uint8_t, maximumDatagramBytes> packet{};
+        // Media sequences are per stream so each receive buffer sees a
+        // contiguous run. Replay protection uses the nonce counter, which is
+        // unique across every packet in this direction.
+        const std::uint32_t sequence = type == PacketType::Audio
+            ? ++sendSequence_[streamIndex(stream)]
+            : 0U;
         const std::size_t bytes = buildEncryptedPacket(
-            cipher, type, ++sendSequence_, sampleRate, frameCount, plaintext, packet);
+            cipher, type, sequence, sampleRate, frameCount,
+            type == PacketType::Audio ? static_cast<std::uint8_t>(stream) : std::uint8_t{0},
+            plaintext, packet);
         if (bytes == 0U) {
             return false;
         }
@@ -755,19 +986,36 @@ private:
 
     void run() noexcept {
         try {
-            AesGcmCipher cipher(secret_);
-            if (!cipher.valid() || !BCRYPT_SUCCESS(BCryptGenRandom(
+            sendDirection_ = hostMode_ ? Direction::HostToGuest : Direction::GuestToHost;
+            receiveDirection_ = hostMode_ ? Direction::GuestToHost : Direction::HostToGuest;
+            std::array<std::uint8_t, 32U> sendKey{};
+            std::array<std::uint8_t, 32U> receiveKey{};
+            if (!deriveDirectionKey(secret_, sendDirection_, sendKey)
+                || !deriveDirectionKey(secret_, receiveDirection_, receiveKey)) {
+                state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
+                return;
+            }
+            AesGcmCipher sendCipher(sendKey);
+            AesGcmCipher receiveCipher(receiveKey);
+            SecureZeroMemory(sendKey.data(), sendKey.size());
+            SecureZeroMemory(receiveKey.data(), receiveKey.size());
+            replayWindow_.reset();
+            nonceCounter_ = 0U;
+            nonceExhausted_ = false;
+            if (!sendCipher.valid() || !receiveCipher.valid()
+                || !BCRYPT_SUCCESS(BCryptGenRandom(
                     nullptr, noncePrefix_.data(), static_cast<ULONG>(noncePrefix_.size()),
                     BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
                 state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
                 return;
             }
-            audio::AsyncMonoResampler outgoingResampler(65'536U);
-            audio::AsyncMonoResampler incomingResampler(65'536U);
-            incomingResampler.configure(networkSampleRate, networkSampleRate);
+            std::array<audio::AsyncMonoResampler, audioStreamCount> outgoingResamplers{
+                audio::AsyncMonoResampler(65'536U),
+                audio::AsyncMonoResampler(65'536U)};
             std::uint32_t outgoingRate = networkSampleRate;
-            outgoingResampler.configure(outgoingRate, networkSampleRate);
-            std::uint32_t incomingRate = networkSampleRate;
+            for (auto& resampler : outgoingResamplers) {
+                resampler.configure(outgoingRate, networkSampleRate);
+            }
             std::array<float, 1'024U> localScratch{};
             std::array<float, networkPacketFrames> networkFloat{};
             std::array<std::uint8_t, networkPacketFrames * 2U> networkPcm{};
@@ -783,19 +1031,20 @@ private:
                 const ULONGLONG now = GetTickCount64();
                 if (!hostMode_ && !connected && now - lastHello >= 250U) {
                     constexpr std::array<std::uint8_t, 4U> hello{{'J', 'O', 'I', 'N'}};
-                    static_cast<void>(sendPacket(cipher, PacketType::Hello, 0U, 0U, hello));
+                    static_cast<void>(sendPacket(
+                        sendCipher, PacketType::Hello, 0U, 0U, hello));
                     lastHello = now;
                 }
                 if (connected && now - lastPing >= 500U) {
-                    const std::uint64_t stamp = now;
+                    const std::uint64_t stamp = nowMicroseconds();
                     std::memcpy(controlPayload.data(), &stamp, sizeof(stamp));
                     static_cast<void>(sendPacket(
-                        cipher, PacketType::Ping, 0U, 0U, controlPayload));
+                        sendCipher, PacketType::Ping, 0U, 0U, controlPayload));
                     lastPing = now;
                 }
 
                 drainOutgoingAudio(
-                    cipher, outgoingResampler, outgoingRate,
+                    sendCipher, outgoingResamplers, outgoingRate,
                     localScratch, networkFloat, networkPcm, connected);
 
                 fd_set readSet;
@@ -812,18 +1061,31 @@ private:
                             static_cast<int>(receivedPacket.size()), 0,
                             reinterpret_cast<sockaddr*>(&source), &sourceBytes);
                         if (bytes < 0) {
-                            if (WSAGetLastError() != WSAEWOULDBLOCK) {
-                                state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
-                                return;
+                            const int error = WSAGetLastError();
+                            if (error == WSAEWOULDBLOCK) {
+                                break;
                             }
-                            break;
+                            // These are per-datagram conditions, not socket
+                            // failures. WSAEMSGSIZE in particular means a
+                            // datagram larger than any JamLink packet arrived,
+                            // which anyone who knows the port can send;
+                            // treating it as fatal made the session remotely
+                            // killable without the room secret.
+                            if (error == WSAEMSGSIZE || error == WSAECONNRESET
+                                || error == WSAENETRESET || error == WSAEINTR) {
+                                packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
+                                continue;
+                            }
+                            state_.store(
+                                PeerConnectionState::SocketFailed, std::memory_order_release);
+                            return;
                         }
                         if (handlePacket(
-                                cipher,
+                                sendCipher, receiveCipher,
                                 std::span<const std::uint8_t>(receivedPacket.data(),
                                     static_cast<std::size_t>(bytes)),
                                 decrypted, source, connected, lastReceive,
-                                incomingResampler, incomingRate, networkFloat)) {
+                                networkFloat)) {
                             packetsReceived_.fetch_add(1U, std::memory_order_relaxed);
                         } else {
                             packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
@@ -848,7 +1110,7 @@ private:
 
     void drainOutgoingAudio(
         AesGcmCipher& cipher,
-        audio::AsyncMonoResampler& resampler,
+        std::array<audio::AsyncMonoResampler, audioStreamCount>& resamplers,
         std::uint32_t& configuredRate,
         std::array<float, 1'024U>& localScratch,
         std::array<float, networkPacketFrames>& networkFloat,
@@ -861,45 +1123,58 @@ private:
         if (requestedRate != configuredRate && requestedRate >= 8'000U
             && requestedRate <= 384'000U) {
             configuredRate = requestedRate;
-            resampler.configure(configuredRate, networkSampleRate);
-        }
-        while (localAudio_.availableReadFrames() > 0U) {
-            const std::size_t frames = std::min(
-                localScratch.size(), localAudio_.availableReadFrames());
-            static_cast<void>(localAudio_.readAndZeroFill(
-                std::span<float>(localScratch.data(), frames)));
-            static_cast<void>(resampler.write(
-                std::span<const float>(localScratch.data(), frames)));
-        }
-        for (std::size_t packet = 0U; packet < 4U; ++packet) {
-            if (resampler.read(networkFloat) != networkFloat.size()) {
-                break;
+            for (auto& resampler : resamplers) {
+                resampler.configure(configuredRate, networkSampleRate);
             }
-            for (std::size_t frame = 0U; frame < networkFloat.size(); ++frame) {
-                const float bounded = std::clamp(networkFloat[frame], -0.98F, 0.98F);
-                const auto sample = static_cast<std::int16_t>(std::lrint(bounded * 32'767.0F));
-                networkPcm[frame * 2U] = static_cast<std::uint8_t>(sample & 0xFF);
-                networkPcm[frame * 2U + 1U] = static_cast<std::uint8_t>((sample >> 8) & 0xFF);
+        }
+
+        for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+            auto& resampler = resamplers[index];
+            while (localAudio_[index].availableReadFrames() > 0U) {
+                const std::size_t frames = std::min(
+                    localScratch.size(), localAudio_[index].availableReadFrames());
+                static_cast<void>(localAudio_[index].readAndZeroFill(
+                    std::span<float>(localScratch.data(), frames)));
+                static_cast<void>(resampler.write(
+                    std::span<const float>(localScratch.data(), frames)));
             }
-            static_cast<void>(sendPacket(
-                cipher, PacketType::Audio, networkSampleRate,
-                static_cast<std::uint16_t>(networkPacketFrames), networkPcm));
+            for (std::size_t packet = 0U; packet < 4U; ++packet) {
+                if (resampler.read(networkFloat) != networkFloat.size()) {
+                    break;
+                }
+                for (std::size_t frame = 0U; frame < networkFloat.size(); ++frame) {
+                    const float bounded = std::clamp(networkFloat[frame], -0.98F, 0.98F);
+                    const auto sample =
+                        static_cast<std::int16_t>(std::lrint(bounded * 32'767.0F));
+                    networkPcm[frame * 2U] = static_cast<std::uint8_t>(sample & 0xFF);
+                    networkPcm[frame * 2U + 1U] =
+                        static_cast<std::uint8_t>((sample >> 8) & 0xFF);
+                }
+                static_cast<void>(sendPacket(
+                    cipher, PacketType::Audio, networkSampleRate,
+                    static_cast<std::uint16_t>(networkPacketFrames), networkPcm,
+                    static_cast<AudioStreamId>(index)));
+            }
         }
     }
 
     [[nodiscard]] bool handlePacket(
-        AesGcmCipher& cipher,
+        AesGcmCipher& sendCipher,
+        AesGcmCipher& receiveCipher,
         std::span<const std::uint8_t> packet,
         std::array<std::uint8_t, maximumPlaintextBytes>& plaintext,
         const sockaddr_in& source,
         bool& connected,
         ULONGLONG& lastReceive,
-        audio::AsyncMonoResampler& incomingResampler,
-        std::uint32_t& incomingRate,
         std::array<float, networkPacketFrames>& networkFloat) noexcept {
         if (packet.size() < headerBytes + tagBytes
             || readU32(packet.data()) != protocolMagic
-            || packet[4U] != protocolVersion) {
+            || packet[4U] != protocolVersion
+            // Reject a peer's own traffic reflected back before spending any
+            // work on it. The per-direction key makes this authoritative, but
+            // checking the field first keeps the rejection cheap.
+            || packet[18U] != static_cast<std::uint8_t>(receiveDirection_)
+            || packet[19U] >= audioStreamCount) {
             return false;
         }
         const std::size_t payloadBytes = readU16(packet.data() + 6U);
@@ -910,7 +1185,7 @@ private:
         const auto ciphertext = packet.subspan(headerBytes, payloadBytes);
         const auto tag = std::span<const std::uint8_t, tagBytes>(
             packet.data() + headerBytes + payloadBytes, tagBytes);
-        if (!cipher.decrypt(
+        if (!receiveCipher.decrypt(
                 packet.first(headerBytes), ciphertext, tag,
                 std::span<std::uint8_t>(plaintext.data(), payloadBytes))) {
             return false;
@@ -920,10 +1195,20 @@ private:
         if (type != PacketType::Hello && !sameEndpoint(source, remoteAddress_)) {
             return false;
         }
-        if (connected && sequence <= lastReceiveSequence_) {
+        // A peer that leaves and rejoins the same room restarts its nonce
+        // counter from zero while this host keeps running, so its first packets
+        // look far older than the window's high water mark and every one of
+        // them would be rejected forever. An authenticated Hello marks the
+        // start of a new session, so re-arm the window there.
+        if (type == PacketType::Hello && hostMode_) {
+            replayWindow_.reset();
+        }
+        // The nonce counter is unique for every packet in this direction, so it
+        // is the right anti-replay identity. Media sequences restart per stream
+        // and cannot serve that purpose.
+        if (!replayWindow_.accept(readU32(packet.data() + 20U + noncePrefixBytes))) {
             return false;
         }
-        lastReceiveSequence_ = sequence;
         lastReceive = GetTickCount64();
 
         if (type == PacketType::Hello && hostMode_) {
@@ -931,7 +1216,7 @@ private:
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             constexpr std::array<std::uint8_t, 2U> ack{{'O', 'K'}};
-            static_cast<void>(sendPacket(cipher, PacketType::HelloAck, 0U, 0U, ack));
+            static_cast<void>(sendPacket(sendCipher, PacketType::HelloAck, 0U, 0U, ack));
             return true;
         }
         if (type == PacketType::HelloAck && !hostMode_) {
@@ -941,78 +1226,80 @@ private:
         }
         if (type == PacketType::Ping && payloadBytes == sizeof(std::uint64_t)) {
             static_cast<void>(sendPacket(
-                cipher, PacketType::Pong, 0U, 0U,
+                sendCipher, PacketType::Pong, 0U, 0U,
                 std::span<const std::uint8_t>(plaintext.data(), payloadBytes)));
             return true;
         }
         if (type == PacketType::Pong && payloadBytes == sizeof(std::uint64_t)) {
             std::uint64_t sentAt = 0U;
             std::memcpy(&sentAt, plaintext.data(), sizeof(sentAt));
-            const ULONGLONG now = GetTickCount64();
-            roundTripMilliseconds_.store(
-                static_cast<std::uint32_t>(std::min<ULONGLONG>(now - sentAt, 60'000U)),
-                std::memory_order_relaxed);
+            const std::uint64_t now = nowMicroseconds();
+            if (now >= sentAt) {
+                roundTripMicroseconds_.store(
+                    std::min<std::uint64_t>(now - sentAt, 60'000'000ULL),
+                    std::memory_order_relaxed);
+            }
             return true;
         }
         if (type != PacketType::Audio || !connected) {
             return false;
         }
+        // Audio is always full 48 kHz packets of a fixed size. The sender
+        // resamples before transmitting, which keeps the receive path free of
+        // rate conversion and lets the jitter buffer index whole packets.
         const std::uint32_t sampleRate = readU32(packet.data() + 12U);
         const std::size_t frameCount = readU16(packet.data() + 16U);
-        if (sampleRate < 8'000U || sampleRate > 384'000U
-            || frameCount == 0U || frameCount > networkPacketFrames
-            || payloadBytes != frameCount * 2U) {
+        const std::uint8_t stream = packet[19U];
+        if (sampleRate != networkSampleRate || frameCount != networkPacketFrames
+            || payloadBytes != frameCount * 2U
+            || stream >= audioStreamCount) {
             return false;
         }
-        if (sampleRate != incomingRate) {
-            incomingRate = sampleRate;
-            incomingResampler.configure(incomingRate, networkSampleRate);
-        }
-        float peak = 0.0F;
         for (std::size_t frame = 0U; frame < frameCount; ++frame) {
             const auto sample = static_cast<std::int16_t>(
                 static_cast<std::uint16_t>(plaintext[frame * 2U])
                 | (static_cast<std::uint16_t>(plaintext[frame * 2U + 1U]) << 8U));
             networkFloat[frame] = static_cast<float>(sample) / 32'768.0F;
-            peak = std::max(peak, std::abs(networkFloat[frame]));
         }
-        remotePeak_.store(peak);
-        static_cast<void>(incomingResampler.write(
-            std::span<const float>(networkFloat.data(), frameCount)));
-        while (incomingResampler.availableFrames() >= networkPacketFrames * 2U) {
-            if (incomingResampler.read(networkFloat) != networkFloat.size()) {
-                break;
-            }
-            static_cast<void>(remoteAudio_.write(networkFloat));
-        }
+        receivers_[stream].submit(
+            sequence,
+            std::span<const float>(networkFloat.data(), frameCount),
+            nowMicroseconds());
         return true;
     }
 
     WinsockLifetime winsock_;
     SocketHandle socket_;
     std::thread worker_;
-    audio::SpscAudioRing localAudio_;
-    audio::SpscAudioRing remoteAudio_;
+    std::array<audio::SpscAudioRing, audioStreamCount> localAudio_;
+    std::array<AudioStreamReceiver, audioStreamCount> receivers_;
+    std::array<audio::GainStage, audioStreamCount> remoteGain_{
+        audio::GainStage(1.0F), audio::GainStage(1.0F)};
     std::array<std::uint8_t, 32U> secret_{};
-    std::array<std::uint8_t, 4U> noncePrefix_{};
+    std::array<std::uint8_t, noncePrefixBytes> noncePrefix_{};
     sockaddr_in remoteAddress_{};
     std::string inviteCode_;
     std::uint16_t localPort_{0U};
     bool hostMode_{false};
     bool mappedPort_{false};
-    std::uint64_t nonceCounter_{0U};
-    std::uint32_t sendSequence_{0U};
-    std::uint32_t lastReceiveSequence_{0U};
+    Direction sendDirection_{Direction::HostToGuest};
+    Direction receiveDirection_{Direction::GuestToHost};
+    ReplayWindow replayWindow_;
+    std::uint32_t nonceCounter_{0U};
+    bool nonceExhausted_{false};
+    std::array<std::uint32_t, audioStreamCount> sendSequence_{};
     std::atomic<bool> stopRequested_{false};
     std::atomic<PeerConnectionState> state_{PeerConnectionState::Idle};
     std::atomic<std::uint32_t> sendMuted_{0U};
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> localStreamMuted_{};
     std::atomic<std::uint32_t> localSampleRate_{networkSampleRate};
     std::atomic<std::uint64_t> packetsSent_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};
     std::atomic<std::uint64_t> packetsRejected_{0U};
-    std::atomic<std::uint32_t> roundTripMilliseconds_{0U};
+    std::atomic<std::uint64_t> roundTripMicroseconds_{0U};
     std::atomic<bool> automaticPortMapping_{false};
-    audio::RealtimeAtomicFloat remotePeak_;
+    std::array<audio::RealtimeAtomicFloat, audioStreamCount> remotePeak_{
+        audio::RealtimeAtomicFloat(0.0F), audio::RealtimeAtomicFloat(0.0F)};
 };
 
 } // namespace

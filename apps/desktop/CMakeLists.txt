@@ -27,6 +27,7 @@ qt_add_qml_module(jamlink_desktop
         qml/pages/RoomPage.qml
         qml/pages/SettingsPage.qml
         qml/pages/SoundCheckPage.qml
+        qml/pages/TunerPage.qml
     RESOURCES
         assets/arrow_back.svg
         assets/check_circle.svg
@@ -50,6 +51,8 @@ target_link_libraries(jamlink_desktop
         Qt6::Quick
 )
 target_compile_features(jamlink_desktop PRIVATE cxx_std_20)
+target_compile_definitions(jamlink_desktop
+    PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
 set_target_properties(jamlink_desktop PROPERTIES
     CXX_EXTENSIONS OFF
     OUTPUT_NAME JamLink
@@ -71,6 +74,8 @@ if(BUILD_TESTING)
         jamlink_desktop_controller_tests
         PRIVATE JamLink::Core JamLink::PlatformAudio Qt6::Core Qt6::Gui Qt6::Qml)
     target_compile_features(jamlink_desktop_controller_tests PRIVATE cxx_std_20)
+    target_compile_definitions(jamlink_desktop_controller_tests
+        PRIVATE JAMLINK_VERSION_STRING="${PROJECT_VERSION}")
     set_target_properties(jamlink_desktop_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_desktop_controller_tests)
     if(MSVC)
@@ -112,6 +117,30 @@ if(BUILD_TESTING)
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-settings.png"
     )
     add_test(
+        NAME jamlink_desktop_visual_room
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page room
+            --width 532
+            --height 700
+            --minimum-capture-height 700
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_tuner
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page tuner
+            --width 532
+            --height 560
+            --minimum-capture-height 560
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-tuner.png"
+    )
+    add_test(
         NAME jamlink_desktop_visual_high_dpi
         COMMAND jamlink_desktop
             --visual-fixture
@@ -126,18 +155,26 @@ if(BUILD_TESTING)
     )
     get_target_property(_jamlink_qmake Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_jamlink_qt_bin "${_jamlink_qmake}" DIRECTORY)
+    # ENVIRONMENT_MODIFICATION takes one list value. Passing the entries as
+    # separate arguments makes set_tests_properties read the second entry as the
+    # next property name, which silently drops the offscreen/software settings
+    # and leaves the captures dependent on the developer's real display.
+    set(_jamlink_visual_environment
+        "PATH=path_list_prepend:${_jamlink_qt_bin}"
+        "QT_QPA_PLATFORM=set:offscreen"
+        "QSG_RHI_BACKEND=set:software"
+    )
     set_tests_properties(
         jamlink_desktop_visual_first_launch
         jamlink_desktop_visual_second_launch
         jamlink_desktop_visual_settings
+        jamlink_desktop_visual_room
+        jamlink_desktop_visual_tuner
         jamlink_desktop_visual_high_dpi
         PROPERTIES
         TIMEOUT 30
         LABELS "gui;visual"
-        ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:${_jamlink_qt_bin}"
-            "QT_QPA_PLATFORM=set:offscreen"
-            "QSG_RHI_BACKEND=set:software"
+        ENVIRONMENT_MODIFICATION "${_jamlink_visual_environment}"
     )
     set_tests_properties(jamlink_desktop_controller_tests PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
@@ -148,8 +185,14 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_settings
         PROPERTIES DEPENDS jamlink_desktop_visual_second_launch)
     set_tests_properties(
-        jamlink_desktop_visual_high_dpi
+        jamlink_desktop_visual_room
         PROPERTIES DEPENDS jamlink_desktop_visual_settings)
+    set_tests_properties(
+        jamlink_desktop_visual_tuner
+        PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_tests_properties(
+        jamlink_desktop_visual_high_dpi
+        PROPERTIES DEPENDS jamlink_desktop_visual_tuner)
     set_property(
         TEST jamlink_desktop_visual_high_dpi APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "QT_SCREEN_SCALE_FACTORS=set:1.5")

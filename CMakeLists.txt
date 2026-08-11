@@ -23,10 +23,13 @@ include(JamLinkWarnings)
 
 add_library(jamlink_core STATIC
     src/audio/audio_route_graph.cpp
+    src/audio/instrument_tuner.cpp
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
+    src/network/audio_stream_receiver.cpp
     src/preferences/preferences_store.cpp
+    src/record/session_recorder.cpp
 )
 
 add_library(JamLink::Core ALIAS jamlink_core)
