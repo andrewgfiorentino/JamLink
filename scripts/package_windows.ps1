@@ -57,6 +57,16 @@ $env:PATH = $qtBin + ";" + $env:PATH
     --no-system-d3d-compiler `
     --no-system-dxc-compiler `
     --no-ffmpeg `
+    --no-quickcontrols2fluentwinui3styleimpl `
+    --no-quickcontrols2fusion `
+    --no-quickcontrols2fusionstyleimpl `
+    --no-quickcontrols2imagine `
+    --no-quickcontrols2imaginestyleimpl `
+    --no-quickcontrols2material `
+    --no-quickcontrols2materialstyleimpl `
+    --no-quickcontrols2universal `
+    --no-quickcontrols2universalstyleimpl `
+    --no-quickcontrols2windowsstyleimpl `
     $binary
 if ($LASTEXITCODE -ne 0) {
     throw "windeployqt failed with exit code $LASTEXITCODE"
