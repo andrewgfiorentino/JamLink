@@ -72,6 +72,29 @@ if ($LASTEXITCODE -ne 0) {
     throw "windeployqt failed with exit code $LASTEXITCODE"
 }
 
+# The Qt Quick Controls import scanner deliberately reports every optional
+# style. JamLink pins Basic before the QML engine starts, so carrying those
+# unselected styles only bloats the tester and expands its notice surface.
+$excludedStyleDirectories = @(
+    "qml\QtQuick\Controls\FluentWinUI3",
+    "qml\QtQuick\Controls\Fusion",
+    "qml\QtQuick\Controls\Imagine",
+    "qml\QtQuick\Controls\Material",
+    "qml\QtQuick\Controls\Universal",
+    "qml\QtQuick\Controls\Windows",
+    "qml\QtQuick\NativeStyle"
+)
+$packagePrefix = [IO.Path]::GetFullPath($packageDirectory).TrimEnd("\") + "\"
+foreach ($relativeStyle in $excludedStyleDirectories) {
+    $styleDirectory = [IO.Path]::GetFullPath((Join-Path $packageDirectory $relativeStyle))
+    if (-not $styleDirectory.StartsWith($packagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove a Qt style outside the package directory"
+    }
+    if (Test-Path -LiteralPath $styleDirectory -PathType Container) {
+        Remove-Item -LiteralPath $styleDirectory -Recurse -Force
+    }
+}
+
 # windeployqt cannot discover the compiler runtime when invoked outside a
 # Visual Studio developer prompt. Locate the exact VS 2022 x64 redistributable
 # used by the checked toolchain and deploy its allowed runtime files directly.
