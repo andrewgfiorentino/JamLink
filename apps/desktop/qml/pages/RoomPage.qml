@@ -189,7 +189,7 @@ Item {
 
         JamCard {
             width: parent.width
-            height: 166
+            height: 220
 
             Column {
                 anchors.fill: parent
@@ -251,6 +251,9 @@ Item {
                         readonly property bool streamMuted: streamRow.isInstrument
                             ? root.controller.remoteInstrumentMuted
                             : root.controller.remoteVoiceMuted
+                        readonly property bool sourceClipped: streamRow.isInstrument
+                            ? root.controller.remoteInstrumentClipped
+                            : root.controller.remoteVoiceClipped
 
                         JamIcon {
                             anchors.verticalCenter: parent.verticalCenter
@@ -266,7 +269,9 @@ Item {
                             spacing: 3
                             Text {
                                 text: streamRow.modelData.label
-                                color: streamRow.streamMuted ? "#7b858b" : "#cbd2d6"
+                                    + (streamRow.sourceClipped ? " · CLIPPING" : "")
+                                color: streamRow.streamMuted ? "#7b858b"
+                                    : streamRow.sourceClipped ? "#ff746b" : "#cbd2d6"
                                 font.family: "Segoe UI"
                                 font.pixelSize: 10
                             }
@@ -275,6 +280,7 @@ Item {
                                 height: 12
                                 segmentCount: 34
                                 level: streamRow.streamMuted ? 0 : streamRow.streamLevel
+                                clipped: streamRow.sourceClipped
                             }
                         }
                         JamSlider {
@@ -335,6 +341,60 @@ Item {
                         enabled: root.controller.roomActive
                         Accessible.name: "Send my audio to friend"
                         onToggled: root.controller.sendMuted = !checked
+                    }
+                }
+
+                Repeater {
+                    model: [
+                        { label: "Your guitar", instrument: true },
+                        { label: "Your voice", instrument: false }
+                    ]
+                    Row {
+                        id: localSignalRow
+                        required property var modelData
+                        width: parent.width
+                        height: 20
+                        spacing: 8
+                        readonly property bool sourceClipped: localSignalRow.modelData.instrument
+                            ? (root.controller.instrumentInputClipped
+                                || root.controller.instrumentSendClipped)
+                            : (root.controller.voiceInputClipped
+                                || root.controller.voiceSendClipped)
+                        readonly property real sourceLevel: localSignalRow.modelData.instrument
+                            ? root.controller.instrumentLevel : root.controller.voiceLevel
+                        readonly property real sourcePeak: localSignalRow.modelData.instrument
+                            ? root.controller.instrumentPeakHold : root.controller.voicePeakHold
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 58
+                            text: localSignalRow.modelData.label
+                            color: localSignalRow.sourceClipped ? "#ff746b" : "#aeb7bc"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 9
+                        }
+                        LevelBar {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - 58 - localClip.width - 16
+                            height: 10
+                            segmentCount: 34
+                            level: localSignalRow.sourceLevel
+                            peakHold: localSignalRow.sourcePeak
+                            clipped: localSignalRow.sourceClipped
+                        }
+                        ClipLatch {
+                            id: localClip
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 60
+                            height: 20
+                            clipped: localSignalRow.sourceClipped
+                            onClicked: {
+                                if (localSignalRow.modelData.instrument)
+                                    root.controller.clearInstrumentClipping()
+                                else
+                                    root.controller.clearVoiceClipping()
+                            }
+                        }
                     }
                 }
             }
@@ -419,7 +479,7 @@ Item {
                 }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 34
+                    width: parent.width - 34 - monitorClip.width - 12
                     spacing: 4
                     Text {
                         text: root.controller.peerConnected
@@ -442,6 +502,15 @@ Item {
                         font.family: "Segoe UI"
                         font.pixelSize: 9
                     }
+                }
+                ClipLatch {
+                    id: monitorClip
+                    anchors.verticalCenter: parent.verticalCenter
+                    clipped: root.controller.outputClipped
+                    Accessible.name: clipped
+                        ? "Monitor mix clipping detected. Activate to reset."
+                        : "Monitor mix clipping latch is clear"
+                    onClicked: root.controller.clearOutputClipping()
                 }
             }
         }

@@ -70,7 +70,7 @@ Item {
         anchors.topMargin: 80
         anchors.leftMargin: 24
         anchors.rightMargin: 24
-        height: 228
+        height: 230
         spacing: 12
 
         JamCard {
@@ -101,6 +101,45 @@ Item {
                     width: parent.width
                     height: 18
                     level: root.controller.instrumentLevel
+                    peakHold: root.controller.instrumentPeakHold
+                    clipped: root.controller.instrumentInputClipped
+                        || root.controller.instrumentSendClipped
+                }
+                Row {
+                    width: parent.width
+                    height: 24
+                    Column {
+                        width: parent.width - instrumentClip.width
+                        spacing: 1
+                        Text {
+                            text: "Current " + root.levelText(root.controller.instrumentLevel)
+                            color: "#aeb7bc"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 8
+                        }
+                        Text {
+                            text: "Peak " + root.levelText(root.controller.instrumentPeakHold)
+                            color: "#dce1e3"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 8
+                        }
+                    }
+                    ClipLatch {
+                        id: instrumentClip
+                        clipped: root.controller.instrumentInputClipped
+                            || root.controller.instrumentSendClipped
+                        onClicked: root.controller.clearInstrumentClipping()
+                    }
+                }
+                Text {
+                    width: parent.width
+                    text: root.controller.instrumentSignalStatus + " · "
+                        + root.controller.instrumentSignalGuidance
+                    color: root.controller.instrumentInputClipped
+                        || root.controller.instrumentSendClipped ? "#ff746b" : "#919da3"
+                    elide: Text.ElideRight
+                    font.family: "Segoe UI"
+                    font.pixelSize: 8
                 }
                 Row {
                     width: parent.width
@@ -143,25 +182,6 @@ Item {
                         onToggled: root.controller.instrumentMonitorEnabled = checked
                     }
                 }
-                Rectangle { width: parent.width; height: 1; color: "#252e34" }
-                Row {
-                    width: parent.width
-                    spacing: 7
-                    JamIcon {
-                        width: 15
-                        height: 15
-                        source: Qt.resolvedUrl("../../assets/check_circle.svg")
-                        color: root.controller.audioActive ? "#35d75b" : "#687178"
-                    }
-                    Text {
-                        text: root.controller.audioActive ? "Live input" : root.controller.audioStatus
-                        color: root.controller.audioActive ? "#aeb9b1" : "#757e84"
-                        elide: Text.ElideRight
-                        width: parent.width - 22
-                        font.family: "Segoe UI"
-                        font.pixelSize: 10
-                    }
-                }
             }
         }
 
@@ -193,6 +213,45 @@ Item {
                     width: parent.width
                     height: 18
                     level: root.controller.voiceLevel
+                    peakHold: root.controller.voicePeakHold
+                    clipped: root.controller.voiceInputClipped
+                        || root.controller.voiceSendClipped
+                }
+                Row {
+                    width: parent.width
+                    height: 24
+                    Column {
+                        width: parent.width - voiceClip.width
+                        spacing: 1
+                        Text {
+                            text: "Current " + root.levelText(root.controller.voiceLevel)
+                            color: "#aeb7bc"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 8
+                        }
+                        Text {
+                            text: "Peak " + root.levelText(root.controller.voicePeakHold)
+                            color: "#dce1e3"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 8
+                        }
+                    }
+                    ClipLatch {
+                        id: voiceClip
+                        clipped: root.controller.voiceInputClipped
+                            || root.controller.voiceSendClipped
+                        onClicked: root.controller.clearVoiceClipping()
+                    }
+                }
+                Text {
+                    width: parent.width
+                    text: root.controller.voiceSignalStatus + " · "
+                        + root.controller.voiceSignalGuidance
+                    color: root.controller.voiceInputClipped
+                        || root.controller.voiceSendClipped ? "#ff746b" : "#919da3"
+                    elide: Text.ElideRight
+                    font.family: "Segoe UI"
+                    font.pixelSize: 8
                 }
                 Row {
                     width: parent.width
@@ -235,27 +294,6 @@ Item {
                         onToggled: root.controller.voiceMonitorEnabled = checked
                     }
                 }
-                Rectangle { width: parent.width; height: 1; color: "#252e34" }
-                Row {
-                    width: parent.width
-                    spacing: 7
-                    JamIcon {
-                        width: 15
-                        height: 15
-                        source: Qt.resolvedUrl("../../assets/mic.svg")
-                        color: root.controller.devicesAvailable ? "#d3d8dc" : "#687178"
-                    }
-                    Text {
-                        text: root.controller.audioActive
-                            ? (root.controller.voiceMonitorEnabled ? "Local monitor on" : "Local monitor muted")
-                            : root.controller.audioStatus
-                        color: "#aeb5ba"
-                        elide: Text.ElideRight
-                        width: parent.width - 22
-                        font.family: "Segoe UI"
-                        font.pixelSize: 10
-                    }
-                }
             }
         }
     }
@@ -268,7 +306,7 @@ Item {
         anchors.topMargin: 12
         anchors.leftMargin: 24
         anchors.rightMargin: 24
-        height: 108
+        height: 124
 
         Text {
             anchors.left: parent.left
@@ -301,6 +339,8 @@ Item {
             anchors.rightMargin: 14
             height: 18
             level: root.controller.outputLevel
+            peakHold: root.controller.outputPeakHold
+            clipped: root.controller.outputClipped
         }
         Rectangle {
             anchors.left: parent.left
@@ -316,21 +356,42 @@ Item {
                 width: parent.width * root.controller.outputLevel
                 height: parent.height
                 radius: parent.radius
-                color: "#31d052"
+                color: root.controller.outputClipped ? "#ef4c43" : "#31d052"
             }
         }
         Text {
             id: outputDb
-            anchors.right: parent.right
+            anchors.right: outputClip.left
             anchors.bottom: parent.bottom
-            anchors.rightMargin: 14
-            anchors.bottomMargin: 16
-            width: 60
-            text: root.levelText(root.controller.outputLevel)
+            anchors.rightMargin: 8
+            anchors.bottomMargin: 17
+            width: 106
+            text: "Peak " + root.levelText(root.controller.outputPeakHold)
             color: "#d4d9dc"
             horizontalAlignment: Text.AlignRight
             font.family: "Segoe UI"
             font.pixelSize: 10
+        }
+        ClipLatch {
+            id: outputClip
+            anchors.right: parent.right
+            anchors.rightMargin: 14
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 13
+            clipped: root.controller.outputClipped
+            onClicked: root.controller.clearOutputClipping()
+        }
+        Text {
+            anchors.left: outputSelector.left
+            anchors.right: outputDb.left
+            anchors.top: outputSelector.bottom
+            anchors.topMargin: 7
+            text: root.controller.outputSignalStatus + " · "
+                + root.controller.outputSignalGuidance
+            color: root.controller.outputClipped ? "#ff746b" : "#849097"
+            elide: Text.ElideRight
+            font.family: "Segoe UI"
+            font.pixelSize: 8
         }
     }
 

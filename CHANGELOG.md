@@ -5,12 +5,13 @@
 - Added native Steinberg ASIO SDK integration for Windows instrument capture and output.
 - Added first-class mixed ASIO/WASAPI operation: ASIO remains the master instrument/output clock while a separate WASAPI microphone is synchronized through a bounded asynchronous bridge.
 - Added safe secondary-microphone disconnect, reconnect, and replacement behavior without restarting the ASIO stream.
+- Added independent latched input, send, monitor-mix, and recording-stage clipping diagnostics with peak hold, clip sample/event counters, stage-specific guidance, reset controls in Sound Check and Room, and authenticated per-stream remote clip reports.
 - Added persistent musician profiles, eight built-in musician avatars, and bounded custom-avatar sanitization.
 - Added authenticated participant identity and exact application/build/media/control protocol matching.
 - Added encrypted reliable room chat with acknowledgement, retry, deduplication, UTF-8 validation, size bounds, and rate limits.
 - Added a GitHub Releases updater with streamed SHA-256 verification and a separate replacement/restart helper.
 - Added the standalone JamLink directory/presence service and deterministic API tests; it is not exposed in this private-room desktop tester.
-- Expanded automated tests for mixed-clock resampling, virtual one/eight-hour drift, concurrent capture/render, source replacement, network abuse, reconnect, updater replacement, persistence, and GUI rendering.
+- Expanded automated tests for mixed-clock resampling, virtual one/eight-hour drift, concurrent capture/render, clipping persistence/reset/independence/internal mix overload, network abuse, reconnect, updater replacement, persistence, and GUI rendering.
 
 ## 0.2.0-test
 

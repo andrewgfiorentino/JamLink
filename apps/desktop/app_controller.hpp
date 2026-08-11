@@ -57,6 +57,20 @@ class AppController final : public QObject {
     Q_PROPERTY(double instrumentLevel READ instrumentLevel NOTIFY setupChanged)
     Q_PROPERTY(double voiceLevel READ voiceLevel NOTIFY setupChanged)
     Q_PROPERTY(double outputLevel READ outputLevel NOTIFY setupChanged)
+    Q_PROPERTY(double instrumentPeakHold READ instrumentPeakHold NOTIFY setupChanged)
+    Q_PROPERTY(double voicePeakHold READ voicePeakHold NOTIFY setupChanged)
+    Q_PROPERTY(double outputPeakHold READ outputPeakHold NOTIFY setupChanged)
+    Q_PROPERTY(bool instrumentInputClipped READ instrumentInputClipped NOTIFY setupChanged)
+    Q_PROPERTY(bool voiceInputClipped READ voiceInputClipped NOTIFY setupChanged)
+    Q_PROPERTY(bool instrumentSendClipped READ instrumentSendClipped NOTIFY setupChanged)
+    Q_PROPERTY(bool voiceSendClipped READ voiceSendClipped NOTIFY setupChanged)
+    Q_PROPERTY(bool outputClipped READ outputClipped NOTIFY setupChanged)
+    Q_PROPERTY(QString instrumentSignalStatus READ instrumentSignalStatus NOTIFY setupChanged)
+    Q_PROPERTY(QString voiceSignalStatus READ voiceSignalStatus NOTIFY setupChanged)
+    Q_PROPERTY(QString outputSignalStatus READ outputSignalStatus NOTIFY setupChanged)
+    Q_PROPERTY(QString instrumentSignalGuidance READ instrumentSignalGuidance NOTIFY setupChanged)
+    Q_PROPERTY(QString voiceSignalGuidance READ voiceSignalGuidance NOTIFY setupChanged)
+    Q_PROPERTY(QString outputSignalGuidance READ outputSignalGuidance NOTIFY setupChanged)
     Q_PROPERTY(bool roomActive READ roomActive NOTIFY roomChanged)
     Q_PROPERTY(bool peerConnected READ peerConnected NOTIFY roomChanged)
     Q_PROPERTY(QString roomStatus READ roomStatus NOTIFY roomChanged)
@@ -67,6 +81,8 @@ class AppController final : public QObject {
     Q_PROPERTY(double remoteLevel READ remoteLevel NOTIFY roomChanged)
     Q_PROPERTY(double remoteInstrumentLevel READ remoteInstrumentLevel NOTIFY roomChanged)
     Q_PROPERTY(double remoteVoiceLevel READ remoteVoiceLevel NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteInstrumentClipped READ remoteInstrumentClipped NOTIFY roomChanged)
+    Q_PROPERTY(bool remoteVoiceClipped READ remoteVoiceClipped NOTIFY roomChanged)
     Q_PROPERTY(double remoteInstrumentGain READ remoteInstrumentGain WRITE setRemoteInstrumentGain NOTIFY roomChanged)
     Q_PROPERTY(double remoteVoiceGain READ remoteVoiceGain WRITE setRemoteVoiceGain NOTIFY roomChanged)
     Q_PROPERTY(bool remoteInstrumentMuted READ remoteInstrumentMuted WRITE setRemoteInstrumentMuted NOTIFY roomChanged)
@@ -180,6 +196,20 @@ public:
     [[nodiscard]] double instrumentLevel() const noexcept;
     [[nodiscard]] double voiceLevel() const noexcept;
     [[nodiscard]] double outputLevel() const noexcept;
+    [[nodiscard]] double instrumentPeakHold() const noexcept;
+    [[nodiscard]] double voicePeakHold() const noexcept;
+    [[nodiscard]] double outputPeakHold() const noexcept;
+    [[nodiscard]] bool instrumentInputClipped() const noexcept;
+    [[nodiscard]] bool voiceInputClipped() const noexcept;
+    [[nodiscard]] bool instrumentSendClipped() const noexcept;
+    [[nodiscard]] bool voiceSendClipped() const noexcept;
+    [[nodiscard]] bool outputClipped() const noexcept;
+    [[nodiscard]] QString instrumentSignalStatus() const;
+    [[nodiscard]] QString voiceSignalStatus() const;
+    [[nodiscard]] QString outputSignalStatus() const;
+    [[nodiscard]] QString instrumentSignalGuidance() const;
+    [[nodiscard]] QString voiceSignalGuidance() const;
+    [[nodiscard]] QString outputSignalGuidance() const;
     [[nodiscard]] bool roomActive() const noexcept;
     [[nodiscard]] bool peerConnected() const noexcept;
     [[nodiscard]] QString roomStatus() const;
@@ -190,6 +220,8 @@ public:
     [[nodiscard]] double remoteLevel() const noexcept;
     [[nodiscard]] double remoteInstrumentLevel() const noexcept;
     [[nodiscard]] double remoteVoiceLevel() const noexcept;
+    [[nodiscard]] bool remoteInstrumentClipped() const noexcept;
+    [[nodiscard]] bool remoteVoiceClipped() const noexcept;
     [[nodiscard]] double remoteInstrumentGain() const noexcept;
     [[nodiscard]] double remoteVoiceGain() const noexcept;
     [[nodiscard]] bool remoteInstrumentMuted() const noexcept;
@@ -274,6 +306,9 @@ public:
     Q_INVOKABLE void saveSoundcheck();
     Q_INVOKABLE void testOutput();
     Q_INVOKABLE void retryAudio();
+    Q_INVOKABLE void clearInstrumentClipping();
+    Q_INVOKABLE void clearVoiceClipping();
+    Q_INVOKABLE void clearOutputClipping();
     Q_INVOKABLE void hostSession();
     Q_INVOKABLE void joinSession(const QString& inviteCode);
     Q_INVOKABLE void leaveSession();
@@ -341,6 +376,9 @@ private:
     void pollAudioTelemetry();
     [[nodiscard]] static QString audioStateText(
         jamlink::audio::SoundcheckAudioState state);
+    [[nodiscard]] static QString signalStatus(
+        const jamlink::audio::SignalHealthTelemetry& health,
+        bool active);
     [[nodiscard]] static QString peerStateText(
         jamlink::network::PeerConnectionState state);
     void applyRemoteStream(
@@ -375,6 +413,7 @@ private:
     QString setupMessage_;
     QString saveMessage_;
     bool visualFixture_{false};
+    bool visualClipFixture_{false};
     bool restoredPreferences_{false};
     bool restoredSetupAvailable_{false};
     bool devicesAvailable_{false};

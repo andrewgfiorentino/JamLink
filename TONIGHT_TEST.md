@@ -9,7 +9,9 @@ This Windows 11 x64 tester is for exactly two people using direct encrypted UDP 
 3. If Windows Firewall asks, allow JamLink on the network types you are using.
 4. On Sound Check, choose the correct guitar/input, microphone, and headphone/output devices.
    JamLink can use a native ASIO interface for guitar/output and a separate WASAPI USB microphone; no aggregate-device utility is required.
-5. Use headphones. Turn on only the local monitors you need, test the output, then choose **Verify & Save Sound Check**.
+5. Use headphones. Turn on only the local monitors you need and test the output.
+6. Play and sing as loudly as you realistically expect tonight. A red **CLIP** warning stays visible after the transient. Lower the named hardware input gain for an **INPUT CLIPPED** warning, then press the red indicator to reset and try again. Amber **Hot** is not a failure.
+7. Choose **Verify & Save Sound Check** only after the clipping latches stay clear.
 
 ## Host
 
@@ -28,6 +30,7 @@ This Windows 11 x64 tester is for exactly two people using direct encrypted UDP 
 ## During the test
 
 - Start quietly. JamLink sends your guitar and your microphone as two separate streams.
+- Your guitar, voice, and monitor-mix clip indicators remain latched in the Room until you reset them, so a short overload cannot disappear unnoticed.
 - In the Room, each of your friend's streams has its own level slider and switch, so you can turn their guitar down without turning their voice down.
 - The Chat button opens private session chat. Chat uses the authenticated room connection and does not pass through a public service.
 - The room switch at the bottom mutes or unmutes everything you send to your friend.

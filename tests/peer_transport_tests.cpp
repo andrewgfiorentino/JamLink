@@ -501,6 +501,43 @@ void remoteStreamsAreIndependentlyControllable() {
     guest->stop();
 }
 
+void carriesAuthenticatedSourceClipStatusIndependently() {
+    using jamlink::network::AudioStreamId;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "source clip status harness setup");
+        return;
+    }
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty() || !guest->join(invite) || !waitForConnected(*host, *guest)) {
+        check(false, "source clip status harness handshake");
+        return;
+    }
+
+    host->setLocalStreamClipState(AudioStreamId::Instrument, true);
+    guest->setLocalStreamClipState(AudioStreamId::Voice, true);
+    static_cast<void>(pump(
+        *host, *guest, std::chrono::milliseconds(500), std::chrono::milliseconds(200)));
+    const auto guestView = guest->telemetry();
+    const auto hostView = host->telemetry();
+    check(guestView.streams[0].sourceClipped && !guestView.streams[1].sourceClipped,
+          "remote instrument clip report stays independent of voice");
+    check(!hostView.streams[0].sourceClipped && hostView.streams[1].sourceClipped,
+          "remote voice clip report stays independent of instrument");
+
+    host->setLocalStreamClipState(AudioStreamId::Instrument, false);
+    guest->setLocalStreamClipState(AudioStreamId::Voice, false);
+    static_cast<void>(pump(
+        *host, *guest, std::chrono::milliseconds(500), std::chrono::milliseconds(200)));
+    check(!guest->telemetry().streams[0].sourceClipped
+              && !host->telemetry().streams[1].sourceClipped,
+          "authenticated source clip reports clear after the sender resets them");
+
+    host->stop();
+    guest->stop();
+}
+
 void reconnectsAfterGuestRestart() {
     auto host = jamlink::network::createPlatformPeerAudioTransport();
     auto guest = jamlink::network::createPlatformPeerAudioTransport();
@@ -628,6 +665,7 @@ int main() {
     rejectsReflectedOwnTraffic();
     survivesHostileDatagrams();
     remoteStreamsAreIndependentlyControllable();
+    carriesAuthenticatedSourceClipStatusIndependently();
     reconnectsAfterGuestRestart();
     negotiatesExactBuildAndExchangesReliableChat();
     rejectsIncompatibleApplicationBuild();

@@ -90,6 +90,10 @@ inline constexpr std::size_t audioStreamCount = 2U;
 
 struct RemoteStreamTelemetry final {
     float peak{0.0F};
+    // Authenticated status reported by the sender's own source detector. This
+    // is not inferred from received PCM and therefore does not overclaim which
+    // physical stage clipped on the remote machine.
+    bool sourceClipped{false};
     std::uint64_t packetsConcealed{0U};
     std::uint64_t packetsLate{0U};
     std::uint64_t bufferStretches{0U};
@@ -123,6 +127,9 @@ public:
         AudioStreamId stream,
         std::span<const float> monoSamples,
         std::uint32_t sampleRate) noexcept = 0;
+    // Realtime-safe status update; the Windows transport implements this as a
+    // lock-free atomic carried in the authenticated audio header.
+    virtual void setLocalStreamClipState(AudioStreamId, bool) noexcept {}
     // Always fills the destination, concealing gaps and inserting silence
     // before playout begins. Returns the frames carrying live remote audio.
     [[nodiscard]] virtual std::size_t pullRemote48k(

@@ -129,6 +129,12 @@ public:
             : VoiceEndpointChangeResult::NotSupported;
     }
 
+    void clearSignalHealth(SignalHealthPath path) noexcept override {
+        if (active_ != nullptr) {
+            active_->clearSignalHealth(path);
+        }
+    }
+
     [[nodiscard]] SoundcheckAudioTelemetry telemetry() const noexcept override {
         return active_ != nullptr ? active_->telemetry() : lastTelemetry_;
     }

@@ -280,6 +280,7 @@ public:
 
     [[nodiscard]] bool start(const SoundcheckAudioConfiguration& configuration) override {
         stop();
+        clearAllSignalHealth();
         state_.store(SoundcheckAudioState::Starting, std::memory_order_release);
         if (configuration.instrument.backend != SoundcheckBackend::Asio
             || configuration.output.backend != SoundcheckBackend::Asio
@@ -368,6 +369,8 @@ public:
     [[nodiscard]] bool startRecording(
         const std::filesystem::path& directory,
         const std::string& sessionName) override {
+        recordingInstrumentHealth_.clearClipLatch();
+        recordingVoiceHealth_.clearClipLatch();
         return started_ && recorder_.start(directory, sessionName, asioSampleRate);
     }
 
@@ -389,6 +392,9 @@ public:
             return VoiceEndpointChangeResult::NotSupported;
         }
         secondaryVoice_->stop();
+        secondaryVoice_->clearSignalHealth();
+        voiceSendHealth_.clearClipLatch();
+        voiceSourceClipped_.store(0U, std::memory_order_release);
         if (!secondaryVoice_->prepare(option, voiceBridge_)) {
             return VoiceEndpointChangeResult::Failed;
         }
@@ -405,8 +411,49 @@ public:
         return VoiceEndpointChangeResult::Applied;
     }
 
+    void clearSignalHealth(SignalHealthPath path) noexcept override {
+        switch (path) {
+        case SignalHealthPath::InstrumentInput:
+            instrumentInputHealth_.clearClipLatch();
+            instrumentSourceClipped_.store(0U, std::memory_order_release);
+            break;
+        case SignalHealthPath::VoiceInput:
+            if (hybridVoice_) {
+                secondaryVoice_->clearSignalHealth();
+            } else {
+                voiceInputHealth_.clearClipLatch();
+            }
+            voiceSourceClipped_.store(0U, std::memory_order_release);
+            break;
+        case SignalHealthPath::InstrumentSend:
+            instrumentSendHealth_.clearClipLatch();
+            break;
+        case SignalHealthPath::VoiceSend:
+            voiceSendHealth_.clearClipLatch();
+            break;
+        case SignalHealthPath::MonitorMix:
+            monitorMixHealth_.clearClipLatch();
+            break;
+        case SignalHealthPath::RecordingInstrument:
+            recordingInstrumentHealth_.clearClipLatch();
+            break;
+        case SignalHealthPath::RecordingVoice:
+            recordingVoiceHealth_.clearClipLatch();
+            break;
+        }
+    }
+
     [[nodiscard]] SoundcheckAudioTelemetry telemetry() const noexcept override {
         const auto secondary = secondaryVoice_->telemetry();
+        const auto instrumentInput = signalHealthTelemetry(instrumentInputHealth_.snapshot());
+        const auto voiceInput = hybridVoice_
+            ? secondary.inputHealth : signalHealthTelemetry(voiceInputHealth_.snapshot());
+        const auto instrumentSend = signalHealthTelemetry(instrumentSendHealth_.snapshot());
+        const auto voiceSend = signalHealthTelemetry(voiceSendHealth_.snapshot());
+        const auto monitorMix = signalHealthTelemetry(monitorMixHealth_.snapshot());
+        const auto recordingInstrument =
+            signalHealthTelemetry(recordingInstrumentHealth_.snapshot());
+        const auto recordingVoice = signalHealthTelemetry(recordingVoiceHealth_.snapshot());
         return SoundcheckAudioTelemetry{
             state_.load(std::memory_order_acquire),
             instrumentPeak_.load(),
@@ -421,10 +468,30 @@ public:
             false,
             nativeError_.load(std::memory_order_relaxed),
             !hybridVoice_ || secondary.state == SoundcheckAudioState::Running,
-            hybridVoice_ ? secondary.nativeError : 0};
+            hybridVoice_ ? secondary.nativeError : 0,
+            instrumentInput,
+            voiceInput,
+            instrumentSend,
+            voiceSend,
+            monitorMix,
+            recordingInstrument,
+            recordingVoice};
     }
 
 private:
+    void clearAllSignalHealth() noexcept {
+        instrumentInputHealth_.clearClipLatch();
+        voiceInputHealth_.clearClipLatch();
+        secondaryVoice_->clearSignalHealth();
+        instrumentSendHealth_.clearClipLatch();
+        voiceSendHealth_.clearClipLatch();
+        monitorMixHealth_.clearClipLatch();
+        recordingInstrumentHealth_.clearClipLatch();
+        recordingVoiceHealth_.clearClipLatch();
+        instrumentSourceClipped_.store(0U, std::memory_order_relaxed);
+        voiceSourceClipped_.store(0U, std::memory_order_relaxed);
+    }
+
     [[nodiscard]] bool fail(ASIOError error, SoundcheckAudioState state) noexcept {
         nativeError_.store(static_cast<std::int32_t>(error), std::memory_order_relaxed);
         state_.store(state, std::memory_order_release);
@@ -600,20 +667,42 @@ private:
                 std::span<float>(voiceScratch_.data(), frames));
         }
 
+        instrumentInputHealth_.process(
+            std::span<const float>(instrumentScratch_.data(), frames));
+        if (!hybridVoice_) {
+            voiceInputHealth_.process(std::span<const float>(voiceScratch_.data(), frames));
+        }
+        instrumentSendHealth_.process(
+            std::span<const float>(instrumentScratch_.data(), frames));
+        voiceSendHealth_.process(std::span<const float>(voiceScratch_.data(), frames));
+
         float instrumentPeak = 0.0F;
         float voicePeak = 0.0F;
         for (std::size_t frame = 0U; frame < frames; ++frame) {
             instrumentPeak = std::max(instrumentPeak, std::abs(instrumentScratch_[frame]));
             voicePeak = std::max(voicePeak, std::abs(voiceScratch_[frame]));
         }
+        if (instrumentPeak >= LevelMeter::nativeInputClipThreshold) {
+            instrumentSourceClipped_.store(1U, std::memory_order_release);
+        }
+        if ((!hybridVoice_ && voicePeak >= LevelMeter::nativeInputClipThreshold)
+            || (hybridVoice_ && secondaryVoice_->inputClipped())) {
+            voiceSourceClipped_.store(1U, std::memory_order_release);
+        }
         instrumentPeak_.store(instrumentPeak);
-        voicePeak_.store(hybridVoice_ ? secondaryVoice_->telemetry().peak : voicePeak);
+        // The resampled block is already in callback-owned memory. Reading it
+        // here avoids a cross-thread telemetry snapshot inside the ASIO callback.
+        voicePeak_.store(voicePeak);
         if (tunerEnabled_.load(std::memory_order_acquire) != 0U) {
             tuner_.write(std::span<const float>(instrumentScratch_.data(), frames), asioSampleRate);
         }
 
         const bool recording = recorder_.recording();
         if (recording) {
+            recordingInstrumentHealth_.process(
+                std::span<const float>(instrumentScratch_.data(), frames));
+            recordingVoiceHealth_.process(
+                std::span<const float>(voiceScratch_.data(), frames));
             recorder_.write(jamlink::record::RecordTrack::LocalInstrument,
                 std::span<const float>(instrumentScratch_.data(), frames));
             recorder_.write(jamlink::record::RecordTrack::LocalVoice,
@@ -621,6 +710,12 @@ private:
         }
         std::fill(remoteScratch_.begin(), remoteScratch_.end(), 0.0F);
         if (peerExchange_ != nullptr) {
+            peerExchange_->setLocalStreamClipState(
+                jamlink::network::AudioStreamId::Instrument,
+                instrumentSourceClipped_.load(std::memory_order_acquire) != 0U);
+            peerExchange_->setLocalStreamClipState(
+                jamlink::network::AudioStreamId::Voice,
+                voiceSourceClipped_.load(std::memory_order_acquire) != 0U);
             peerExchange_->pushLocalAudio(
                 jamlink::network::AudioStreamId::Instrument,
                 std::span<const float>(instrumentScratch_.data(), frames), asioSampleRate);
@@ -666,7 +761,6 @@ private:
         }
         constexpr double twoPi = 6.28318530717958647692;
         constexpr double toneStep = twoPi * 440.0 / static_cast<double>(asioSampleRate);
-        float peak = 0.0F;
         for (std::size_t frame = 0U; frame < frames; ++frame) {
             currentInstrumentGain_ += instrumentStep;
             currentVoiceGain_ += voiceStep;
@@ -680,7 +774,12 @@ private:
                 }
                 --toneFramesRemaining_;
             }
-            mixed = std::clamp(mixed, -outputCeiling, outputCeiling);
+            mixScratch_[frame] = mixed;
+        }
+        monitorMixHealth_.process(std::span<const float>(mixScratch_.data(), frames));
+        float peak = 0.0F;
+        for (std::size_t frame = 0U; frame < frames; ++frame) {
+            const float mixed = std::clamp(mixScratch_[frame], -outputCeiling, outputCeiling);
             mixScratch_[frame] = mixed;
             peak = std::max(peak, std::abs(mixed));
         }
@@ -778,9 +877,18 @@ private:
     RealtimeAtomicFloat instrumentPeak_;
     RealtimeAtomicFloat voicePeak_;
     RealtimeAtomicFloat outputPeak_;
+    LevelMeter instrumentInputHealth_{LevelMeter::nativeInputClipThreshold};
+    LevelMeter voiceInputHealth_{LevelMeter::nativeInputClipThreshold};
+    LevelMeter instrumentSendHealth_;
+    LevelMeter voiceSendHealth_;
+    LevelMeter monitorMixHealth_;
+    LevelMeter recordingInstrumentHealth_;
+    LevelMeter recordingVoiceHealth_;
     std::atomic<std::uint64_t> underruns_{0U};
     std::atomic<std::uint64_t> overruns_{0U};
     std::atomic<std::int32_t> nativeError_{0};
+    std::atomic<std::uint32_t> instrumentSourceClipped_{0U};
+    std::atomic<std::uint32_t> voiceSourceClipped_{0U};
     std::atomic<SoundcheckAudioState> state_{SoundcheckAudioState::Stopped};
     InstrumentTuner tuner_;
     jamlink::record::SessionRecorder recorder_;

@@ -63,6 +63,17 @@ public:
             jamlink::audio::SoundcheckAudioState::Running,
             0.25F, 0.5F, 0.375F, 48'000U, configuration.requestedBufferFrames,
             0U, 0U, false};
+        current.instrumentInput = {0.25F, 0.15F, 0.4F};
+        current.voiceInput = {0.5F, 0.25F, 0.6F};
+        current.instrumentSend = {0.25F, 0.15F, 0.4F};
+        current.voiceSend = {0.5F, 0.25F, 0.6F};
+        current.monitorMix = {0.375F, 0.2F, 0.55F};
+        if (injectInstrumentClipOnStart) {
+            current.instrumentInput.clipped = true;
+            current.instrumentInput.clipSamples = 3U;
+            current.instrumentInput.clipEvents = 1U;
+            current.instrumentInput.peakHold = 1.0F;
+        }
         return true;
     }
     void stop() noexcept override {
@@ -99,6 +110,32 @@ public:
         ++replacementCount;
         return replacementResult;
     }
+    void clearSignalHealth(jamlink::audio::SignalHealthPath path) noexcept override {
+        ++clearHealthCount;
+        switch (path) {
+        case jamlink::audio::SignalHealthPath::InstrumentInput:
+            current.instrumentInput = {};
+            break;
+        case jamlink::audio::SignalHealthPath::VoiceInput:
+            current.voiceInput = {};
+            break;
+        case jamlink::audio::SignalHealthPath::InstrumentSend:
+            current.instrumentSend = {};
+            break;
+        case jamlink::audio::SignalHealthPath::VoiceSend:
+            current.voiceSend = {};
+            break;
+        case jamlink::audio::SignalHealthPath::MonitorMix:
+            current.monitorMix = {};
+            break;
+        case jamlink::audio::SignalHealthPath::RecordingInstrument:
+            current.recordingInstrument = {};
+            break;
+        case jamlink::audio::SignalHealthPath::RecordingVoice:
+            current.recordingVoice = {};
+            break;
+        }
+    }
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return current;
     }
@@ -121,6 +158,8 @@ public:
     jamlink::audio::VoiceEndpointChangeResult replacementResult{
         jamlink::audio::VoiceEndpointChangeResult::Applied};
     std::size_t replacementCount{0U};
+    std::size_t clearHealthCount{0U};
+    bool injectInstrumentClipOnStart{false};
 };
 
 bool near(double left, double right) {
@@ -410,6 +449,27 @@ int main(int argc, char* argv[]) {
                         && active.audioActive(),
                     "failed replacement leaves the ASIO instrument/output stream active")
         && passed;
+
+    auto clippedService = std::make_unique<DeterministicAudioService>();
+    auto* clippedServiceView = clippedService.get();
+    clippedServiceView->injectInstrumentClipOnStart = true;
+    jamlink::desktop::AppController clipped(
+        directory / "clipped-audio-preferences.jlpf", false,
+        QStringLiteral("soundcheck"), 0U, 0U, nullptr, std::move(clippedService));
+    clipped.retryAudio();
+    passed = expect(clipped.instrumentInputClipped()
+                        && clipped.readinessLabel() == QStringLiteral("Clipping"),
+                    "input clip latch is visible and blocks Ready to Jam")
+        && passed;
+    clipped.saveSoundcheck();
+    passed = expect(!clipped.allReady(), "a clipped setup cannot be verified") && passed;
+    clipped.clearInstrumentClipping();
+    passed = expect(!clipped.instrumentInputClipped()
+                        && clippedServiceView->clearHealthCount == 2U,
+                    "source reset clears both input and send latches")
+        && passed;
+    clipped.saveSoundcheck();
+    passed = expect(clipped.allReady(), "clean reset setup can be verified") && passed;
 
     std::filesystem::remove_all(directory, cleanupError);
     std::cout << (passed ? "[PASS] desktop controller persistence and readiness\n"

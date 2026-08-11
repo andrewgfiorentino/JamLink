@@ -381,11 +381,69 @@ JAMLINK_TEST(level_meter_reports_rms_peak_and_clip_latch) {
     EXPECT_NEAR(snapshot.peakLinear, 1.1, 1.0e-6);
     EXPECT_TRUE(snapshot.rmsLinear > 0.0F);
     EXPECT_TRUE(snapshot.clipped);
+    EXPECT_NEAR(snapshot.peakHoldLinear, 1.1, 1.0e-6);
+    EXPECT_TRUE(snapshot.clipSampleCount == 1U);
+    EXPECT_TRUE(snapshot.clipEventCount == 1U);
 
     meter.process(std::array{0.0F, 0.0F});
     EXPECT_TRUE(meter.snapshot().clipped);
     meter.clearClipLatch();
     EXPECT_TRUE(!meter.snapshot().clipped);
+}
+
+JAMLINK_TEST(signal_health_distinguishes_hot_clip_internal_and_mix_overload) {
+    constexpr float minusSixDbfs = 0.501187F;
+    jamlink::audio::LevelMeter guitarInput(
+        jamlink::audio::LevelMeter::nativeInputClipThreshold);
+    jamlink::audio::LevelMeter voiceInput(
+        jamlink::audio::LevelMeter::nativeInputClipThreshold);
+    guitarInput.process(std::array{minusSixDbfs, -minusSixDbfs, 0.25F});
+    voiceInput.process(std::array{0.8F, -0.8F, 0.0F});
+    EXPECT_TRUE(!guitarInput.snapshot().clipped);
+    EXPECT_TRUE(!voiceInput.snapshot().clipped);
+
+    guitarInput.process(std::array{0.0F, 1.0F, 0.0F});
+    EXPECT_TRUE(guitarInput.snapshot().clipped);
+    EXPECT_TRUE(!voiceInput.snapshot().clipped);
+
+    guitarInput.process(std::array{0.0F, 0.0F});
+    EXPECT_TRUE(guitarInput.snapshot().clipped);
+    guitarInput.clearClipLatch();
+    EXPECT_TRUE(!guitarInput.snapshot().clipped);
+    guitarInput.process(std::array{1.0F, 1.0F});
+    const auto relatched = guitarInput.snapshot();
+    EXPECT_TRUE(relatched.clipped);
+    EXPECT_TRUE(relatched.clipSampleCount == 2U);
+    EXPECT_TRUE(relatched.clipEventCount == 1U);
+    EXPECT_NEAR(relatched.peakHoldLinear, 1.0, 1.0e-6);
+
+    // Clean capture can still overload a later gain/send stage.
+    const std::array cleanSource{0.7F, -0.7F, 0.25F, -0.25F};
+    std::array<float, cleanSource.size()> boosted{};
+    std::ranges::transform(cleanSource, boosted.begin(), [](float sample) {
+        return sample * 1.6F;
+    });
+    jamlink::audio::LevelMeter source;
+    jamlink::audio::LevelMeter send;
+    source.process(cleanSource);
+    send.process(boosted);
+    EXPECT_TRUE(!source.snapshot().clipped);
+    EXPECT_TRUE(send.snapshot().clipped);
+
+    const std::array cleanInstrument{0.65F, -0.65F};
+    const std::array cleanVoice{0.55F, -0.55F};
+    std::array<float, 2> summed{};
+    std::ranges::transform(
+        cleanInstrument, cleanVoice, summed.begin(), std::plus<float>{});
+    jamlink::audio::LevelMeter instrument;
+    jamlink::audio::LevelMeter voice;
+    jamlink::audio::LevelMeter monitor;
+    instrument.process(cleanInstrument);
+    voice.process(cleanVoice);
+    monitor.process(summed);
+    EXPECT_TRUE(!instrument.snapshot().clipped);
+    EXPECT_TRUE(!voice.snapshot().clipped);
+    EXPECT_TRUE(monitor.snapshot().clipped);
 }
 
 JAMLINK_TEST(level_meter_snapshots_are_coherent_during_concurrent_publication) {

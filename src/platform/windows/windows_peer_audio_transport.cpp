@@ -59,6 +59,8 @@ constexpr std::uint32_t networkSampleRate = 48'000U;
 constexpr std::size_t networkPacketFrames = 240U;
 constexpr std::size_t noncePrefixBytes = 8U;
 constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
+constexpr std::uint8_t streamIndexMask = 0x7FU;
+constexpr std::uint8_t sourceClipFlag = 0x80U;
 
 enum class PacketType : std::uint8_t {
     Hello = 1U,
@@ -961,6 +963,11 @@ public:
             muted ? 1U : 0U, std::memory_order_release);
     }
 
+    void setLocalStreamClipState(AudioStreamId stream, bool clipped) noexcept override {
+        localSourceClipped_[streamIndex(stream)].store(
+            clipped ? 1U : 0U, std::memory_order_release);
+    }
+
     void setRemoteStreamGain(AudioStreamId stream, float gain) noexcept override {
         remoteGain_[streamIndex(stream)].setLinearGain(gain);
     }
@@ -1008,6 +1015,8 @@ public:
             const auto receiver = receivers_[index].telemetry();
             RemoteStreamTelemetry& stream = snapshot.streams[index];
             stream.peak = remotePeak_[index].load();
+            stream.sourceClipped =
+                remoteSourceClipped_[index].load(std::memory_order_acquire) != 0U;
             stream.packetsConcealed = receiver.packetsConcealed;
             stream.packetsLate = receiver.packetsLate;
             stream.bufferStretches = receiver.bufferStretches;
@@ -1178,6 +1187,9 @@ private:
         for (auto& peak : remotePeak_) {
             peak.store(0.0F);
         }
+        for (auto& clipped : remoteSourceClipped_) {
+            clipped.store(0U, std::memory_order_relaxed);
+        }
         worker_ = std::thread([this] { run(); });
     }
 
@@ -1239,9 +1251,16 @@ private:
         const std::uint32_t sequence = type == PacketType::Audio
             ? ++sendSequence_[streamIndex(stream)]
             : 0U;
+        const std::size_t streamPosition = streamIndex(stream);
+        const std::uint8_t streamField = type == PacketType::Audio
+            ? static_cast<std::uint8_t>(
+                streamPosition
+                | (localSourceClipped_[streamPosition].load(std::memory_order_acquire) != 0U
+                       ? sourceClipFlag : 0U))
+            : std::uint8_t{0};
         const std::size_t bytes = buildEncryptedPacket(
             cipher, type, sequence, sampleRate, frameCount,
-            type == PacketType::Audio ? static_cast<std::uint8_t>(stream) : std::uint8_t{0},
+            streamField,
             plaintext, packet);
         if (bytes == 0U) {
             return false;
@@ -1571,7 +1590,7 @@ private:
             // work on it. The per-direction key makes this authoritative, but
             // checking the field first keeps the rejection cheap.
             || packet[18U] != static_cast<std::uint8_t>(receiveDirection_)
-            || packet[19U] >= audioStreamCount) {
+            || (packet[19U] & streamIndexMask) >= audioStreamCount) {
             return false;
         }
         const std::size_t payloadBytes = readU16(packet.data() + 6U);
@@ -1714,12 +1733,15 @@ private:
         // rate conversion and lets the jitter buffer index whole packets.
         const std::uint32_t sampleRate = readU32(packet.data() + 12U);
         const std::size_t frameCount = readU16(packet.data() + 16U);
-        const std::uint8_t stream = packet[19U];
+        const std::uint8_t stream = packet[19U] & streamIndexMask;
         if (sampleRate != networkSampleRate || frameCount != networkPacketFrames
             || payloadBytes != frameCount * 2U
             || stream >= audioStreamCount) {
             return false;
         }
+        remoteSourceClipped_[stream].store(
+            (packet[19U] & sourceClipFlag) != 0U ? 1U : 0U,
+            std::memory_order_release);
         for (std::size_t frame = 0U; frame < frameCount; ++frame) {
             const auto sample = static_cast<std::int16_t>(
                 static_cast<std::uint16_t>(plaintext[frame * 2U])
@@ -1770,6 +1792,8 @@ private:
     std::atomic<PeerConnectionState> state_{PeerConnectionState::Idle};
     std::atomic<std::uint32_t> sendMuted_{0U};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localStreamMuted_{};
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> localSourceClipped_{};
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteSourceClipped_{};
     std::atomic<std::uint32_t> localSampleRate_{networkSampleRate};
     std::atomic<std::uint64_t> packetsSent_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};

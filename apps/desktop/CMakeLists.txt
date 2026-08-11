@@ -19,6 +19,7 @@ qt_add_qml_module(jamlink_desktop
     QML_FILES
         qml/Main.qml
         qml/components/DeviceSelector.qml
+        qml/components/ClipLatch.qml
         qml/components/IconButton.qml
         qml/components/JamButton.qml
         qml/components/JamCard.qml
@@ -203,6 +204,17 @@ if(BUILD_TESTING)
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-high-dpi.png"
     )
+    add_test(
+        NAME jamlink_desktop_visual_clipping
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page soundcheck
+            --width 532
+            --height 534
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-clipping.png"
+    )
     get_target_property(_jamlink_qmake Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_jamlink_qt_bin "${_jamlink_qmake}" DIRECTORY)
     # ENVIRONMENT_MODIFICATION takes one list value. Passing the entries as
@@ -221,6 +233,7 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_room
         jamlink_desktop_visual_tuner
         jamlink_desktop_visual_high_dpi
+        jamlink_desktop_visual_clipping
         PROPERTIES
         TIMEOUT 30
         LABELS "gui;visual"
@@ -242,6 +255,13 @@ if(BUILD_TESTING)
     set_tests_properties(
         jamlink_desktop_visual_tuner
         PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_tests_properties(
+        jamlink_desktop_visual_clipping
+        PROPERTIES
+        DEPENDS jamlink_desktop_visual_first_launch)
+    set_property(
+        TEST jamlink_desktop_visual_clipping APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_CLIP=set:1")
     add_test(
         NAME jamlink_desktop_visual_profile
         COMMAND jamlink_desktop

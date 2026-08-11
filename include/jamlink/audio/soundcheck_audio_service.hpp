@@ -3,6 +3,7 @@
 #pragma once
 
 #include "jamlink/audio/instrument_tuner.hpp"
+#include "jamlink/audio/level_meter.hpp"
 #include "jamlink/record/session_recorder.hpp"
 
 #include <cstdint>
@@ -63,6 +64,40 @@ enum class SoundcheckAudioState : std::uint8_t {
     DeviceInvalidated
 };
 
+struct SignalHealthTelemetry final {
+    float currentPeak{0.0F};
+    float currentRms{0.0F};
+    float peakHold{0.0F};
+    bool clipped{false};
+    std::uint64_t clipSamples{0U};
+    std::uint64_t clipEvents{0U};
+    std::uint64_t latestClipSampleOffset{0U};
+    std::uint64_t invalidSamples{0U};
+};
+
+[[nodiscard]] inline SignalHealthTelemetry signalHealthTelemetry(
+    const LevelSnapshot& snapshot) noexcept {
+    return SignalHealthTelemetry{
+        snapshot.peakLinear,
+        snapshot.rmsLinear,
+        snapshot.peakHoldLinear,
+        snapshot.clipped,
+        snapshot.clipSampleCount,
+        snapshot.clipEventCount,
+        snapshot.latestClipSampleOffset,
+        snapshot.invalidSampleCount};
+}
+
+enum class SignalHealthPath : std::uint8_t {
+    InstrumentInput,
+    VoiceInput,
+    InstrumentSend,
+    VoiceSend,
+    MonitorMix,
+    RecordingInstrument,
+    RecordingVoice
+};
+
 struct SoundcheckAudioTelemetry final {
     SoundcheckAudioState state{SoundcheckAudioState::Stopped};
     float instrumentPeak{0.0F};
@@ -76,6 +111,13 @@ struct SoundcheckAudioTelemetry final {
     std::int32_t nativeError{0};
     bool secondaryVoiceActive{true};
     std::int32_t secondaryVoiceNativeError{0};
+    SignalHealthTelemetry instrumentInput;
+    SignalHealthTelemetry voiceInput;
+    SignalHealthTelemetry instrumentSend;
+    SignalHealthTelemetry voiceSend;
+    SignalHealthTelemetry monitorMix;
+    SignalHealthTelemetry recordingInstrument;
+    SignalHealthTelemetry recordingVoice;
 };
 
 enum class VoiceEndpointChangeResult : std::uint8_t {
@@ -123,6 +165,9 @@ public:
         const SoundcheckEndpointOption&) {
         return VoiceEndpointChangeResult::NotSupported;
     }
+    // Control-thread request. The owning audio callback consumes the reset;
+    // no control-thread lock or direct mutation of callback state is required.
+    virtual void clearSignalHealth(SignalHealthPath) noexcept {}
     [[nodiscard]] virtual SoundcheckAudioTelemetry telemetry() const noexcept = 0;
 };
 

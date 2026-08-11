@@ -94,6 +94,7 @@ AppController::AppController(
           this),
       currentPage_(std::move(initialPage)),
       visualFixture_(visualFixture),
+      visualClipFixture_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_CLIP")),
       audioService_(std::move(audioService)) {
     connect(&updateManager_, &UpdateManager::changed, this, &AppController::updateChanged);
     const bool automaticPage = currentPage_ == QStringLiteral("auto");
@@ -689,10 +690,21 @@ QString AppController::audioStatus() const {
             static_cast<std::uint32_t>(audioTelemetry_.nativeError),
             8, 16, QChar('0'));
 }
-bool AppController::allReady() const noexcept { return readiness_.allVerified(); }
+bool AppController::allReady() const noexcept {
+    return readiness_.allVerified()
+        && !instrumentInputClipped()
+        && !voiceInputClipped()
+        && !instrumentSendClipped()
+        && !voiceSendClipped()
+        && !outputClipped();
+}
 QString AppController::readinessLabel() const {
     if (!devicesAvailable_) {
         return QStringLiteral("Offline");
+    }
+    if (instrumentInputClipped() || voiceInputClipped()
+        || instrumentSendClipped() || voiceSendClipped() || outputClipped()) {
+        return QStringLiteral("Clipping");
     }
     return allReady() ? QStringLiteral("Ready") : QStringLiteral("Check again");
 }
@@ -883,6 +895,108 @@ double AppController::voiceLevel() const noexcept {
 double AppController::outputLevel() const noexcept {
     return visualFixture_ ? 0.50 : audioTelemetry_.outputPeak;
 }
+double AppController::instrumentPeakHold() const noexcept {
+    return visualFixture_
+        ? (visualClipFixture_ ? 1.0 : 0.82)
+        : audioTelemetry_.instrumentInput.peakHold;
+}
+double AppController::voicePeakHold() const noexcept {
+    return visualFixture_ ? 0.61 : audioTelemetry_.voiceInput.peakHold;
+}
+double AppController::outputPeakHold() const noexcept {
+    return visualFixture_ ? 0.58 : audioTelemetry_.monitorMix.peakHold;
+}
+bool AppController::instrumentInputClipped() const noexcept {
+    return visualFixture_ ? visualClipFixture_ : audioTelemetry_.instrumentInput.clipped;
+}
+bool AppController::voiceInputClipped() const noexcept {
+    return !visualFixture_ && audioTelemetry_.voiceInput.clipped;
+}
+bool AppController::instrumentSendClipped() const noexcept {
+    return !visualFixture_ && audioTelemetry_.instrumentSend.clipped;
+}
+bool AppController::voiceSendClipped() const noexcept {
+    return !visualFixture_ && audioTelemetry_.voiceSend.clipped;
+}
+bool AppController::outputClipped() const noexcept {
+    return !visualFixture_ && audioTelemetry_.monitorMix.clipped;
+}
+
+QString AppController::signalStatus(
+    const jamlink::audio::SignalHealthTelemetry& health,
+    bool active) {
+    if (!active) {
+        return QStringLiteral("UNAVAILABLE");
+    }
+    if (health.clipped || health.invalidSamples != 0U) {
+        return QStringLiteral("CLIPPING");
+    }
+    if (health.currentPeak < 1.0e-5F) {
+        return QStringLiteral("NO SIGNAL");
+    }
+    if (health.currentPeak < 0.01F) {
+        return QStringLiteral("TOO QUIET");
+    }
+    if (health.currentPeak < 0.501187F) {
+        return QStringLiteral("GOOD");
+    }
+    if (health.currentPeak < 0.891251F) {
+        return QStringLiteral("HOT");
+    }
+    return QStringLiteral("NEAR CLIP");
+}
+
+QString AppController::instrumentSignalStatus() const {
+    if (visualFixture_) {
+        return visualClipFixture_ ? QStringLiteral("CLIPPING") : QStringLiteral("HOT");
+    }
+    return signalStatus(audioTelemetry_.instrumentInput, audioActive());
+}
+QString AppController::voiceSignalStatus() const {
+    if (visualFixture_) {
+        return QStringLiteral("GOOD");
+    }
+    return signalStatus(audioTelemetry_.voiceInput, audioActive());
+}
+QString AppController::outputSignalStatus() const {
+    if (visualFixture_) {
+        return QStringLiteral("GOOD");
+    }
+    return signalStatus(audioTelemetry_.monitorMix, audioActive());
+}
+
+QString AppController::instrumentSignalGuidance() const {
+    if (instrumentInputClipped()) {
+        const QString device = validIndex(instrumentIndex_, instrumentOptions_.size())
+            ? instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].displayName
+            : QStringLiteral("your interface input");
+        return QStringLiteral("INPUT CLIPPED · Lower %1 hardware gain, reset, and try again.")
+            .arg(device);
+    }
+    if (instrumentSendClipped()) {
+        return QStringLiteral("SEND LEVEL CLIPPED · Lower this JamLink level.");
+    }
+    return QStringLiteral("Play your loudest chords; green or amber is healthy.");
+}
+QString AppController::voiceSignalGuidance() const {
+    if (voiceInputClipped()) {
+        const QString device = validIndex(voiceIndex_, voiceOptions_.size())
+            ? voiceOptions_[static_cast<std::size_t>(voiceIndex_)].displayName
+            : QStringLiteral("your microphone input");
+        return QStringLiteral("INPUT CLIPPED · Lower %1 hardware gain, reset, and try again.")
+            .arg(device);
+    }
+    if (voiceSendClipped()) {
+        return QStringLiteral("SEND LEVEL CLIPPED · Lower this JamLink level.");
+    }
+    return QStringLiteral("Speak or sing at your loudest expected level.");
+}
+QString AppController::outputSignalGuidance() const {
+    return outputClipped()
+        ? QStringLiteral(
+            "MONITOR MIX TOO HOT · Reduce one or more listening levels, then reset.")
+        : QStringLiteral("Monitor mix has headroom.");
+}
 
 bool AppController::roomActive() const noexcept { return peerTransport_ != nullptr; }
 bool AppController::peerConnected() const noexcept {
@@ -923,6 +1037,12 @@ double AppController::remoteInstrumentLevel() const noexcept {
 }
 double AppController::remoteVoiceLevel() const noexcept {
     return peerTelemetry_.streams[voiceStream].peak;
+}
+bool AppController::remoteInstrumentClipped() const noexcept {
+    return peerTelemetry_.streams[instrumentStream].sourceClipped;
+}
+bool AppController::remoteVoiceClipped() const noexcept {
+    return peerTelemetry_.streams[voiceStream].sourceClipped;
 }
 
 double AppController::remoteInstrumentGain() const noexcept {
@@ -1072,7 +1192,11 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
 
 void AppController::saveSoundcheck() {
-    if (devicesAvailable_ && audioActive() && audioTelemetry_.secondaryVoiceActive) {
+    if (instrumentInputClipped() || voiceInputClipped()
+        || instrumentSendClipped() || voiceSendClipped() || outputClipped()) {
+        setupMessage_ = QStringLiteral(
+            "Clipping must be corrected and reset before this setup is Ready to Jam");
+    } else if (devicesAvailable_ && audioActive() && audioTelemetry_.secondaryVoiceActive) {
         updateReadinessConfiguration();
         static_cast<void>(readiness_.markVerified(
             jamlink::control::SetupComponent::Instrument,
@@ -1131,6 +1255,40 @@ void AppController::retryAudio() {
         }
         emit setupChanged();
     }
+}
+
+void AppController::clearInstrumentClipping() {
+    if (visualFixture_) {
+        visualClipFixture_ = false;
+        emit setupChanged();
+        return;
+    }
+    if (!audioService_) {
+        return;
+    }
+    audioService_->clearSignalHealth(jamlink::audio::SignalHealthPath::InstrumentInput);
+    audioService_->clearSignalHealth(jamlink::audio::SignalHealthPath::InstrumentSend);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
+}
+
+void AppController::clearVoiceClipping() {
+    if (!audioService_) {
+        return;
+    }
+    audioService_->clearSignalHealth(jamlink::audio::SignalHealthPath::VoiceInput);
+    audioService_->clearSignalHealth(jamlink::audio::SignalHealthPath::VoiceSend);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
+}
+
+void AppController::clearOutputClipping() {
+    if (!audioService_) {
+        return;
+    }
+    audioService_->clearSignalHealth(jamlink::audio::SignalHealthPath::MonitorMix);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
 }
 
 void AppController::hostSession() {

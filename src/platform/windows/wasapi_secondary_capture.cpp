@@ -312,12 +312,22 @@ public:
         }
     }
 
+    void clearSignalHealth() noexcept override {
+        inputHealth_.clearClipLatch();
+        inputClipped_.store(0U, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool inputClipped() const noexcept override {
+        return inputClipped_.load(std::memory_order_acquire) != 0U;
+    }
+
     [[nodiscard]] SecondaryCaptureTelemetry telemetry() const noexcept override {
         return SecondaryCaptureTelemetry{
             state_.load(std::memory_order_acquire),
             sampleRate_.load(std::memory_order_relaxed),
             peak_.load(),
-            nativeError_.load(std::memory_order_relaxed)};
+            nativeError_.load(std::memory_order_relaxed),
+            signalHealthTelemetry(inputHealth_.snapshot())};
     }
 
 private:
@@ -346,6 +356,10 @@ private:
                 peak = std::max(peak, std::abs(sample));
             }
             peak_.store(std::clamp(peak, 0.0F, 1.0F));
+            if (peak >= LevelMeter::nativeInputClipThreshold) {
+                inputClipped_.store(1U, std::memory_order_release);
+            }
+            inputHealth_.process(std::span<const float>(scratch.data(), frames));
             if (destination_ != nullptr) {
                 static_cast<void>(destination_->push(
                     std::span<const float>(scratch.data(), frames)));
@@ -451,6 +465,8 @@ private:
     std::atomic<std::uint32_t> sampleRate_{0U};
     RealtimeAtomicFloat peak_;
     std::atomic<std::int32_t> nativeError_{0};
+    std::atomic<std::uint32_t> inputClipped_{0U};
+    LevelMeter inputHealth_{LevelMeter::nativeInputClipThreshold};
 };
 
 } // namespace
