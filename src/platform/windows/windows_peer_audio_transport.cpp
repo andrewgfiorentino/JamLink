@@ -1614,8 +1614,8 @@ private:
         // A peer that leaves and rejoins the same room restarts its nonce
         // counter from zero while this host keeps running, so its first packets
         // look far older than the window's high water mark and every one of
-        // them would be rejected forever. An authenticated Hello marks the
-        // start of a new session, so re-arm the window there.
+        // them would be rejected forever. An authenticated Hello from the
+        // current endpoint (or a replacement after timeout) re-arms the window.
         if (type == PacketType::Hello && hostMode_) {
             replayWindow_.reset();
         }
@@ -1632,6 +1632,15 @@ private:
         if (type == PacketType::Hello && hostMode_) {
             PeerParticipantInfo participant;
             if (!decodeParticipant(payload, participant)) {
+                return false;
+            }
+            // Until a multi-peer topology owns distinct session state, never
+            // let another identity replace a healthy performer merely because
+            // it has a copied invite. The same authenticated identity may
+            // reconnect from a new ephemeral port after its socket restarts.
+            if (connected && remoteAddress_.sin_port != 0U
+                && !sameEndpoint(source, remoteAddress_)
+                && participant.profileId != remoteParticipant().profileId) {
                 return false;
             }
             remoteAddress_ = source;

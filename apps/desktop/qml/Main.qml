@@ -10,6 +10,7 @@ ApplicationWindow {
     id: window
     required property AppController controller
     readonly property int chromeHeight: 28
+    property bool updatePromptDismissed: false
     visible: true
     width: window.controller.preferredWindowWidth
     height: window.controller.preferredWindowHeight + chromeHeight
@@ -114,8 +115,12 @@ ApplicationWindow {
     // Documented in Settings > Shortcuts. Anything listed there works here.
     Shortcut {
         sequences: ["T"]
-        onActivated: window.controller.navigate(
-            window.controller.currentPage === "tuner" ? "home" : "tuner")
+        onActivated: {
+            if (window.controller.currentPage === "tuner")
+                window.controller.closeTuner()
+            else
+                window.controller.navigate("tuner")
+        }
     }
     Shortcut {
         sequences: ["R"]
@@ -133,7 +138,12 @@ ApplicationWindow {
     Shortcut {
         sequences: ["Esc"]
         enabled: window.controller.currentPage !== "home"
-        onActivated: window.controller.navigate("home")
+        onActivated: {
+            if (window.controller.currentPage === "tuner")
+                window.controller.closeTuner()
+            else
+                window.controller.navigate("home")
+        }
     }
 
     Loader {
@@ -156,6 +166,119 @@ ApplicationWindow {
     Component { id: settingsPage; SettingsPage { controller: window.controller } }
     Component { id: tunerPage; TunerPage { controller: window.controller } }
     Component { id: profilePage; ProfilePage { controller: window.controller } }
+
+    Connections {
+        target: window.controller
+        function onUpdateChanged() {
+            if (window.controller.updateAvailable)
+                window.updatePromptDismissed = false
+        }
+    }
+
+    Item {
+        id: updatePrompt
+        z: 180
+        anchors.fill: parent
+        visible: window.controller.updateAvailable
+            && (!window.updatePromptDismissed || window.controller.updateBusy)
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#d9070a0d"
+        }
+
+        JamCard {
+            anchors.centerIn: parent
+            width: Math.min(430, parent.width - 48)
+            height: window.controller.updateBusy ? 270 : 246
+            radius: 18
+            border.color: "#4b3a65"
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 14
+
+                Row {
+                    width: parent.width
+                    spacing: 13
+                    Rectangle {
+                        width: 42
+                        height: 42
+                        radius: 13
+                        color: "#51269f"
+                        JamIcon {
+                            anchors.centerIn: parent
+                            width: 21
+                            height: 21
+                            source: Qt.resolvedUrl("../assets/check_circle.svg")
+                            color: "#ffffff"
+                        }
+                    }
+                    Column {
+                        width: parent.width - 55
+                        spacing: 3
+                        Text {
+                            text: "A JamLink update is ready"
+                            color: "#f5f6f7"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 18
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: "Update both musicians before joining"
+                            color: "#9aa5ab"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 11
+                        }
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    text: window.controller.updateStatus
+                    color: "#d7dde0"
+                    wrapMode: Text.WordWrap
+                    font.family: "Segoe UI"
+                    font.pixelSize: 12
+                }
+
+                Rectangle {
+                    visible: window.controller.updateBusy
+                    width: parent.width
+                    height: 7
+                    radius: 4
+                    color: "#202a31"
+                    Rectangle {
+                        width: Math.max(7, parent.width * window.controller.updateProgress)
+                        height: parent.height
+                        radius: 4
+                        color: "#8e4dde"
+                        Behavior on width { NumberAnimation { duration: 120 } }
+                    }
+                }
+
+                JamButton {
+                    width: parent.width
+                    height: 40
+                    primary: true
+                    enabled: !window.controller.updateBusy && !window.controller.roomActive
+                    text: window.controller.roomActive ? "Leave room to update"
+                        : window.controller.updateBusy ? "Updating…" : "Update & Restart"
+                    Accessible.name: text
+                    onClicked: window.controller.installUpdate()
+                }
+                JamButton {
+                    visible: !window.controller.updateBusy
+                    width: parent.width
+                    height: 34
+                    text: "Not now"
+                    Accessible.name: "Continue without updating"
+                    onClicked: window.updatePromptDismissed = true
+                }
+            }
+        }
+    }
 
     component ResizeHandle: MouseArea {
         required property int edges

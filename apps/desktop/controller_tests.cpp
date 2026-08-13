@@ -309,11 +309,18 @@ int main(int argc, char* argv[]) {
     passed = expect(!tuner.tunerDetected(), "readings only arrive from the audio poll")
         && passed;
 
-    tuner.navigate(QStringLiteral("home"));
+    tuner.closeTuner();
     passed = expect(!tuner.tunerActive(), "leaving the tuner deactivates it") && passed;
     passed = expect(!tunerServiceView->tunerEnabled, "leaving the tuner releases the tap")
         && passed;
     passed = expect(!tuner.tunerDetected(), "leaving the tuner clears the last reading")
+        && passed;
+
+    tuner.navigate(QStringLiteral("room"));
+    tuner.navigate(QStringLiteral("tuner"));
+    tuner.closeTuner();
+    passed = expect(tuner.currentPage() == QStringLiteral("room"),
+                    "closing an in-room tuner returns to the live room")
         && passed;
 
     // One button starts and stops a take, and it stays disabled until audio is
@@ -479,6 +486,21 @@ int main(int argc, char* argv[]) {
     passed = expect(clipped.allReady()
                         && clipped.currentPage() == QStringLiteral("home"),
                     "clean reset setup verifies and advances") && passed;
+
+    qputenv("JAMLINK_VISUAL_ROOM_SIZE", QByteArrayLiteral("4"));
+    jamlink::desktop::AppController fourMusicianRoom(
+        directory / "four-musician-room.jlpf", true,
+        QStringLiteral("room"), 0U, 0U);
+    const QVariantList participants = fourMusicianRoom.roomParticipants();
+    passed = expect(fourMusicianRoom.roomParticipantCount() == 4
+                        && participants.size() == 4,
+                    "room presentation expands from two to four musicians") && passed;
+    passed = expect(participants.at(0).toMap().value(QStringLiteral("local")).toBool()
+                        && participants.at(2).toMap()
+                               .value(QStringLiteral("displayName")).toString()
+                            == QStringLiteral("Chris"),
+                    "scaled room keeps stable local-first participant ordering") && passed;
+    qunsetenv("JAMLINK_VISUAL_ROOM_SIZE");
 
     std::filesystem::remove_all(directory, cleanupError);
     std::cout << (passed ? "[PASS] desktop controller persistence and readiness\n"

@@ -20,65 +20,52 @@ Item {
 
         Column {
             anchors.left: parent.left
-            anchors.leftMargin: 22
+            anchors.leftMargin: 20
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
             Text {
-                text: root.controller.peerConnected
-                    ? "Room with " + root.controller.remoteDisplayName
-                    : "Private Room"
-                color: "#f2f4f5"
-                font.family: "Segoe UI"
-                font.pixelSize: 17
+                text: "Room: Private Jam"
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: 15
                 font.weight: Font.DemiBold
             }
             Text {
-                text: root.controller.roomStatus
-                color: root.controller.peerConnected ? "#44d86a" : "#929ba1"
-                font.family: "Segoe UI"
-                font.pixelSize: 10
+                text: root.controller.peerConnected
+                    ? "Encrypted room session" : root.controller.roomStatus
+                color: root.controller.peerConnected ? Theme.connected : Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: 9
             }
         }
+
         Row {
             anchors.right: parent.right
-            anchors.rightMargin: 16
+            anchors.rightMargin: 15
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 6
-            ProfileAvatar {
+            spacing: 7
+            Rectangle {
                 visible: root.controller.peerConnected
                 anchors.verticalCenter: parent.verticalCenter
-                width: visible ? 30 : 0
-                height: 30
-                avatarId: root.controller.remoteAvatarId
-                ringColor: "#42d97a"
-            }
-            JamButton {
-                anchors.verticalCenter: parent.verticalCenter
-                width: 70
-                height: 32
-                text: root.controller.unreadChatCount > 0
-                    ? "Chat " + root.controller.unreadChatCount : "Chat"
-                enabled: root.controller.peerConnected
-                Accessible.name: "Open room chat"
-                onClicked: {
-                    root.chatOpen = !root.chatOpen
-                    if (root.chatOpen)
-                        root.controller.markChatRead()
+                width: latencyLabel.implicitWidth + 18
+                height: 26
+                radius: 9
+                color: "#0d2116"
+                border.color: "#1d4b30"
+                Text {
+                    id: latencyLabel
+                    anchors.centerIn: parent
+                    text: root.controller.roundTripMilliseconds + " ms"
+                    color: Theme.connected
+                    font.family: Theme.numericFontFamily
+                    font.pixelSize: 9
                 }
             }
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                iconSource: Qt.resolvedUrl("../../assets/tune.svg")
-                Accessible.name: "Open tuner"
-                onClicked: root.controller.navigate("tuner")
-            }
             JamButton {
-                anchors.verticalCenter: parent.verticalCenter
-                width: 70
-                height: 32
+                width: 68
+                height: 30
                 text: "Leave"
                 enabled: root.controller.roomActive
-                Accessible.name: "Leave private room"
                 onClicked: root.controller.leaveSession()
             }
         }
@@ -89,459 +76,281 @@ Item {
             anchors.leftMargin: 16
             anchors.rightMargin: 16
             height: 1
-            color: "#1d272d"
+            color: Theme.borderSoft
         }
     }
 
-    Column {
+    Flickable {
+        id: roomScroll
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: header.bottom
         anchors.bottom: parent.bottom
-        anchors.margins: 22
-        spacing: 12
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        contentHeight: roomContent.implicitHeight + 34
 
-        JamCard {
-            width: parent.width
-            height: root.controller.inviteCode.length > 0 ? 142 : 78
+        Column {
+            id: roomContent
+            x: 20
+            y: 14
+            width: roomScroll.width - 40
+            spacing: 12
 
-            Column {
-                anchors.fill: parent
-                anchors.margins: 13
-                spacing: 8
-                Row {
-                    width: parent.width
-                    height: 20
+            JamCard {
+                visible: root.controller.roomActive && !root.controller.peerConnected
+                width: parent.width
+                height: visible ? 116 : 0
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 13
                     spacing: 8
-                    JamIcon {
-                        width: 16
-                        height: 16
-                        source: Qt.resolvedUrl("../../assets/check_circle.svg")
-                        color: root.controller.peerConnected ? "#38d65d" : "#8b56df"
-                    }
                     Text {
-                        width: parent.width - 24
-                        text: !root.controller.roomActive
-                            ? "No active private room"
-                            : root.controller.peerConnected
-                            ? root.controller.remoteDisplayName + " is connected"
-                            : root.controller.inviteCode.length > 0
-                                ? "Send this one-time room code to your friend"
-                                : "Connecting to your friend's private room"
-                        color: "#eef1f2"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 11
-                        font.weight: Font.Medium
+                        text: root.controller.inviteCode.length > 0
+                            ? "Your invite is ready" : "Opening your private room…"
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
                     }
-                }
-                Row {
-                    visible: root.controller.inviteCode.length > 0
-                    width: parent.width
-                    height: 54
-                    spacing: 8
-                    TextArea {
-                        id: inviteArea
-                        width: parent.width - copyButton.width - 8
-                        height: 54
-                        text: root.controller.inviteCode
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: Text.WrapAnywhere
-                        color: "#cbd4d9"
-                        selectionColor: "#6938c5"
-                        font.family: "Cascadia Mono"
-                        font.pixelSize: 9
-                        background: Rectangle {
-                            radius: 6
-                            color: "#11191e"
-                            border.color: "#28343b"
-                        }
-                        Accessible.name: "Encrypted invite code"
-                    }
-                    JamButton {
-                        id: copyButton
-                        width: 82
-                        height: 34
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Copy"
-                        Accessible.name: "Copy invite code"
-                        onClicked: root.controller.copyInvite()
-                    }
-                }
-                Text {
-                    width: parent.width
-                    text: !root.controller.roomActive
-                        ? "Create an invite or join from the Home screen."
-                        : root.controller.inviteCode.length === 0
-                        ? "JamLink is negotiating the encrypted direct connection."
-                        : root.controller.automaticPortMapping
-                            ? "Router mapping is ready. Keep JamLink open while your friend joins."
-                            : "If your friend cannot connect, forward UDP port "
-                                + root.controller.roomPort + " to this PC or enable UPnP."
-                    color: root.controller.inviteCode.length === 0
-                        || root.controller.automaticPortMapping ? "#7f8b91" : "#e4b352"
-                    wrapMode: Text.WordWrap
-                    font.family: "Segoe UI"
-                    font.pixelSize: 9
-                }
-            }
-        }
-
-        JamCard {
-            width: parent.width
-            height: 220
-
-            Column {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 9
-                Row {
-                    width: parent.width
-                    Text {
-                        width: parent.width - latencyText.width
-                        text: "WHAT YOU HEAR"
-                        color: "#eef1f2"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 10
-                        font.weight: Font.Medium
-                    }
-                    Text {
-                        id: latencyText
-                        text: root.controller.peerConnected
-                            ? root.controller.roundTripMilliseconds + " ms round trip"
-                            : "Waiting"
-                        color: root.controller.peerConnected ? "#43d96a" : "#7b858b"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 10
-                    }
-                }
-
-                // Instrument and voice arrive as independent streams, so each
-                // gets its own meter, level, and mute.
-                Repeater {
-                    model: [
-                        {
-                            label: root.controller.peerConnected
-                                ? root.controller.remoteDisplayName + " · "
-                                    + root.controller.remotePrimaryInstrument
-                                : "Their instrument",
-                            icon: "music_note.svg",
-                            tint: "#8b56df"
-                        },
-                        {
-                            label: root.controller.peerConnected
-                                ? root.controller.remoteDisplayName + " · voice"
-                                : "Their voice",
-                            icon: "mic.svg",
-                            tint: "#42d97a"
-                        }
-                    ]
                     Row {
-                        id: streamRow
-                        required property int index
-                        required property var modelData
+                        visible: root.controller.inviteCode.length > 0
                         width: parent.width
-                        height: 30
-                        spacing: 9
-
-                        readonly property bool isInstrument: streamRow.index === 0
-                        readonly property real streamLevel: streamRow.isInstrument
-                            ? root.controller.remoteInstrumentLevel
-                            : root.controller.remoteVoiceLevel
-                        readonly property bool streamMuted: streamRow.isInstrument
-                            ? root.controller.remoteInstrumentMuted
-                            : root.controller.remoteVoiceMuted
-                        readonly property bool sourceClipped: streamRow.isInstrument
-                            ? root.controller.remoteInstrumentClipped
-                            : root.controller.remoteVoiceClipped
-
-                        JamIcon {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 15
-                            height: 15
-                            source: Qt.resolvedUrl("../../assets/" + streamRow.modelData.icon)
-                            color: streamRow.streamMuted ? "#5d666c" : streamRow.modelData.tint
-                        }
-                        Column {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 15 - streamLevelSlider.width
-                                - streamSwitch.width - 27
-                            spacing: 3
-                            Text {
-                                text: streamRow.modelData.label
-                                    + (streamRow.sourceClipped ? " · CLIPPING" : "")
-                                color: streamRow.streamMuted ? "#7b858b"
-                                    : streamRow.sourceClipped ? "#ff746b" : "#cbd2d6"
-                                font.family: "Segoe UI"
-                                font.pixelSize: 10
-                            }
-                            LevelBar {
-                                width: parent.width
-                                height: 12
-                                segmentCount: 34
-                                level: streamRow.streamMuted ? 0 : streamRow.streamLevel
-                                clipped: streamRow.sourceClipped
-                            }
-                        }
-                        JamSlider {
-                            id: streamLevelSlider
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 86
-                            enabled: root.controller.roomActive
-                            value: streamRow.isInstrument
-                                ? root.controller.remoteInstrumentGain
-                                : root.controller.remoteVoiceGain
-                            Accessible.name: streamRow.modelData.label + " level"
-                            onMoved: {
-                                if (streamRow.isInstrument)
-                                    root.controller.remoteInstrumentGain = value
-                                else
-                                    root.controller.remoteVoiceGain = value
-                            }
-                        }
-                        JamSwitch {
-                            id: streamSwitch
-                            anchors.verticalCenter: parent.verticalCenter
-                            checked: !streamRow.streamMuted
-                            enabled: root.controller.roomActive
-                            Accessible.name: "Hear " + streamRow.modelData.label
-                            onToggled: {
-                                if (streamRow.isInstrument)
-                                    root.controller.remoteInstrumentMuted = !checked
-                                else
-                                    root.controller.remoteVoiceMuted = !checked
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: "#1d272d"
-                }
-
-                Row {
-                    width: parent.width
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - sendSwitch.width
-                        text: !root.controller.roomActive
-                            ? "No audio is being sent"
-                            : root.controller.sendMuted
-                            ? "Your audio is muted to your friend"
-                            : "Your guitar and microphone are being sent separately"
-                        color: root.controller.sendMuted ? "#e4b352" : "#cbd2d6"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 10
-                    }
-                    JamSwitch {
-                        id: sendSwitch
-                        checked: root.controller.roomActive && !root.controller.sendMuted
-                        enabled: root.controller.roomActive
-                        Accessible.name: "Send my audio to friend"
-                        onToggled: root.controller.sendMuted = !checked
-                    }
-                }
-
-                Repeater {
-                    model: [
-                        { label: "Your guitar", instrument: true },
-                        { label: "Your voice", instrument: false }
-                    ]
-                    Row {
-                        id: localSignalRow
-                        required property var modelData
-                        width: parent.width
-                        height: 20
                         spacing: 8
-                        readonly property bool sourceClipped: localSignalRow.modelData.instrument
-                            ? (root.controller.instrumentInputClipped
-                                || root.controller.instrumentSendClipped)
-                            : (root.controller.voiceInputClipped
-                                || root.controller.voiceSendClipped)
-                        readonly property real sourceLevel: localSignalRow.modelData.instrument
-                            ? root.controller.instrumentLevel : root.controller.voiceLevel
-                        readonly property real sourcePeak: localSignalRow.modelData.instrument
-                            ? root.controller.instrumentPeakHold : root.controller.voicePeakHold
+                        Rectangle {
+                            width: parent.width - copyInvite.width - 8
+                            height: 36
+                            radius: Theme.radiusControl
+                            color: Theme.surfaceNested
+                            border.color: Theme.border
+                            Text {
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                verticalAlignment: Text.AlignVCenter
+                                text: root.controller.inviteCode
+                                color: "#d9c7f5"
+                                elide: Text.ElideMiddle
+                                font.family: Theme.numericFontFamily
+                                font.pixelSize: 9
+                            }
+                        }
+                        JamButton {
+                            id: copyInvite
+                            width: 76
+                            height: 36
+                            text: "Copy"
+                            onClicked: root.controller.copyInvite()
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        text: "Your friend can paste this code on Home. Keep JamLink open."
+                        color: Theme.textMuted
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
+                    }
+                }
+            }
 
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 58
-                            text: localSignalRow.modelData.label
-                            color: localSignalRow.sourceClipped ? "#ff746b" : "#aeb7bc"
-                            font.family: "Segoe UI"
-                            font.pixelSize: 9
-                        }
-                        LevelBar {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - 58 - localClip.width - 16
-                            height: 10
-                            segmentCount: 34
-                            level: localSignalRow.sourceLevel
-                            peakHold: localSignalRow.sourcePeak
-                            clipped: localSignalRow.sourceClipped
-                        }
-                        ClipLatch {
-                            id: localClip
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 60
-                            height: 20
-                            clipped: localSignalRow.sourceClipped
-                            onClicked: {
-                                if (localSignalRow.modelData.instrument)
-                                    root.controller.clearInstrumentClipping()
-                                else
-                                    root.controller.clearVoiceClipping()
+            Flow {
+                id: participantsFlow
+                readonly property int cardColumns: width >= 900
+                    ? Math.min(3, root.controller.roomParticipantCount)
+                    : width >= 440 ? Math.min(2, root.controller.roomParticipantCount) : 1
+                readonly property int cardRows: Math.ceil(
+                    root.controller.roomParticipantCount / Math.max(1, cardColumns))
+                width: parent.width
+                height: cardRows * 330 + Math.max(0, cardRows - 1) * spacing
+                spacing: 10
+
+                Repeater {
+                    model: root.controller.roomParticipants
+                    delegate: JamCard {
+                        id: participantCard
+                        required property var modelData
+                        width: (participantsFlow.width
+                            - participantsFlow.spacing * (participantsFlow.cardColumns - 1))
+                            / participantsFlow.cardColumns
+                        height: 330
+                        border.color: participantCard.modelData.accent
+                        color: participantCard.modelData.surface
+
+                        Column {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 9
+                            Row {
+                                width: parent.width
+                                Text {
+                                    width: parent.width - participantState.width
+                                    text: participantCard.modelData.displayName.toUpperCase()
+                                    color: Theme.text
+                                    elide: Text.ElideRight
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    id: participantState
+                                    text: participantCard.modelData.stateLabel
+                                    color: participantCard.modelData.present
+                                        ? Theme.connected : Theme.textMuted
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: 8
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+                            ProfileAvatar {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 68
+                                height: 68
+                                avatarId: participantCard.modelData.avatarId
+                                customSource: participantCard.modelData.customAvatarSource
+                                ringColor: participantCard.modelData.accent
+                            }
+                            StreamPanel {
+                                width: parent.width
+                                title: participantCard.modelData.instrument
+                                icon: "music_note.svg"
+                                level: participantCard.modelData.instrumentLevel
+                                gain: participantCard.modelData.instrumentGain
+                                muted: participantCard.modelData.instrumentMuted
+                                accent: participantCard.modelData.accent
+                                enabled: participantCard.modelData.controlsEnabled
+                                interactiveMute: !participantCard.modelData.local
+                                    && participantCard.modelData.controlsEnabled
+                                onGainMoved: value => root.controller.setRoomParticipantStreamGain(
+                                    participantCard.modelData.participantId, "instrument", value)
+                                onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
+                                    participantCard.modelData.participantId, "instrument", muted)
+                            }
+                            StreamPanel {
+                                width: parent.width
+                                title: "Microphone"
+                                icon: "mic.svg"
+                                level: participantCard.modelData.voiceLevel
+                                gain: participantCard.modelData.voiceGain
+                                muted: participantCard.modelData.voiceMuted
+                                accent: participantCard.modelData.accent
+                                enabled: participantCard.modelData.controlsEnabled
+                                interactiveMute: !participantCard.modelData.local
+                                    && participantCard.modelData.controlsEnabled
+                                onGainMoved: value => root.controller.setRoomParticipantStreamGain(
+                                    participantCard.modelData.participantId, "voice", value)
+                                onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
+                                    participantCard.modelData.participantId, "voice", muted)
                             }
                         }
                     }
                 }
             }
-        }
-
-        // One button. The four separate tracks are an implementation detail the
-        // musician only meets afterwards, in the folder.
-        JamCard {
-            width: parent.width
-            height: 68
 
             Row {
-                anchors.fill: parent
-                anchors.margins: 13
-                spacing: 12
-
-                Rectangle {
-                    id: recordDot
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 15
-                    height: 15
-                    radius: 8
-                    color: root.controller.recording ? "#e0473f" : "#3a444b"
-                    SequentialAnimation on opacity {
-                        running: root.controller.recording
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 1.0; to: 0.35; duration: 700 }
-                        NumberAnimation { from: 0.35; to: 1.0; duration: 700 }
-                        onStopped: recordDot.opacity = 1.0
-                    }
-                }
-                Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - recordDot.width - recordButton.width - 36
-                    spacing: 3
-                    Text {
-                        text: root.controller.recording
-                            ? "Recording " + root.controller.recordingElapsed
-                            : "Record this jam"
-                        color: root.controller.recording ? "#f2f4f5" : "#dfe3e5"
-                        font.family: "Segoe UI"
-                        font.pixelSize: 11
-                        font.weight: Font.Medium
-                    }
-                    Text {
-                        width: parent.width
-                        text: root.controller.recordingMessage
-                        color: "#78838a"
-                        elide: Text.ElideRight
-                        font.family: "Segoe UI"
-                        font.pixelSize: 9
-                    }
+                width: parent.width
+                height: 44
+                spacing: 9
+                JamButton {
+                    width: (parent.width - 18) / 3
+                    height: parent.height
+                    text: "Tuner"
+                    iconSource: Qt.resolvedUrl("../../assets/tune.svg")
+                    onClicked: root.controller.navigate("tuner")
                 }
                 JamButton {
-                    id: recordButton
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 92
-                    height: 32
-                    text: root.controller.recording ? "Stop" : "Record"
-                    primary: !root.controller.recording
+                    width: (parent.width - 18) / 3
+                    height: parent.height
+                    text: root.controller.recording ? "Stop " + root.controller.recordingElapsed : "Record"
+                    iconSource: Qt.resolvedUrl("../../assets/music_note.svg")
                     enabled: root.controller.audioActive
-                    Accessible.name: root.controller.recording
-                        ? "Stop recording" : "Start recording"
                     onClicked: root.controller.toggleRecording()
                 }
+                JamButton {
+                    width: (parent.width - 18) / 3
+                    height: parent.height
+                    text: root.controller.unreadChatCount > 0
+                        ? "Chat " + root.controller.unreadChatCount : "Chat"
+                    iconSource: Qt.resolvedUrl("../../assets/mic.svg")
+                    enabled: root.controller.peerConnected
+                    onClicked: {
+                        root.chatOpen = true
+                        root.controller.markChatRead()
+                    }
+                }
             }
-        }
 
-        JamCard {
-            width: parent.width
-            height: 84
-            Row {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 12
-                JamIcon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 22
-                    height: 22
-                    source: Qt.resolvedUrl("../../assets/headphones.svg")
-                    color: "#8b56df"
-                }
-                Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 34 - monitorClip.width - 12
-                    spacing: 4
-                    Text {
-                        text: root.controller.peerConnected
-                            ? root.controller.connectionQuality
-                            : "Direct encrypted UDP audio"
-                        color: "#e7eaec"
-                        wrapMode: Text.WordWrap
-                        width: parent.width
-                        font.family: "Segoe UI"
-                        font.pixelSize: 11
-                        font.weight: Font.Medium
+            JamCard {
+                width: parent.width
+                height: 70
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+                    DeviceSelector {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(250, parent.width * 0.52)
+                        model: root.controller.outputDevices
+                        currentIndex: root.controller.outputDeviceIndex
+                        enabled: root.controller.devicesAvailable
+                        onActivated: index => root.controller.outputDeviceIndex = index
                     }
-                    Text {
-                        text: root.controller.roomActive
-                            ? root.controller.packetSummary
-                            : "5 ms PCM packets · no relay fallback in this test build"
-                        color: "#818c92"
-                        width: parent.width
-                        wrapMode: Text.WordWrap
-                        font.family: "Segoe UI"
-                        font.pixelSize: 9
+                    JamIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 16
+                        height: 16
+                        source: Qt.resolvedUrl("../../assets/volume_up.svg")
+                        color: Theme.textSecondary
+                    }
+                    LevelBar {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 286
+                        height: 12
+                        segmentCount: 30
+                        level: root.controller.outputLevel
+                        peakHold: root.controller.outputPeakHold
+                        clipped: root.controller.outputClipped
                     }
                 }
-                ClipLatch {
-                    id: monitorClip
-                    anchors.verticalCenter: parent.verticalCenter
-                    clipped: root.controller.outputClipped
-                    Accessible.name: clipped
-                        ? "Monitor mix clipping detected. Activate to reset."
-                        : "Monitor mix clipping latch is clear"
-                    onClicked: root.controller.clearOutputClipping()
-                }
+            }
+
+            Text {
+                width: parent.width
+                text: root.controller.roomStatus
+                color: Theme.textMuted
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.family: Theme.fontFamily
+                font.pixelSize: 9
             }
         }
     }
 
     Rectangle {
         id: chatDrawer
-        z: 20
+        z: 30
         visible: root.chatOpen
         anchors.top: header.bottom
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        width: Math.min(370, parent.width - 20)
-        color: "#0b1115"
-        border.color: "#303b42"
-        radius: 14
+        width: Math.min(390, parent.width - 16)
+        color: Theme.surfaceNested
+        border.color: "#3a454d"
+        radius: Theme.radiusPanel
 
         Rectangle {
             id: chatHeader
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 52
+            height: 54
             color: "transparent"
             Text {
                 anchors.left: parent.left
-                anchors.leftMargin: 16
+                anchors.leftMargin: 17
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Room Chat"
-                color: "#f2f4f5"
-                font.family: "Segoe UI"
+                text: "Room chat"
+                color: Theme.text
+                font.family: Theme.fontFamily
                 font.pixelSize: 16
                 font.weight: Font.DemiBold
             }
@@ -558,7 +367,7 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 1
-                color: "#202a30"
+                color: Theme.borderSoft
             }
         }
 
@@ -568,52 +377,60 @@ Item {
             anchors.right: parent.right
             anchors.top: chatHeader.bottom
             anchors.bottom: composer.top
-            anchors.margins: 12
-            spacing: 8
+            anchors.margins: 14
+            spacing: 10
             clip: true
             model: root.controller.chatMessages
             delegate: Item {
                 id: chatEntry
                 required property var modelData
                 width: ListView.view.width
-                height: messageColumn.implicitHeight + 8
-                Column {
-                    id: messageColumn
-                    width: parent.width
-                    spacing: 3
-                    Row {
-                        visible: !chatEntry.modelData.system
-                        width: parent.width
+                height: messageBubble.implicitHeight + 8
+                Rectangle {
+                    id: messageBubble
+                    width: chatEntry.modelData.system
+                        ? parent.width : Math.min(parent.width, messageText.implicitWidth + 28)
+                    anchors.right: chatEntry.modelData.own ? parent.right : undefined
+                    anchors.left: chatEntry.modelData.own ? undefined : parent.left
+                    implicitHeight: messageColumn.implicitHeight + 18
+                    radius: 11
+                    color: chatEntry.modelData.system ? "transparent"
+                        : chatEntry.modelData.own ? "#322047" : Theme.surfaceRaised
+                    Column {
+                        id: messageColumn
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        spacing: 3
+                        Row {
+                            visible: !chatEntry.modelData.system
+                            width: parent.width
+                            Text {
+                                width: parent.width - timeText.width
+                                text: chatEntry.modelData.own ? "You" : chatEntry.modelData.sender
+                                color: chatEntry.modelData.own ? "#d0aaf4" : Theme.connected
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 9
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                id: timeText
+                                text: chatEntry.modelData.time
+                                color: Theme.textMuted
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 8
+                            }
+                        }
                         Text {
-                            width: parent.width - messageTime.width
-                            text: chatEntry.modelData.own
-                                ? "You" : chatEntry.modelData.sender
-                            color: chatEntry.modelData.own ? "#b993ff" : "#58db84"
-                            font.family: "Segoe UI"
+                            id: messageText
+                            width: Math.min(chatList.width - 28, implicitWidth)
+                            text: chatEntry.modelData.text
+                            color: chatEntry.modelData.system ? Theme.textMuted : Theme.text
+                            wrapMode: Text.Wrap
+                            horizontalAlignment: chatEntry.modelData.system
+                                ? Text.AlignHCenter : Text.AlignLeft
+                            font.family: Theme.fontFamily
                             font.pixelSize: 10
-                            font.weight: Font.DemiBold
                         }
-                        Text {
-                            id: messageTime
-                            text: chatEntry.modelData.time
-                            color: "#68747b"
-                            font.family: "Segoe UI"
-                            font.pixelSize: 8
-                        }
-                    }
-                    TextArea {
-                        width: parent.width
-                        text: chatEntry.modelData.text
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: TextEdit.Wrap
-                        color: chatEntry.modelData.system ? "#778289" : "#dce1e4"
-                        font.family: "Segoe UI"
-                        font.pixelSize: chatEntry.modelData.system ? 9 : 10
-                        horizontalAlignment: chatEntry.modelData.system
-                            ? Text.AlignHCenter : Text.AlignLeft
-                        background: null
-                        padding: 0
                     }
                 }
             }
@@ -632,24 +449,24 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.margins: 12
-            height: 62
+            anchors.margins: 13
+            height: 58
             spacing: 8
             TextArea {
                 id: chatInput
-                width: parent.width - sendChatButton.width - 8
-                height: 54
-                placeholderText: "Message " + root.controller.remoteDisplayName
+                width: parent.width - sendChat.width - 8
+                height: 48
+                placeholderText: "Type a message…"
                 wrapMode: TextEdit.Wrap
-                color: "#edf0f2"
-                placeholderTextColor: "#68747b"
-                selectionColor: "#6938c5"
-                font.family: "Segoe UI"
+                color: Theme.text
+                placeholderTextColor: Theme.textMuted
+                selectionColor: Theme.accent
+                font.family: Theme.fontFamily
                 font.pixelSize: 10
                 background: Rectangle {
-                    radius: 9
-                    color: "#151e23"
-                    border.color: chatInput.activeFocus ? "#8b56df" : "#2c373e"
+                    radius: Theme.radiusControl
+                    color: Theme.surfaceRaised
+                    border.color: chatInput.activeFocus ? Theme.accentBright : Theme.border
                 }
                 Keys.onReturnPressed: event => {
                     if ((event.modifiers & Qt.ShiftModifier) !== 0) {
@@ -661,17 +478,85 @@ Item {
                 }
             }
             JamButton {
-                id: sendChatButton
+                id: sendChat
                 anchors.verticalCenter: parent.verticalCenter
                 width: 72
-                height: 34
+                height: 36
                 primary: true
                 text: "Send"
                 enabled: root.controller.peerConnected && chatInput.text.trim().length > 0
-                Accessible.name: "Send room chat message"
                 onClicked: {
                     if (root.controller.sendChatMessage(chatInput.text))
                         chatInput.clear()
+                }
+            }
+        }
+    }
+
+    component StreamPanel: Rectangle {
+        id: stream
+        required property string title
+        required property string icon
+        property real level: 0
+        property real gain: 1
+        property bool muted: false
+        property color accent: Theme.accent
+        property bool interactiveMute: false
+        signal gainMoved(real value)
+        signal muteToggled(bool muted)
+        height: 88
+        radius: 10
+        color: Theme.surfaceNested
+        border.color: Theme.borderSoft
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 9
+            spacing: 6
+            Row {
+                width: parent.width
+                height: 17
+                spacing: 6
+                JamIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 14
+                    source: Qt.resolvedUrl("../../assets/" + stream.icon)
+                    color: stream.muted ? Theme.textMuted : stream.accent
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - 20
+                    text: stream.title
+                    color: stream.muted ? Theme.textMuted : Theme.text
+                    elide: Text.ElideRight
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 10
+                    font.weight: Font.Medium
+                }
+            }
+            LevelBar {
+                width: parent.width
+                height: 9
+                segmentCount: 24
+                level: stream.muted ? 0 : stream.level
+            }
+            Row {
+                width: parent.width
+                height: 22
+                spacing: 7
+                JamSlider {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - (stream.interactiveMute ? muteSwitch.width + 7 : 0)
+                    value: stream.gain
+                    onMoved: stream.gainMoved(value)
+                }
+                JamSwitch {
+                    id: muteSwitch
+                    visible: stream.interactiveMute
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: !stream.muted
+                    onToggled: stream.muteToggled(!checked)
                 }
             }
         }

@@ -121,6 +121,8 @@ class AppController final : public QObject {
     Q_PROPERTY(QString remoteHandle READ remoteHandle NOTIFY roomChanged)
     Q_PROPERTY(QString remoteAvatarId READ remoteAvatarId NOTIFY roomChanged)
     Q_PROPERTY(QString remotePrimaryInstrument READ remotePrimaryInstrument NOTIFY roomChanged)
+    Q_PROPERTY(QVariantList roomParticipants READ roomParticipants NOTIFY roomChanged)
+    Q_PROPERTY(int roomParticipantCount READ roomParticipantCount NOTIFY roomChanged)
     Q_PROPERTY(QVariantList chatMessages READ chatMessages NOTIFY chatChanged)
     Q_PROPERTY(int unreadChatCount READ unreadChatCount NOTIFY chatChanged)
 
@@ -277,6 +279,8 @@ public:
     [[nodiscard]] QString remoteHandle() const;
     [[nodiscard]] QString remoteAvatarId() const;
     [[nodiscard]] QString remotePrimaryInstrument() const;
+    [[nodiscard]] QVariantList roomParticipants() const;
+    [[nodiscard]] int roomParticipantCount() const noexcept;
     [[nodiscard]] QVariantList chatMessages() const;
     [[nodiscard]] int unreadChatCount() const noexcept;
 
@@ -303,6 +307,7 @@ public:
     [[nodiscard]] bool hasPreferredWindowPosition() const noexcept;
 
     Q_INVOKABLE void navigate(const QString& page);
+    Q_INVOKABLE void closeTuner();
     Q_INVOKABLE void saveSoundcheck();
     Q_INVOKABLE void testOutput();
     Q_INVOKABLE void retryAudio();
@@ -317,6 +322,10 @@ public:
     Q_INVOKABLE void clearCustomAvatar();
     Q_INVOKABLE bool sendChatMessage(const QString& text);
     Q_INVOKABLE void markChatRead();
+    Q_INVOKABLE void setRoomParticipantStreamGain(
+        const QString& participantId, const QString& stream, double gain);
+    Q_INVOKABLE void setRoomParticipantStreamMuted(
+        const QString& participantId, const QString& stream, bool muted);
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void openRecordingFolder();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
@@ -410,10 +419,13 @@ private:
     QTimer audioRestartTimer_;
     QTimer telemetryTimer_;
     QString currentPage_;
+    QString tunerReturnPage_{QStringLiteral("home")};
     QString setupMessage_;
     QString saveMessage_;
     bool visualFixture_{false};
     bool visualClipFixture_{false};
+    bool visualRoomFixture_{false};
+    int visualRoomParticipantCount_{2};
     bool restoredPreferences_{false};
     bool restoredSetupAvailable_{false};
     bool devicesAvailable_{false};
@@ -430,6 +442,7 @@ private:
     jamlink::record::RecorderTelemetry recorderTelemetry_;
     QString recordingLocation_;
     jamlink::network::PeerParticipantInfo remoteParticipant_;
+    std::vector<jamlink::network::PeerParticipantInfo> remoteParticipants_;
     QVariantList chatMessages_;
     int unreadChatCount_{0};
 

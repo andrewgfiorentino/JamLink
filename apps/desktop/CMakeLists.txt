@@ -4,6 +4,8 @@ find_package(Qt6 6.10.3 REQUIRED COMPONENTS Core Gui Network Qml Quick)
 
 qt_standard_project_setup(REQUIRES 6.10.3)
 
+set_source_files_properties(qml/components/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_executable(jamlink_desktop WIN32
     app_controller.cpp
     main.cpp
@@ -28,6 +30,7 @@ qt_add_qml_module(jamlink_desktop
         qml/components/JamSwitch.qml
         qml/components/LevelBar.qml
         qml/components/ProfileAvatar.qml
+        qml/components/Theme.qml
         qml/pages/HomePage.qml
         qml/pages/ProfilePage.qml
         qml/pages/RoomPage.qml
@@ -192,6 +195,31 @@ if(BUILD_TESTING)
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-tuner.png"
     )
     add_test(
+        NAME jamlink_desktop_visual_four_musician_room
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page room
+            --width 532
+            --height 1040
+            --minimum-capture-height 1040
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room-four.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_four_musician_room_wide
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page room
+            --width 980
+            --height 760
+            --minimum-capture-width 980
+            --minimum-capture-height 760
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room-four-wide.png"
+    )
+    add_test(
         NAME jamlink_desktop_visual_high_dpi
         COMMAND jamlink_desktop
             --visual-fixture
@@ -215,6 +243,30 @@ if(BUILD_TESTING)
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-clipping.png"
     )
+    add_test(
+        NAME jamlink_desktop_visual_update_prompt
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page home
+            --width 532
+            --height 562
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-update.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_200_percent
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page home
+            --width 532
+            --height 562
+            --expected-capture-width 1064
+            --expected-capture-height 1124
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-200-percent.png"
+    )
     get_target_property(_jamlink_qmake Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_jamlink_qt_bin "${_jamlink_qmake}" DIRECTORY)
     # ENVIRONMENT_MODIFICATION takes one list value. Passing the entries as
@@ -232,8 +284,12 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_settings
         jamlink_desktop_visual_room
         jamlink_desktop_visual_tuner
+        jamlink_desktop_visual_four_musician_room
+        jamlink_desktop_visual_four_musician_room_wide
         jamlink_desktop_visual_high_dpi
         jamlink_desktop_visual_clipping
+        jamlink_desktop_visual_update_prompt
+        jamlink_desktop_visual_200_percent
         PROPERTIES
         TIMEOUT 30
         LABELS "gui;visual"
@@ -256,12 +312,34 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_tuner
         PROPERTIES DEPENDS jamlink_desktop_visual_room)
     set_tests_properties(
+        jamlink_desktop_visual_four_musician_room
+        PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_property(
+        TEST jamlink_desktop_visual_four_musician_room APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_ROOM_SIZE=set:4")
+    set_tests_properties(
+        jamlink_desktop_visual_four_musician_room_wide
+        PROPERTIES DEPENDS jamlink_desktop_visual_four_musician_room)
+    set_property(
+        TEST jamlink_desktop_visual_four_musician_room_wide APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_ROOM_SIZE=set:4")
+    set_tests_properties(
         jamlink_desktop_visual_clipping
         PROPERTIES
         DEPENDS jamlink_desktop_visual_first_launch)
     set_property(
         TEST jamlink_desktop_visual_clipping APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_CLIP=set:1")
+    set_property(
+        TEST jamlink_desktop_visual_update_prompt APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_UPDATE=set:1")
+    set_tests_properties(jamlink_desktop_visual_update_prompt PROPERTIES
+        DEPENDS jamlink_desktop_visual_second_launch)
+    set_tests_properties(jamlink_desktop_visual_200_percent PROPERTIES
+        DEPENDS jamlink_desktop_visual_second_launch)
+    set_property(
+        TEST jamlink_desktop_visual_200_percent APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "QT_SCREEN_SCALE_FACTORS=set:2")
     add_test(
         NAME jamlink_desktop_visual_profile
         COMMAND jamlink_desktop
@@ -278,7 +356,7 @@ if(BUILD_TESTING)
         TIMEOUT 30
         LABELS "gui;visual"
         ENVIRONMENT_MODIFICATION "${_jamlink_visual_environment}"
-        DEPENDS jamlink_desktop_visual_tuner)
+        DEPENDS jamlink_desktop_visual_four_musician_room_wide)
     set_tests_properties(
         jamlink_desktop_visual_high_dpi
         PROPERTIES DEPENDS jamlink_desktop_visual_profile)

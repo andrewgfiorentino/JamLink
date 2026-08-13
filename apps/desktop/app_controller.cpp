@@ -147,12 +147,39 @@ AppController::AppController(
             ? QStringLiteral("home")
             : QStringLiteral("soundcheck");
     }
+    if (visualFixture_ && currentPage_ == QStringLiteral("room")) {
+        visualRoomFixture_ = true;
+        bool participantCountValid = false;
+        const int requestedParticipantCount = qEnvironmentVariableIntValue(
+            "JAMLINK_VISUAL_ROOM_SIZE", &participantCountValid);
+        if (participantCountValid) {
+            visualRoomParticipantCount_ = std::clamp(requestedParticipantCount, 2, 8);
+        }
+        peerTelemetry_.state = jamlink::network::PeerConnectionState::Connected;
+        peerTelemetry_.roundTripMicroseconds = 15'000U;
+        peerTelemetry_.packetsSent = 2'840U;
+        peerTelemetry_.packetsReceived = 2'836U;
+        peerTelemetry_.streams[instrumentStream].peak = 0.72F;
+        peerTelemetry_.streams[instrumentStream].playing = true;
+        peerTelemetry_.streams[voiceStream].peak = 0.48F;
+        peerTelemetry_.streams[voiceStream].playing = true;
+        remoteParticipant_.profileId = "fixture:friend";
+        remoteParticipant_.handle = "mike";
+        remoteParticipant_.displayName = "Mike";
+        remoteParticipant_.avatarId = "avatar:guitar-electric";
+        remoteParticipant_.primaryInstrument = "Guitar";
+    }
+    if (visualFixture_ && currentPage_ == QStringLiteral("tuner")) {
+        tunerReading_ = {true, 329.25, 64, -2.0, 0.58F, 0.94F};
+    }
     if (!visualFixture_ && devicesAvailable_
         && (!restoredPreferences_ || restoredSetupAvailable_)) {
         audioRestartTimer_.start(0);
     }
     if (!visualFixture_) {
-        QTimer::singleShot(1'500, &updateManager_, &UpdateManager::checkNow);
+        // The first event-loop turn gives QML time to display, then version
+        // discovery begins without requiring the user to visit Settings.
+        QTimer::singleShot(0, &updateManager_, &UpdateManager::checkNow);
     }
 }
 
@@ -175,6 +202,10 @@ void AppController::setCurrentPage(const QString& page) {
         return;
     }
     if (page != currentPage_) {
+        if (page == QStringLiteral("tuner")) {
+            tunerReturnPage_ = currentPage_ == QStringLiteral("room")
+                ? QStringLiteral("room") : QStringLiteral("home");
+        }
         // Leaving the tuner always releases the tuner mute, so a user cannot
         // navigate away and silently stay muted to the room.
         if (currentPage_ == QStringLiteral("tuner")) {
@@ -509,6 +540,139 @@ QString AppController::remotePrimaryInstrument() const {
     return remoteParticipant_.primaryInstrument.empty()
         ? QStringLiteral("Musician")
         : QString::fromStdString(remoteParticipant_.primaryInstrument);
+}
+
+QVariantList AppController::roomParticipants() const {
+    QVariantList participants;
+    participants.reserve(visualRoomFixture_ ? visualRoomParticipantCount_ : 2);
+
+    QVariantMap local;
+    local.insert(QStringLiteral("participantId"), profileId());
+    local.insert(QStringLiteral("displayName"), QStringLiteral("You"));
+    local.insert(QStringLiteral("avatarId"), profileAvatarId());
+    local.insert(QStringLiteral("customAvatarSource"), profileCustomAvatarSource());
+    local.insert(QStringLiteral("instrument"), profilePrimaryInstrument());
+    local.insert(QStringLiteral("local"), true);
+    local.insert(QStringLiteral("present"), roomActive());
+    local.insert(QStringLiteral("stateLabel"), sendMuted_ ? QStringLiteral("MUTED")
+                                                          : QStringLiteral("LIVE"));
+    local.insert(QStringLiteral("accent"), QStringLiteral("#2ac59a"));
+    local.insert(QStringLiteral("surface"), QStringLiteral("#0e1819"));
+    local.insert(QStringLiteral("instrumentLevel"), instrumentLevel());
+    local.insert(QStringLiteral("voiceLevel"), voiceLevel());
+    local.insert(QStringLiteral("instrumentGain"), instrumentMonitorGain());
+    local.insert(QStringLiteral("voiceGain"), voiceMonitorGain());
+    local.insert(QStringLiteral("instrumentMuted"), sendMuted_);
+    local.insert(QStringLiteral("voiceMuted"), sendMuted_);
+    local.insert(QStringLiteral("controlsEnabled"), true);
+    participants.push_back(local);
+
+    QVariantMap remote;
+    const QString remoteId = remoteParticipant_.profileId.empty()
+        ? QStringLiteral("room:waiting-friend")
+        : QString::fromStdString(remoteParticipant_.profileId);
+    remote.insert(QStringLiteral("participantId"), remoteId);
+    remote.insert(QStringLiteral("displayName"), peerConnected()
+        ? remoteDisplayName() : QStringLiteral("Friend"));
+    remote.insert(QStringLiteral("avatarId"), remoteAvatarId().isEmpty()
+        ? QStringLiteral("avatar:listener") : remoteAvatarId());
+    remote.insert(QStringLiteral("customAvatarSource"), QUrl());
+    remote.insert(QStringLiteral("instrument"), peerConnected()
+        ? remotePrimaryInstrument() : QStringLiteral("Instrument"));
+    remote.insert(QStringLiteral("local"), false);
+    remote.insert(QStringLiteral("present"), peerConnected());
+    remote.insert(QStringLiteral("stateLabel"), peerConnected()
+        ? QStringLiteral("HERE") : QStringLiteral("WAITING"));
+    remote.insert(QStringLiteral("accent"), QStringLiteral("#a667e8"));
+    remote.insert(QStringLiteral("surface"), QStringLiteral("#15131b"));
+    remote.insert(QStringLiteral("instrumentLevel"), remoteInstrumentLevel());
+    remote.insert(QStringLiteral("voiceLevel"), remoteVoiceLevel());
+    remote.insert(QStringLiteral("instrumentGain"), remoteInstrumentGain());
+    remote.insert(QStringLiteral("voiceGain"), remoteVoiceGain());
+    remote.insert(QStringLiteral("instrumentMuted"), remoteInstrumentMuted_);
+    remote.insert(QStringLiteral("voiceMuted"), remoteVoiceMuted_);
+    remote.insert(QStringLiteral("controlsEnabled"), peerConnected());
+    participants.push_back(remote);
+
+    if (!visualRoomFixture_ && remoteParticipants_.size() > 1U) {
+        static const std::array<const char*, 6U> accents{
+            "#e7b84b", "#3f9ee8", "#e26f9f", "#dd7b45", "#72c16c", "#4cc4c0"};
+        for (std::size_t index = 1U; index < remoteParticipants_.size(); ++index) {
+            const auto& participant = remoteParticipants_[index];
+            QVariantMap additional;
+            additional.insert(QStringLiteral("participantId"),
+                QString::fromStdString(participant.profileId));
+            additional.insert(QStringLiteral("displayName"),
+                QString::fromStdString(participant.displayName));
+            additional.insert(QStringLiteral("avatarId"),
+                QString::fromStdString(participant.avatarId));
+            additional.insert(QStringLiteral("customAvatarSource"), QUrl());
+            additional.insert(QStringLiteral("instrument"),
+                QString::fromStdString(participant.primaryInstrument));
+            additional.insert(QStringLiteral("local"), false);
+            additional.insert(QStringLiteral("present"), true);
+            additional.insert(QStringLiteral("stateLabel"), QStringLiteral("HERE"));
+            additional.insert(QStringLiteral("accent"),
+                QString::fromLatin1(accents[(index - 1U) % accents.size()]));
+            additional.insert(QStringLiteral("surface"), QStringLiteral("#13171c"));
+            additional.insert(QStringLiteral("instrumentLevel"), 0.0);
+            additional.insert(QStringLiteral("voiceLevel"), 0.0);
+            additional.insert(QStringLiteral("instrumentGain"), 1.0);
+            additional.insert(QStringLiteral("voiceGain"), 1.0);
+            additional.insert(QStringLiteral("instrumentMuted"), false);
+            additional.insert(QStringLiteral("voiceMuted"), false);
+            additional.insert(QStringLiteral("controlsEnabled"), false);
+            participants.push_back(additional);
+        }
+    }
+
+    if (visualRoomFixture_) {
+        static const std::array<const char*, 6U> names{
+            "Chris", "Sam", "Riley", "Jordan", "Taylor", "Casey"};
+        static const std::array<const char*, 6U> instruments{
+            "Drums", "Bass", "Keys", "Vocals", "Guitar", "Synth"};
+        static const std::array<const char*, 6U> avatars{
+            "avatar:drums", "avatar:bass", "avatar:keys", "avatar:vocals",
+            "avatar:guitar-acoustic", "avatar:synth"};
+        static const std::array<const char*, 6U> accents{
+            "#e7b84b", "#3f9ee8", "#e26f9f", "#dd7b45", "#72c16c", "#4cc4c0"};
+        for (int index = 2; index < visualRoomParticipantCount_; ++index) {
+            const std::size_t fixtureIndex = static_cast<std::size_t>(index - 2);
+            QVariantMap fixture;
+            fixture.insert(QStringLiteral("participantId"),
+                QStringLiteral("fixture:participant-%1").arg(index + 1));
+            fixture.insert(QStringLiteral("displayName"),
+                QString::fromLatin1(names[fixtureIndex]));
+            fixture.insert(QStringLiteral("avatarId"),
+                QString::fromLatin1(avatars[fixtureIndex]));
+            fixture.insert(QStringLiteral("customAvatarSource"), QUrl());
+            fixture.insert(QStringLiteral("instrument"),
+                QString::fromLatin1(instruments[fixtureIndex]));
+            fixture.insert(QStringLiteral("local"), false);
+            fixture.insert(QStringLiteral("present"), true);
+            fixture.insert(QStringLiteral("stateLabel"), QStringLiteral("HERE"));
+            fixture.insert(QStringLiteral("accent"),
+                QString::fromLatin1(accents[fixtureIndex]));
+            fixture.insert(QStringLiteral("surface"), QStringLiteral("#13171c"));
+            fixture.insert(QStringLiteral("instrumentLevel"), 0.31 + index * 0.07);
+            fixture.insert(QStringLiteral("voiceLevel"), 0.18 + index * 0.04);
+            fixture.insert(QStringLiteral("instrumentGain"), 0.72);
+            fixture.insert(QStringLiteral("voiceGain"), 0.58);
+            fixture.insert(QStringLiteral("instrumentMuted"), false);
+            fixture.insert(QStringLiteral("voiceMuted"), false);
+            // Fixture-only people prove layout scaling. They deliberately do
+            // not expose working controls until a corresponding transport
+            // session exists.
+            fixture.insert(QStringLiteral("controlsEnabled"), false);
+            participants.push_back(fixture);
+        }
+    }
+    return participants;
+}
+
+int AppController::roomParticipantCount() const noexcept {
+    return visualRoomFixture_ ? visualRoomParticipantCount_
+                              : std::max(2, 1 + static_cast<int>(remoteParticipants_.size()));
 }
 
 QVariantList AppController::chatMessages() const { return chatMessages_; }
@@ -998,11 +1162,16 @@ QString AppController::outputSignalGuidance() const {
         : QStringLiteral("Monitor mix has headroom.");
 }
 
-bool AppController::roomActive() const noexcept { return peerTransport_ != nullptr; }
+bool AppController::roomActive() const noexcept {
+    return peerTransport_ != nullptr || visualRoomFixture_;
+}
 bool AppController::peerConnected() const noexcept {
     return peerTelemetry_.state == jamlink::network::PeerConnectionState::Connected;
 }
 QString AppController::roomStatus() const {
+    if (visualRoomFixture_) {
+        return QStringLiteral("Connected · encrypted small-room session · Excellent");
+    }
     if (!peerTransport_) {
         return QStringLiteral("No room session");
     }
@@ -1190,6 +1359,11 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 }
 
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
+
+void AppController::closeTuner() {
+    setCurrentPage(tunerReturnPage_ == QStringLiteral("room")
+        ? QStringLiteral("room") : QStringLiteral("home"));
+}
 
 void AppController::saveSoundcheck() {
     bool saved = false;
@@ -1400,6 +1574,7 @@ void AppController::leaveSession() {
     peerTransport_.reset();
     peerTelemetry_ = {};
     remoteParticipant_ = {};
+    remoteParticipants_.clear();
     inviteCode_.clear();
     sendMuted_ = false;
     if (audioService_ && devicesAvailable_) {
@@ -1459,6 +1634,40 @@ void AppController::markChatRead() {
     emit chatChanged();
 }
 
+void AppController::setRoomParticipantStreamGain(
+    const QString& participantId, const QString& stream, double gain) {
+    if (participantId == profileId()) {
+        if (stream == QStringLiteral("instrument")) {
+            setInstrumentMonitorGain(gain);
+        } else if (stream == QStringLiteral("voice")) {
+            setVoiceMonitorGain(gain);
+        }
+        return;
+    }
+    if (remoteParticipant_.profileId.empty()
+        || participantId != QString::fromStdString(remoteParticipant_.profileId)) {
+        return;
+    }
+    if (stream == QStringLiteral("instrument")) {
+        setRemoteInstrumentGain(gain);
+    } else if (stream == QStringLiteral("voice")) {
+        setRemoteVoiceGain(gain);
+    }
+}
+
+void AppController::setRoomParticipantStreamMuted(
+    const QString& participantId, const QString& stream, bool muted) {
+    if (remoteParticipant_.profileId.empty()
+        || participantId != QString::fromStdString(remoteParticipant_.profileId)) {
+        return;
+    }
+    if (stream == QStringLiteral("instrument")) {
+        setRemoteInstrumentMuted(muted);
+    } else if (stream == QStringLiteral("voice")) {
+        setRemoteVoiceMuted(muted);
+    }
+}
+
 void AppController::appendChatEntry(
     const QString& sender,
     const QString& handle,
@@ -1488,6 +1697,22 @@ void AppController::processRoomControlEvents() {
     }
     bool roomUpdated = false;
     bool chatUpdated = false;
+    const auto rememberParticipant = [this](
+        const jamlink::network::PeerParticipantInfo& participant) {
+        if (participant.profileId.empty()) {
+            return;
+        }
+        const auto existing = std::find_if(
+            remoteParticipants_.begin(), remoteParticipants_.end(),
+            [&participant](const auto& value) {
+                return value.profileId == participant.profileId;
+            });
+        if (existing != remoteParticipants_.end()) {
+            *existing = participant;
+        } else if (remoteParticipants_.size() < 12U) {
+            remoteParticipants_.push_back(participant);
+        }
+    };
     for (const auto& event : peerTransport_->takeControlEvents()) {
         const QString displayName = event.participant.displayName.empty()
             ? QStringLiteral("Friend")
@@ -1495,6 +1720,7 @@ void AppController::processRoomControlEvents() {
         switch (event.type) {
         case jamlink::network::RoomControlEventType::PeerJoined:
             remoteParticipant_ = event.participant;
+            rememberParticipant(event.participant);
             appendChatEntry(
                 QString(), QString(), displayName + QStringLiteral(" joined"),
                 event.timestampMilliseconds, false, true);
@@ -1502,6 +1728,14 @@ void AppController::processRoomControlEvents() {
             chatUpdated = true;
             break;
         case jamlink::network::RoomControlEventType::PeerLeft:
+            std::erase_if(remoteParticipants_, [&event](const auto& participant) {
+                return participant.profileId == event.participant.profileId;
+            });
+            if (remoteParticipant_.profileId == event.participant.profileId) {
+                remoteParticipant_ = remoteParticipants_.empty()
+                    ? jamlink::network::PeerParticipantInfo{}
+                    : remoteParticipants_.front();
+            }
             appendChatEntry(
                 QString(), QString(), displayName + QStringLiteral(" left"),
                 event.timestampMilliseconds, false, true);
@@ -1510,6 +1744,7 @@ void AppController::processRoomControlEvents() {
             break;
         case jamlink::network::RoomControlEventType::ChatMessage:
             remoteParticipant_ = event.participant;
+            rememberParticipant(event.participant);
             appendChatEntry(
                 displayName, QString::fromStdString(event.participant.handle),
                 QString::fromStdString(event.text), event.timestampMilliseconds,
@@ -1528,6 +1763,7 @@ void AppController::processRoomControlEvents() {
             remoteParticipant_ = event.participant;
             setupMessage_ = QStringLiteral(
                 "Your friend is using a different JamLink build; both people must update");
+            updateManager_.checkNow();
             roomUpdated = true;
             break;
         }

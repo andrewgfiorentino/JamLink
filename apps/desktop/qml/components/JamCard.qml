@@ -3,8 +3,8 @@
 import QtQuick
 
 Rectangle {
-    color: "#11171c"
-    border.color: "#242d33"
+    color: Theme.surface
+    border.color: Theme.border
     border.width: 1
-    radius: 13
+    radius: Theme.radiusCard
 }

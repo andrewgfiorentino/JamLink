@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2-test — 2026-08-13
+
+- Moved update discovery to application launch and added a prominent in-app Update & Restart flow using the existing verified replacement helper.
+- Rebuilt Home, Room, and Tuner around the approved dark premium visual direction and centralized reusable visual tokens.
+- Fixed the Home Start/Join action cards, successful Sound Check navigation, and tuner return navigation for an active room.
+- Added responsive data-driven participant cards with automated two- and four-musician layouts; an additional invite attempt cannot displace an active encrypted peer.
+- Kept device selections, gains, monitor choices, profile, recording location, network preferences, and window placement persistent across restarts and updates.
+- Expanded updater, controller, QML, high-DPI, multi-participant visual, and real-socket network regression coverage.
+
 ## 0.3.1-test — 2026-08-13
 
 - Removed the extra Windows console from the packaged desktop application.

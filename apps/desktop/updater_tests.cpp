@@ -33,6 +33,15 @@ int main(int argc, char* argv[]) {
         ]
       },
       {
+        "tag_name":"v0.3.2-test",
+        "draft":false,
+        "published_at":"2026-08-13T00:00:00Z",
+        "assets":[
+          {"name":"JamLink-0.3.2-test-windows-x64.zip","browser_download_url":"https://example/test-032.zip","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+          {"name":"JamLink-0.3.2-test-windows-x64.zip.sha256","browser_download_url":"https://example/test-032.sha256"}
+        ]
+      },
+      {
         "tag_name":"v0.3.1-test",
         "draft":false,
         "published_at":"2026-08-11T00:00:00Z",
@@ -44,15 +53,19 @@ int main(int argc, char* argv[]) {
     ])json";
     const auto candidate = jamlink::desktop::selectUpdateCandidate(
         releases, QStringLiteral("0.3.0"), QStringLiteral("test"));
-    passed = expect(candidate.version == QStringLiteral("0.3.1"),
-                    "0.3.0 tester selects the updater-compatible 0.3.1 release") && passed;
-    passed = expect(candidate.archiveUrl == QUrl(QStringLiteral("https://example/test.zip")),
+    passed = expect(candidate.version == QStringLiteral("0.3.2"),
+                    "0.3.0 tester selects the latest updater-compatible release") && passed;
+    passed = expect(candidate.archiveUrl == QUrl(QStringLiteral("https://example/test-032.zip")),
                     "archive URL is selected by exact package name") && passed;
     passed = expect(candidate.apiDigest.size() == 64,
                     "GitHub API digest is retained") && passed;
     const auto none = jamlink::desktop::selectUpdateCandidate(
-        releases, QStringLiteral("0.3.1"), QStringLiteral("test"));
+        releases, QStringLiteral("0.3.2"), QStringLiteral("test"));
     passed = expect(none.version.isEmpty(), "current version is not offered again") && passed;
+    const auto previousBuild = jamlink::desktop::selectUpdateCandidate(
+        releases, QStringLiteral("0.3.1"), QStringLiteral("test"));
+    passed = expect(previousBuild.version == QStringLiteral("0.3.2"),
+                    "0.3.1 tester is offered the launch-prompt release") && passed;
 
     const QByteArray digest = jamlink::desktop::parseSha256(
         QByteArray(64, 'a') + "  JamLink.zip\n");

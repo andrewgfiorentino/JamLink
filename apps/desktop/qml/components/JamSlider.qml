@@ -20,7 +20,7 @@ Slider {
             width: control.visualPosition * parent.width
             height: parent.height
             radius: parent.radius
-            color: "#8342ca"
+            color: Theme.accentBright
         }
     }
 

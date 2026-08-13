@@ -2,11 +2,11 @@
 
 JamLink-owned code is licensed under GPL-3.0-or-later. This Windows test package combines it with Qt 6.10.3 selected under GPL-3.0-only and Steinberg ASIO SDK interface files selected under GPL version 3, so the combined executable is conveyed under GNU GPL version 3. `LICENSE`, `NOTICE`, `THIRD_PARTY_LICENSES.md`, and the ASIO SDK license are included beside the executable.
 
-The exact JamLink corresponding source and build scripts are included beside the executable as `JamLink-0.3.1-source.zip`. `SOURCE_COMMIT.txt` identifies the Git commit used to generate it. They are also available at:
+The exact JamLink corresponding source and build scripts are included beside the executable as `JamLink-0.3.2-source.zip`. `SOURCE_COMMIT.txt` identifies the Git commit used to generate it. They are also available at:
 
 <https://github.com/andrewgfiorentino/JamLink>
 
-Use the `v0.3.1-test` source tag. The package manifest allows every distributed file, including the source archive, to be verified without relying on the remote repository.
+Use the `v0.3.2-test` source tag. The package manifest allows every distributed file, including the source archive, to be verified without relying on the remote repository.
 
 Official Qt 6.10.3 corresponding source archives used by this build:
 

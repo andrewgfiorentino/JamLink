@@ -9,23 +9,23 @@ Button {
     property url iconSource
     property Gradient primaryGradient: Gradient {
         orientation: Gradient.Horizontal
-        GradientStop { position: 0.0; color: "#4d269e" }
-        GradientStop { position: 1.0; color: "#8342ca" }
+        GradientStop { position: 0.0; color: "#5126a2" }
+        GradientStop { position: 1.0; color: Theme.accentBright }
     }
     hoverEnabled: true
     implicitHeight: 38
-    font.family: "Segoe UI"
+    font.family: Theme.fontFamily
     font.pixelSize: 13
     font.weight: Font.Medium
 
     background: Rectangle {
-        radius: 10
+        radius: Theme.radiusControl
         border.width: control.primary ? 0 : 1
-        border.color: control.activeFocus ? "#8b56df" : "#313b42"
+        border.color: control.activeFocus ? Theme.accentBright : Theme.border
         gradient: control.primary && control.enabled ? control.primaryGradient : null
         color: control.primary
             ? (control.down ? "#5729a8" : control.hovered ? "#7d40d0" : "#6a35bd")
-            : (control.down ? "#1b252b" : control.hovered ? "#171f25" : "#11171b")
+            : (control.down ? "#1b252b" : control.hovered ? Theme.hover : Theme.surfaceNested)
     }
 
     contentItem: Row {

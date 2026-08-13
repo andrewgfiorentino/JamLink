@@ -651,6 +651,40 @@ void rejectsIncompatibleApplicationBuild() {
     guest->stop();
 }
 
+void additionalGuestCannotDisplaceActivePerformer() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    auto additionalGuest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest || !additionalGuest) {
+        check(false, "additional-guest isolation harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    guest->setLocalParticipant(participant("profile-guest", "Mike"));
+    additionalGuest->setLocalParticipant(participant("profile-extra", "Chris"));
+    const std::string invite = forceLoopback(host->host(0U, false));
+    const bool connected = !invite.empty() && guest->join(invite)
+        && waitForConnected(*host, *guest);
+    check(connected, "first performer connects before an additional join");
+    if (!connected) {
+        return;
+    }
+
+    check(additionalGuest->join(invite), "additional performer can attempt the room invite");
+    std::this_thread::sleep_for(std::chrono::milliseconds(750));
+    check(host->telemetry().state == PeerConnectionState::Connected
+              && guest->telemetry().state == PeerConnectionState::Connected,
+          "additional join never displaces the active performer");
+    check(host->remoteParticipant().profileId == "profile-guest",
+          "host keeps the original authenticated participant identity");
+    check(exchangeAudio(*host, *guest),
+          "active two-person audio continues during an additional join attempt");
+
+    additionalGuest->stop();
+    host->stop();
+    guest->stop();
+}
+
 } // namespace
 
 int main() {
@@ -669,6 +703,7 @@ int main() {
     reconnectsAfterGuestRestart();
     negotiatesExactBuildAndExchangesReliableChat();
     rejectsIncompatibleApplicationBuild();
+    additionalGuestCannotDisplaceActivePerformer();
 
     static_cast<void>(WSACleanup());
     std::cout << (failures == 0U ? "all peer transport checks passed\n"

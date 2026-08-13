@@ -32,12 +32,12 @@ Item {
                     const active = segment.index
                         < Math.round(root.displayedLevel * root.segmentCount)
                     if (!active)
-                        return "#20292e"
+                        return Theme.borderSoft
                     if (segment.index > root.segmentCount * 0.92)
-                        return "#ef4c43"
+                        return Theme.error
                     if (segment.index > root.segmentCount * 0.72)
-                        return "#d2cd31"
-                    return segment.index > root.segmentCount * 0.56 ? "#8bd334" : "#31d052"
+                        return Theme.warning
+                    return segment.index > root.segmentCount * 0.56 ? "#94d43d" : Theme.connected
                 }
                 opacity: segment.index % 3 === 0 ? 1.0 : 0.88
             }

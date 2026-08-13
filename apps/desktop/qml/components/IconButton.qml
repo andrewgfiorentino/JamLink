@@ -6,15 +6,15 @@ import QtQuick.Controls.Basic
 Button {
     id: control
     property url iconSource
-    property color iconColor: control.enabled ? "#e7ebee" : "#667079"
+    property color iconColor: control.enabled ? Theme.text : Theme.textMuted
     implicitWidth: 34
     implicitHeight: 34
     hoverEnabled: true
 
     background: Rectangle {
-        radius: 10
-        color: control.down ? "#202a31" : control.hovered ? "#172027" : "transparent"
-        border.color: control.activeFocus ? "#8b56df" : "transparent"
+        radius: Theme.radiusControl
+        color: control.down ? "#202a31" : control.hovered ? Theme.hover : "transparent"
+        border.color: control.activeFocus ? Theme.accentBright : "transparent"
     }
 
     contentItem: JamIcon {
