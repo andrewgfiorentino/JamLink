@@ -130,7 +130,7 @@ class DirectoryStateTests(unittest.TestCase):
         self.clock.advance(46.0)
         self.assertEqual(self.state.online_count(), 0)
 
-    def test_private_room_name_is_unique_unlisted_and_requires_host_admission(self) -> None:
+    def test_private_invite_code_is_ephemeral_unlisted_and_requires_admission(self) -> None:
         room_payload = {
             "code": "thewonderyears",
             "invite_code": "JL1|203.0.113.2|45000|" + "b" * 64,
@@ -142,7 +142,7 @@ class DirectoryStateTests(unittest.TestCase):
         }
         created = self.state.create_private_room(room_payload)
         self.assertEqual(created.status, 201)
-        self.assertEqual(created.payload["code"], "THEWONDERYEARS")
+        self.assertEqual(created.payload["code"], "thewonderyears")
         owner_token = str(created.payload["owner_token"])
 
         self.assertEqual(self.state.list_lobbies().payload["lobbies"], [])
@@ -300,6 +300,58 @@ class DirectoryStateTests(unittest.TestCase):
         self.assertTrue(self.state.expire())
         self.assertEqual(self.state.private_rooms, {})
         self.assertEqual(self.state.private_requests, {})
+        reused = self.state.create_private_room({
+            "code": "band-practice",
+            "invite_code": "JL1|198.51.100.7|45001|" + "e" * 64,
+            "application_version": "0.3.3",
+            "build_identity": "e" * 40,
+            "release_channel": "test",
+            "media_protocol": 2,
+            "control_protocol": 1,
+        })
+        self.assertEqual(reused.status, 201)
+        self.assertEqual(reused.payload["code"], "band-practice")
+
+    def test_private_invite_code_validation_case_matching_and_display(self) -> None:
+        compatibility = {
+            "application_version": "0.3.3",
+            "build_identity": "9" * 40,
+            "release_channel": "test",
+            "media_protocol": 2,
+            "control_protocol": 1,
+        }
+        invite = "JL1|198.51.100.9|45009|" + "9" * 64
+        code = "Andrew_Mike"
+        created = self.state.create_private_room({
+            **compatibility, "code": code, "invite_code": invite
+        })
+        self.assertEqual(created.status, 201)
+        self.assertEqual(created.payload["code"], code)
+        self.assertEqual(
+            self.state.create_private_room({
+                **compatibility, "code": "andrew_mike", "invite_code": invite
+            }).status,
+            409,
+        )
+        self.assertEqual(
+            self.state.request_private_room("ANDREW_MIKE", compatibility).status,
+            201,
+        )
+        maximum = "A_" + "B" * 62
+        self.assertEqual(len(maximum), 64)
+        self.assertEqual(
+            self.state.create_private_room({
+                **compatibility, "code": maximum, "invite_code": invite
+            }).status,
+            201,
+        )
+        for invalid in ("abc", "A" * 65, "has space", "has.dot", "JAMLINK"):
+            self.assertEqual(
+                self.state.create_private_room({
+                    **compatibility, "code": invalid, "invite_code": invite
+                }).status,
+                400,
+            )
 
     def test_private_room_http_routes_never_reveal_invite_before_admission(self) -> None:
         server = DirectoryServer(self.state)

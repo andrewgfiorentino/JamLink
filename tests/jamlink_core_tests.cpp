@@ -391,6 +391,61 @@ JAMLINK_TEST(level_meter_reports_rms_peak_and_clip_latch) {
     EXPECT_TRUE(!meter.snapshot().clipped);
 }
 
+JAMLINK_TEST(native_input_risk_and_silent_clip_self_test_latch_without_audio_changes) {
+    jamlink::audio::LevelMeter nativeInput(
+        jamlink::audio::LevelMeter::nativeInputClipThreshold,
+        jamlink::audio::LevelMeter::nativeInputRiskThreshold,
+        jamlink::audio::LevelMeter::nativeInputRiskSampleCount);
+
+    constexpr float healthyHot = 0.977237F; // -0.2 dBFS
+    constexpr float effectivelyFullScale = 0.989F;
+    nativeInput.process(std::array{healthyHot, -healthyHot, healthyHot});
+    EXPECT_TRUE(!nativeInput.snapshot().clipped);
+
+    nativeInput.process(std::array{effectivelyFullScale, 0.0F});
+    nativeInput.process(std::array{-effectivelyFullScale, 0.0F});
+    EXPECT_TRUE(!nativeInput.snapshot().clipped);
+    nativeInput.process(std::array{effectivelyFullScale, 0.0F});
+    const auto risk = nativeInput.snapshot();
+    EXPECT_TRUE(risk.clipped);
+    EXPECT_TRUE(risk.nearFullScaleRisk);
+    EXPECT_TRUE(!risk.diagnosticClip);
+    EXPECT_TRUE(risk.clipSampleCount == 0U);
+    EXPECT_TRUE(risk.clipEventCount == 0U);
+
+    nativeInput.process(std::array{0.0F, 0.0F});
+    EXPECT_TRUE(nativeInput.snapshot().clipped);
+    nativeInput.clearClipLatch();
+    nativeInput.process(std::array{0.0F, 0.0F});
+    EXPECT_TRUE(!nativeInput.snapshot().clipped);
+    EXPECT_TRUE(!nativeInput.snapshot().nearFullScaleRisk);
+
+    jamlink::audio::LevelMeter diagnostic;
+    constexpr std::array silence{0.0F, 0.0F, 0.0F, 0.0F};
+    trackedAllocationCount.store(0U, std::memory_order_relaxed);
+    allocationTrackingEnabled.store(true, std::memory_order_release);
+    diagnostic.requestClipSelfTest();
+    diagnostic.process(silence);
+    allocationTrackingEnabled.store(false, std::memory_order_release);
+    const auto tested = diagnostic.snapshot();
+    EXPECT_TRUE(trackedAllocationCount.load(std::memory_order_relaxed) == 0U);
+    EXPECT_TRUE(tested.clipped);
+    EXPECT_TRUE(tested.diagnosticClip);
+    EXPECT_TRUE(tested.clipSampleCount == 0U);
+    EXPECT_TRUE(tested.clipEventCount == 0U);
+    diagnostic.clearClipLatch();
+    diagnostic.process(silence);
+    EXPECT_TRUE(!diagnostic.snapshot().clipped);
+    EXPECT_TRUE(!diagnostic.snapshot().diagnosticClip);
+
+    diagnostic.requestClipSelfTest();
+    diagnostic.process(std::array{1.0F, 0.0F});
+    const auto realClipWins = diagnostic.snapshot();
+    EXPECT_TRUE(realClipWins.clipped);
+    EXPECT_TRUE(!realClipWins.diagnosticClip);
+    EXPECT_TRUE(realClipWins.clipSampleCount == 1U);
+}
+
 JAMLINK_TEST(signal_health_distinguishes_hot_clip_internal_and_mix_overload) {
     constexpr float minusSixDbfs = 0.501187F;
     jamlink::audio::LevelMeter guitarInput(

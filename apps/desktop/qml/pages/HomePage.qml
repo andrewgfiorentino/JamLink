@@ -228,7 +228,7 @@ Item {
                     width: (parent.width - parent.spacing) / 2
                     height: parent.height
                     title: "Join a Friend"
-                    detail: "Enter a private room name or invite"
+                    detail: "Enter a temporary code or full invite"
                     icon: "music_note.svg"
                     enabled: root.canJam
                     onActivated: root.joinExpanded = !root.joinExpanded
@@ -238,17 +238,31 @@ Item {
             JamCard {
                 visible: root.createExpanded
                 width: parent.width
-                height: visible ? 116 : 0
+                height: visible ? 146 : 0
                 Column {
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 8
-                    Text {
-                        text: "PRIVATE ROOM NAME"
-                        color: Theme.textSecondary
-                        font.family: Theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.DemiBold
+                    Row {
+                        width: parent.width
+                        height: 28
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width - randomCodeButton.width
+                            text: "TEMPORARY PRIVATE INVITE CODE"
+                            color: Theme.textSecondary
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 9
+                            font.weight: Font.DemiBold
+                        }
+                        JamButton {
+                            id: randomCodeButton
+                            width: 112
+                            height: 28
+                            text: "Generate Random"
+                            onClicked: roomNameField.text =
+                                root.controller.generatePrivateInviteCode()
+                        }
                     }
                     Row {
                         width: parent.width
@@ -257,12 +271,14 @@ Item {
                             id: roomNameField
                             width: parent.width - namedHostButton.width - 8
                             height: 40
-                            placeholderText: "THEWONDERYEARS"
-                            maximumLength: 32
+                            placeholderText: "andrew-mike"
+                            maximumLength: 64
+                            validator: RegularExpressionValidator {
+                                regularExpression: /[A-Za-z0-9_-]{0,64}/
+                            }
                             color: Theme.text
                             placeholderTextColor: Theme.textMuted
                             selectionColor: Theme.accent
-                            font.capitalization: Font.AllUppercase
                             font.family: Theme.fontFamily
                             font.pixelSize: 10
                             background: Rectangle {
@@ -273,7 +289,7 @@ Item {
                             }
                             Keys.onReturnPressed: event => {
                                 if (roomNameField.text.trim().length >= 4)
-                                    root.controller.hostNamedSession(roomNameField.text)
+                                    root.controller.hostInviteCodeSession(roomNameField.text)
                                 event.accepted = true
                             }
                         }
@@ -285,11 +301,11 @@ Item {
                             text: root.controller.privateRoomBusy ? "Creating…" : "Create"
                             enabled: !root.controller.privateRoomBusy
                                 && roomNameField.text.trim().length >= 4
-                            onClicked: root.controller.hostNamedSession(roomNameField.text)
+                            onClicked: root.controller.hostInviteCodeSession(roomNameField.text)
                         }
                     }
                     Text {
-                        text: "Private and unlisted · your friend asks to enter"
+                        text: "Expires when this jam ends · private and unlisted"
                         color: Theme.textMuted
                         font.family: Theme.fontFamily
                         font.pixelSize: 9
@@ -310,7 +326,7 @@ Item {
                         width: parent.width - joinButton.width - 8
                         height: 40
                         placeholderText: root.controller.privateRoomCodesAvailable
-                            ? "Room name or full JL1 invite" : "Paste the full JL1 invite"
+                            ? "Temporary code or full JL1 invite" : "Paste the full JL1 invite"
                         color: Theme.text
                         placeholderTextColor: Theme.textMuted
                         selectionColor: Theme.accent

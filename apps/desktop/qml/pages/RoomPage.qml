@@ -178,7 +178,7 @@ Item {
                                 && root.controller.privateRoomCode.length > 0
                                 ? "No room audio was shared. Leave to return home."
                             : root.controller.privateRoomCode.length > 0
-                                ? "Tell your friend this room name. Their request appears quietly here."
+                                ? "Tell your friend this temporary code. Their request appears quietly here."
                                 : "Your friend can paste this code on Home. Keep JamLink open."
                         color: Theme.textMuted
                         wrapMode: Text.WordWrap

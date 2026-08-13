@@ -330,8 +330,12 @@ public:
     Q_INVOKABLE void clearInstrumentClipping();
     Q_INVOKABLE void clearVoiceClipping();
     Q_INVOKABLE void clearOutputClipping();
+    Q_INVOKABLE void testInstrumentClipping();
+    Q_INVOKABLE void testVoiceClipping();
+    Q_INVOKABLE void testOutputClipping();
     Q_INVOKABLE void hostSession();
-    Q_INVOKABLE void hostNamedSession(const QString& roomCode);
+    Q_INVOKABLE QString generatePrivateInviteCode() const;
+    Q_INVOKABLE void hostInviteCodeSession(const QString& roomCode);
     Q_INVOKABLE void joinSession(const QString& inviteCode);
     Q_INVOKABLE void decideWaitingRequest(const QString& requestId, bool admit);
     Q_INVOKABLE void leaveSession();

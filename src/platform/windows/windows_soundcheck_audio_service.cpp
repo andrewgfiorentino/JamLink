@@ -135,6 +135,12 @@ public:
         }
     }
 
+    void requestSignalHealthSelfTest(SignalHealthPath path) noexcept override {
+        if (active_ != nullptr) {
+            active_->requestSignalHealthSelfTest(path);
+        }
+    }
+
     [[nodiscard]] SoundcheckAudioTelemetry telemetry() const noexcept override {
         return active_ != nullptr ? active_->telemetry() : lastTelemetry_;
     }

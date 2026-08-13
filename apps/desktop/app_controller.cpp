@@ -10,6 +10,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
+#include <QRandomGenerator>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QUuid>
@@ -1118,6 +1119,12 @@ QString AppController::signalStatus(
         return QStringLiteral("UNAVAILABLE");
     }
     if (health.clipped || health.invalidSamples != 0U) {
+        if (health.diagnosticClip) {
+            return QStringLiteral("TEST CLIP");
+        }
+        if (health.nearFullScaleRisk) {
+            return QStringLiteral("CLIP RISK");
+        }
         return QStringLiteral("CLIPPING");
     }
     if (health.currentPeak < 1.0e-5F) {
@@ -1155,6 +1162,19 @@ QString AppController::outputSignalStatus() const {
 }
 
 QString AppController::instrumentSignalGuidance() const {
+    if (audioTelemetry_.instrumentInput.clipped
+        && audioTelemetry_.instrumentInput.diagnosticClip) {
+        return QStringLiteral("INDICATOR TEST · Click the red CLIP control to reset.");
+    }
+    if (audioTelemetry_.instrumentInput.clipped
+        && audioTelemetry_.instrumentInput.nearFullScaleRisk) {
+        const QString device = validIndex(instrumentIndex_, instrumentOptions_.size())
+            ? instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].displayName
+            : QStringLiteral("your interface input");
+        return QStringLiteral(
+            "INPUT AT FULL SCALE · Lower %1 hardware gain, reset, and try again.")
+            .arg(device);
+    }
     if (instrumentInputClipped()) {
         const QString device = validIndex(instrumentIndex_, instrumentOptions_.size())
             ? instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].displayName
@@ -1168,6 +1188,19 @@ QString AppController::instrumentSignalGuidance() const {
     return QStringLiteral("Play your loudest chords; green or amber is healthy.");
 }
 QString AppController::voiceSignalGuidance() const {
+    if (audioTelemetry_.voiceInput.clipped
+        && audioTelemetry_.voiceInput.diagnosticClip) {
+        return QStringLiteral("INDICATOR TEST · Click the red CLIP control to reset.");
+    }
+    if (audioTelemetry_.voiceInput.clipped
+        && audioTelemetry_.voiceInput.nearFullScaleRisk) {
+        const QString device = validIndex(voiceIndex_, voiceOptions_.size())
+            ? voiceOptions_[static_cast<std::size_t>(voiceIndex_)].displayName
+            : QStringLiteral("your microphone input");
+        return QStringLiteral(
+            "INPUT AT FULL SCALE · Lower %1 hardware gain, reset, and try again.")
+            .arg(device);
+    }
     if (voiceInputClipped()) {
         const QString device = validIndex(voiceIndex_, voiceOptions_.size())
             ? voiceOptions_[static_cast<std::size_t>(voiceIndex_)].displayName
@@ -1181,6 +1214,10 @@ QString AppController::voiceSignalGuidance() const {
     return QStringLiteral("Speak or sing at your loudest expected level.");
 }
 QString AppController::outputSignalGuidance() const {
+    if (audioTelemetry_.monitorMix.clipped
+        && audioTelemetry_.monitorMix.diagnosticClip) {
+        return QStringLiteral("INDICATOR TEST · Click the red CLIP control to reset.");
+    }
     return outputClipped()
         ? QStringLiteral(
             "MONITOR MIX TOO HOT · Reduce one or more listening levels, then reset.")
@@ -1522,6 +1559,41 @@ void AppController::clearOutputClipping() {
     emit setupChanged();
 }
 
+void AppController::testInstrumentClipping() {
+    if (visualFixture_) {
+        visualClipFixture_ = true;
+        emit setupChanged();
+        return;
+    }
+    if (!audioService_ || !audioActive()) {
+        return;
+    }
+    audioService_->requestSignalHealthSelfTest(
+        jamlink::audio::SignalHealthPath::InstrumentInput);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
+}
+
+void AppController::testVoiceClipping() {
+    if (!audioService_ || !audioActive()) {
+        return;
+    }
+    audioService_->requestSignalHealthSelfTest(
+        jamlink::audio::SignalHealthPath::VoiceInput);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
+}
+
+void AppController::testOutputClipping() {
+    if (!audioService_ || !audioActive()) {
+        return;
+    }
+    audioService_->requestSignalHealthSelfTest(
+        jamlink::audio::SignalHealthPath::MonitorMix);
+    audioTelemetry_ = audioService_->telemetry();
+    emit setupChanged();
+}
+
 void AppController::hostSession() {
     if (visualFixture_ || !audioService_ || !audioActive() || !allReady()) {
         setupMessage_ = QStringLiteral("Verify the real private audio setup before hosting");
@@ -1569,10 +1641,31 @@ void AppController::hostSession() {
     emit roomChanged();
 }
 
-void AppController::hostNamedSession(const QString& roomCode) {
+QString AppController::generatePrivateInviteCode() const {
+    constexpr char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    constexpr qsizetype alphabetLength = static_cast<qsizetype>(sizeof(alphabet) - 1U);
+    QString code;
+    code.reserve(9);
+    QRandomGenerator* const generator = QRandomGenerator::system();
+    for (qsizetype index = 0; index < 8; ++index) {
+        if (index == 4) {
+            code.push_back(QLatin1Char('-'));
+        }
+        code.push_back(QLatin1Char(alphabet[generator->bounded(alphabetLength)]));
+    }
+    return code;
+}
+
+void AppController::hostInviteCodeSession(const QString& roomCode) {
     if (!roomDirectory_.available()) {
         setupMessage_ = QStringLiteral(
-            "Private room names need the JamLink directory service; use the direct invite");
+            "Temporary invite codes are unavailable; use the full direct invite");
+        emit setupChanged();
+        return;
+    }
+    if (!roomDirectory_.acceptsCode(roomCode)) {
+        setupMessage_ = QStringLiteral(
+            "Use 4-64 letters, numbers, hyphens, or underscores for the invite code");
         emit setupChanged();
         return;
     }
@@ -1593,7 +1686,13 @@ void AppController::joinSession(const QString& inviteCode) {
     if (!normalized.startsWith(QStringLiteral("JL1|"), Qt::CaseInsensitive)) {
         if (!roomDirectory_.available()) {
             setupMessage_ = QStringLiteral(
-                "Private room names are unavailable; paste the full direct invite");
+                "Temporary invite codes are unavailable; paste the full direct invite");
+            emit setupChanged();
+            return;
+        }
+        if (!roomDirectory_.acceptsCode(normalized)) {
+            setupMessage_ = QStringLiteral(
+                "Enter a valid 4-64 character temporary invite code");
             emit setupChanged();
             return;
         }

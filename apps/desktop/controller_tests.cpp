@@ -6,6 +6,7 @@
 #include <QColor>
 #include <QImage>
 #include <QImageReader>
+#include <QRegularExpression>
 #include <QUrl>
 
 #include <cmath>
@@ -136,6 +137,38 @@ public:
             break;
         }
     }
+    void requestSignalHealthSelfTest(
+        jamlink::audio::SignalHealthPath path) noexcept override {
+        ++selfTestHealthCount;
+        jamlink::audio::SignalHealthTelemetry* health = nullptr;
+        switch (path) {
+        case jamlink::audio::SignalHealthPath::InstrumentInput:
+            health = &current.instrumentInput;
+            break;
+        case jamlink::audio::SignalHealthPath::VoiceInput:
+            health = &current.voiceInput;
+            break;
+        case jamlink::audio::SignalHealthPath::InstrumentSend:
+            health = &current.instrumentSend;
+            break;
+        case jamlink::audio::SignalHealthPath::VoiceSend:
+            health = &current.voiceSend;
+            break;
+        case jamlink::audio::SignalHealthPath::MonitorMix:
+            health = &current.monitorMix;
+            break;
+        case jamlink::audio::SignalHealthPath::RecordingInstrument:
+            health = &current.recordingInstrument;
+            break;
+        case jamlink::audio::SignalHealthPath::RecordingVoice:
+            health = &current.recordingVoice;
+            break;
+        }
+        if (health != nullptr) {
+            health->clipped = true;
+            health->diagnosticClip = true;
+        }
+    }
     [[nodiscard]] jamlink::audio::SoundcheckAudioTelemetry telemetry() const noexcept override {
         return current;
     }
@@ -159,6 +192,7 @@ public:
         jamlink::audio::VoiceEndpointChangeResult::Applied};
     std::size_t replacementCount{0U};
     std::size_t clearHealthCount{0U};
+    std::size_t selfTestHealthCount{0U};
     bool injectInstrumentClipOnStart{false};
 };
 
@@ -184,7 +218,16 @@ int main(int argc, char* argv[]) {
     std::filesystem::remove_all(directory, cleanupError);
 
     jamlink::desktop::AppController first(path, true, QStringLiteral("auto"), 0U, 0U);
-    bool passed = expect(!first.restoredPreferences(), "first launch starts without restored state");
+    bool passed = true;
+    const QRegularExpression randomInvitePattern(
+        QStringLiteral("^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}-"
+                       "[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$"));
+    for (int index = 0; index < 32; ++index) {
+        passed = expect(randomInvitePattern.match(first.generatePrivateInviteCode()).hasMatch(),
+            "generated temporary invite codes are short and unambiguous") && passed;
+    }
+    passed = expect(!first.restoredPreferences(), "first launch starts without restored state")
+        && passed;
     passed = expect(first.currentPage() == QStringLiteral("soundcheck"),
                     "first launch routes to private Sound Check")
         && passed;
@@ -481,6 +524,19 @@ int main(int argc, char* argv[]) {
     passed = expect(!clipped.instrumentInputClipped()
                         && clippedServiceView->clearHealthCount == 2U,
                     "source reset clears both input and send latches")
+        && passed;
+    clipped.testInstrumentClipping();
+    passed = expect(clipped.instrumentInputClipped()
+                        && clipped.instrumentSignalStatus() == QStringLiteral("TEST CLIP")
+                        && clipped.instrumentSignalGuidance().contains(
+                            QStringLiteral("INDICATOR TEST"))
+                        && clippedServiceView->selfTestHealthCount == 1U,
+                    "silent self-test exercises the visible input clip latch")
+        && passed;
+    clipped.clearInstrumentClipping();
+    passed = expect(!clipped.instrumentInputClipped()
+                        && clippedServiceView->clearHealthCount == 4U,
+                    "self-test clip resets through the same source controls")
         && passed;
     clipped.saveSoundcheck();
     passed = expect(clipped.allReady()

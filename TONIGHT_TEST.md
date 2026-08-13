@@ -10,22 +10,25 @@ This Windows 11 x64 tester is for exactly two people using direct encrypted UDP 
 4. On Sound Check, choose the correct guitar/input, microphone, and headphone/output devices.
    JamLink can use a native ASIO interface for guitar/output and a separate WASAPI USB microphone; no aggregate-device utility is required.
 5. Use headphones. Turn on only the local monitors you need and test the output.
-6. Play and sing as loudly as you realistically expect tonight. A red **CLIP** warning stays visible after the transient. Lower the named hardware input gain for an **INPUT CLIPPED** warning, then press the red indicator to reset and try again. Amber **Hot** is not a failure.
-7. Choose **Verify & Save Sound Check** only after the clipping latches stay clear.
+6. Click each clean **Test** control once to verify that it turns into a red **CLIP** latch, then click the red control to reset it. This test is silent and does not enter monitored, recorded, or network audio.
+7. Play and sing as loudly as you realistically expect tonight. A red **CLIP** or **CLIP RISK** warning stays visible after the transient. Lower the named hardware input gain, then press the red indicator to reset and try again. Amber **Hot** is not a failure.
+8. Choose **Verify & Save Sound Check** only after the clipping latches stay clear.
 
 ## Host
 
-1. From Home, choose **Create Invite**.
-2. Copy the full code beginning with `JL1|` and send it privately to your friend. The code contains the room encryption secret. Do not post it publicly.
-3. Keep JamLink running while your friend joins.
-4. If JamLink says router mapping is ready, no router change should be needed on a typical UPnP-enabled home router.
-5. If the friend cannot connect, enable UPnP or forward the exact UDP port shown in JamLink to the host PC, then create and send a new invite.
+1. From Home, choose **Start a Jam**. If the temporary-code panel appears, enter a memorable 4-64 character code or choose **Generate Random**, then choose **Create**.
+2. Copy the short code and send it to your friend. It expires with this jam and is not listed publicly.
+3. When your friend's request appears, confirm their displayed name and choose **Let In**. No room audio is available to them before this approval.
+4. If temporary codes are unavailable, JamLink creates a full code beginning with `JL1|` instead. Send that code privately; it contains the room encryption secret and does not use the waiting room.
+5. Keep JamLink running while your friend joins.
+6. If JamLink says router mapping is ready, no router change should be needed on a typical UPnP-enabled home router.
+7. If the friend cannot connect, enable UPnP or forward the exact UDP port shown in JamLink to the host PC, then create and send a new invite.
 
 ## Friend
 
-1. Paste the complete invite into the Home screen.
+1. Enter the temporary code or paste the complete `JL1|` invite into the Home screen.
 2. Choose **Join**.
-3. Wait for the Room screen to say **Connected** before evaluating audio.
+3. For a temporary code, wait for the host to approve the request. Then wait for the Room screen to say **Connected** before evaluating audio.
 
 ## During the test
 

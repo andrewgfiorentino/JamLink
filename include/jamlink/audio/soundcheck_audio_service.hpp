@@ -69,6 +69,8 @@ struct SignalHealthTelemetry final {
     float currentRms{0.0F};
     float peakHold{0.0F};
     bool clipped{false};
+    bool nearFullScaleRisk{false};
+    bool diagnosticClip{false};
     std::uint64_t clipSamples{0U};
     std::uint64_t clipEvents{0U};
     std::uint64_t latestClipSampleOffset{0U};
@@ -82,6 +84,8 @@ struct SignalHealthTelemetry final {
         snapshot.rmsLinear,
         snapshot.peakHoldLinear,
         snapshot.clipped,
+        snapshot.nearFullScaleRisk,
+        snapshot.diagnosticClip,
         snapshot.clipSampleCount,
         snapshot.clipEventCount,
         snapshot.latestClipSampleOffset,
@@ -168,6 +172,9 @@ public:
     // Control-thread request. The owning audio callback consumes the reset;
     // no control-thread lock or direct mutation of callback state is required.
     virtual void clearSignalHealth(SignalHealthPath) noexcept {}
+    // Schedules a silent detector/latch/reset self-test in the owning audio
+    // callback. No test sample may reach monitor, recording, or network buses.
+    virtual void requestSignalHealthSelfTest(SignalHealthPath) noexcept {}
     [[nodiscard]] virtual SoundcheckAudioTelemetry telemetry() const noexcept = 0;
 };
 

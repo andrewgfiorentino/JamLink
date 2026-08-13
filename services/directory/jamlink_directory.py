@@ -26,7 +26,7 @@ PRIVATE_ROOM_TTL_SECONDS = 90.0
 PRIVATE_REQUEST_TTL_SECONDS = 120.0
 MAXIMUM_PRIVATE_REQUESTS_PER_ROOM = 16
 HANDLE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,23}$")
-PRIVATE_ROOM_CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{3,31}$")
+PRIVATE_INVITE_CODE_PATTERN = re.compile(r"^[A-Z0-9_-]{4,64}$")
 RESERVED_HANDLES = {"admin", "administrator", "jamlink", "moderator", "support", "system"}
 RESERVED_ROOM_CODES = {"ADMIN", "JAMLINK", "MODERATOR", "SUPPORT", "SYSTEM"}
 
@@ -77,6 +77,7 @@ class Lobby:
 @dataclasses.dataclass(slots=True)
 class PrivateRoom:
     code: str
+    display_code: str
     invite_code: str
     owner_token_hash: str
     application_version: str
@@ -148,10 +149,10 @@ class DirectoryState:
         self.database.commit()
         self.presences: dict[str, Presence] = {}
         self.lobbies: dict[str, Lobby] = {}
-        # Private room names are deliberately ephemeral and never written to
-        # SQLite or returned by the public lobby endpoint. The human-readable
-        # code is a rendezvous alias; the high-entropy JL1 media secret stays
-        # withheld until the host explicitly admits a request.
+        # Private invite codes are temporary rendezvous locators. They are
+        # never written to SQLite or returned by the public lobby endpoint.
+        # The high-entropy JL1 media secret remains separate and stays withheld
+        # until the host explicitly admits a request.
         self.private_rooms: dict[str, PrivateRoom] = {}
         self.private_requests: dict[str, PrivateJoinRequest] = {}
         self.rate_windows: dict[str, collections.deque[float]] = {}
@@ -397,16 +398,25 @@ class DirectoryState:
         if not isinstance(value, str):
             raise ValueError("room code has the wrong type")
         code = value.strip().upper()
-        if not PRIVATE_ROOM_CODE_PATTERN.fullmatch(code) or code in RESERVED_ROOM_CODES:
+        if not PRIVATE_INVITE_CODE_PATTERN.fullmatch(code) or code in RESERVED_ROOM_CODES:
             raise ValueError("room code is invalid")
         return code
+
+    @staticmethod
+    def display_private_code(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("room code has the wrong type")
+        display_code = value.strip()
+        DirectoryState.normalize_private_code(display_code)
+        return display_code
 
     def create_private_room(
         self, payload: dict[str, Any], authorization: str = ""
     ) -> Response:
         self.expire()
         try:
-            code = self.normalize_private_code(payload.get("code", ""))
+            display_code = self.display_private_code(payload.get("code", ""))
+            code = self.normalize_private_code(display_code)
             invite_code = _clean_text(payload.get("invite_code", ""), 2048, required=True)
             application_version = _clean_text(
                 payload.get("application_version", ""), 32, required=True
@@ -432,6 +442,7 @@ class DirectoryState:
         owner_token = secrets.token_hex(32)
         self.private_rooms[code] = PrivateRoom(
             code,
+            display_code,
             invite_code,
             hashlib.sha256(owner_token.encode("ascii")).hexdigest(),
             application_version,
@@ -446,7 +457,7 @@ class DirectoryState:
             if request.room_code == code:
                 del self.private_requests[request_id]
         return Response(201, {
-            "code": code,
+            "code": display_code,
             "owner_token": owner_token,
             "expires_in_seconds": int(PRIVATE_ROOM_TTL_SECONDS),
         })
@@ -577,7 +588,7 @@ class DirectoryState:
         request.expires_at = self.clock() + PRIVATE_REQUEST_TTL_SECONDS
         if approve:
             # JL1 is a single-performer bearer-key session. Atomically close
-            # this room-name slot on first admission so the same media secret
+            # this invite-code slot on first admission so the same media secret
             # cannot authorize a later requester after the active peer drops.
             room.admission_closed = True
             for other in self.private_requests.values():
@@ -750,7 +761,7 @@ class DirectoryServer:
             response = self.state.create_private_room(payload, authorization)
             return response, False
         match = re.fullmatch(
-            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})/(heartbeat|requests)",
+            r"/v1/private-rooms/([A-Za-z0-9_-]{4,64})/(heartbeat|requests)",
             request.target,
         )
         if match:
@@ -766,7 +777,7 @@ class DirectoryServer:
             if request.method == "GET" and action == "requests":
                 return self.state.list_private_requests(room_code, authorization), False
         match = re.fullmatch(
-            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})/requests/"
+            r"/v1/private-rooms/([A-Za-z0-9_-]{4,64})/requests/"
             r"([0-9a-f-]{36})/(admit|deny)",
             request.target,
         )
@@ -787,7 +798,7 @@ class DirectoryServer:
         if request.method == "GET" and match:
             return self.state.private_request_status(match.group(1), authorization), False
         match = re.fullmatch(
-            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})", request.target
+            r"/v1/private-rooms/([A-Za-z0-9_-]{4,64})", request.target
         )
         if request.method == "DELETE" and match:
             try:

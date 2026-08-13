@@ -3,7 +3,7 @@
 # JamLink directory service
 
 This service provides public profile registration, ephemeral presence, public
-lobby discovery, private room-name rendezvous, authenticated join metadata,
+lobby discovery, temporary private invite-code rendezvous, authenticated join metadata,
 and reports. It never carries realtime audio or room chat. Established private
 rooms continue if it stops.
 
@@ -21,7 +21,10 @@ append a client-supplied header. Configure the desktop build with
 `-DJAMLINK_DIRECTORY_URL=https://directory.example.org`; local development may
 instead set `JAMLINK_DIRECTORY_URL=http://127.0.0.1:8787`.
 
-Private room names are unique, uppercase, 4–32 character aliases containing
-letters, numbers, and hyphens. They are kept only in memory, expire without a
-host heartbeat, never appear in the public lobby list, and do not reveal the
-direct encrypted invite until the host admits the waiting request.
+Private invite codes are 4-64 character session locators containing ASCII
+letters, numbers, hyphens, or underscores. Matching ignores letter case while
+the host's spelling is preserved for display. Codes are kept only in memory,
+expire when the host closes the room or stops heartbeating, can be reused after
+expiry, never appear in the public lobby list, and never serve as encryption
+keys. The separate encrypted direct invite remains withheld until the host
+admits the waiting request.

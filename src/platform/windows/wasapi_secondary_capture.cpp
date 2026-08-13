@@ -317,6 +317,10 @@ public:
         inputClipped_.store(0U, std::memory_order_release);
     }
 
+    void requestSignalHealthSelfTest() noexcept override {
+        inputHealth_.requestClipSelfTest();
+    }
+
     [[nodiscard]] bool inputClipped() const noexcept override {
         return inputClipped_.load(std::memory_order_acquire) != 0U;
     }
@@ -466,7 +470,10 @@ private:
     RealtimeAtomicFloat peak_;
     std::atomic<std::int32_t> nativeError_{0};
     std::atomic<std::uint32_t> inputClipped_{0U};
-    LevelMeter inputHealth_{LevelMeter::nativeInputClipThreshold};
+    LevelMeter inputHealth_{
+        LevelMeter::nativeInputClipThreshold,
+        LevelMeter::nativeInputRiskThreshold,
+        LevelMeter::nativeInputRiskSampleCount};
 };
 
 } // namespace

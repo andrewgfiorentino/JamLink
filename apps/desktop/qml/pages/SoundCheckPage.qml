@@ -128,7 +128,13 @@ Item {
                         id: instrumentClip
                         clipped: root.controller.instrumentInputClipped
                             || root.controller.instrumentSendClipped
-                        onClicked: root.controller.clearInstrumentClipping()
+                        testable: root.controller.audioActive
+                        onClicked: {
+                            if (clipped)
+                                root.controller.clearInstrumentClipping()
+                            else
+                                root.controller.testInstrumentClipping()
+                        }
                     }
                 }
                 Text {
@@ -240,7 +246,13 @@ Item {
                         id: voiceClip
                         clipped: root.controller.voiceInputClipped
                             || root.controller.voiceSendClipped
-                        onClicked: root.controller.clearVoiceClipping()
+                        testable: root.controller.audioActive
+                        onClicked: {
+                            if (clipped)
+                                root.controller.clearVoiceClipping()
+                            else
+                                root.controller.testVoiceClipping()
+                        }
                     }
                 }
                 Text {
@@ -379,7 +391,13 @@ Item {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 13
             clipped: root.controller.outputClipped
-            onClicked: root.controller.clearOutputClipping()
+            testable: root.controller.audioActive
+            onClicked: {
+                if (clipped)
+                    root.controller.clearOutputClipping()
+                else
+                    root.controller.testOutputClipping()
+            }
         }
         Text {
             anchors.left: outputSelector.left

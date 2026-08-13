@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3-test — 2026-08-13
+
+- Added a silent end-to-end clipping-indicator self-test and a latched near-full-scale risk detector for native inputs that have effectively no remaining headroom.
+- Reserved the meter's final red segment for a real latched condition so a hot signal no longer looks clipped before the detector fires.
+- Added temporary 4-64 character private invite codes with case-insensitive matching, random generation, session expiry/reuse, unlisted rendezvous, and explicit host admission before the direct encrypted invite is released.
+- Preserved the full `JL1` direct-invite path whenever temporary-code rendezvous is unavailable.
+- Expanded callback allocation/reset/priority tests, directory validation/expiry/admission tests, and minimum-width GUI coverage.
+
 ## 0.3.2-test — 2026-08-13
 
 - Moved update discovery to application launch and added a prominent in-app Update & Restart flow using the existing verified replacement helper.

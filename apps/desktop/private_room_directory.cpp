@@ -33,7 +33,7 @@ PrivateRoomDirectory::PrivateRoomDirectory(QObject* parent)
         || (url.scheme() != QStringLiteral("https") && !localHttp)) {
         baseUrl_.clear();
     } else {
-        status_ = QStringLiteral("Choose a unique private room name");
+        status_ = QStringLiteral("Choose a temporary private invite code");
     }
     heartbeatTimer_.setInterval(25'000);
     // A host and guest may share one NAT/rate-limit identity. Two-second
@@ -57,18 +57,21 @@ bool PrivateRoomDirectory::waiting() const noexcept { return waiting_; }
 QString PrivateRoomDirectory::roomCode() const { return roomCode_; }
 QString PrivateRoomDirectory::status() const { return status_; }
 QVariantList PrivateRoomDirectory::waitingRequests() const { return waitingRequests_; }
+bool PrivateRoomDirectory::acceptsCode(const QString& code) const {
+    return !validatedCode(code).isEmpty();
+}
 
 void PrivateRoomDirectory::create(
     const QString& code,
     const QString& directInvite,
     const QJsonObject& compatibility) {
     if (!available() || busy_ || directInvite.isEmpty()) {
-        setStatus(QStringLiteral("Private room name service is unavailable"));
+        setStatus(QStringLiteral("Private invite-code service is unavailable"));
         return;
     }
-    roomCode_ = normalizedCode(code);
+    roomCode_ = validatedCode(code);
     if (roomCode_.isEmpty()) {
-        setStatus(QStringLiteral("Use 4–32 letters, numbers, or hyphens"));
+        setStatus(QStringLiteral("Use 4-64 letters, numbers, hyphens, or underscores"));
         return;
     }
     busy_ = true;
@@ -91,13 +94,13 @@ void PrivateRoomDirectory::create(
                 if (hosting_) {
                     heartbeatTimer_.start();
                     pollTimer_.start();
-                    setStatus(QStringLiteral("Private room %1 is ready").arg(roomCode_));
+                    setStatus(QStringLiteral("Invite code %1 is ready").arg(roomCode_));
                     return;
                 }
             }
             setStatus(statusCode == 409
-                ? QStringLiteral("That private room name is already in use")
-                : QStringLiteral("Could not register the private room name"));
+                ? QStringLiteral("That invite code is already in use")
+                : QStringLiteral("Could not register the invite code"));
             roomCode_.clear();
         });
 }
@@ -109,12 +112,12 @@ void PrivateRoomDirectory::requestJoin(
     const QString& instrument,
     const QString& avatarId) {
     if (!available() || busy_) {
-        setStatus(QStringLiteral("Private room name service is unavailable"));
+        setStatus(QStringLiteral("Private invite-code service is unavailable"));
         return;
     }
-    roomCode_ = normalizedCode(code);
+    roomCode_ = validatedCode(code);
     if (roomCode_.isEmpty()) {
-        setStatus(QStringLiteral("Enter a valid private room name"));
+        setStatus(QStringLiteral("Enter a valid private invite code"));
         return;
     }
     busy_ = true;
@@ -143,7 +146,7 @@ void PrivateRoomDirectory::requestJoin(
                 }
             }
             if (statusCode == 404) {
-                setStatus(QStringLiteral("No active private room has that name"));
+                setStatus(QStringLiteral("No active private jam has that invite code"));
             } else if (statusCode == 409) {
                 const QString error = response.value(QStringLiteral("error")).toString();
                 setStatus(error == QStringLiteral("room_already_admitted")
@@ -200,8 +203,8 @@ void PrivateRoomDirectory::stop() {
     waiting_ = false;
     heartbeatInFlight_ = false;
     pollInFlight_ = false;
-    setStatus(available() ? QStringLiteral("Choose a unique private room name")
-                          : QStringLiteral("Private room names unavailable"));
+    setStatus(available() ? QStringLiteral("Choose a temporary private invite code")
+                          : QStringLiteral("Private invite codes unavailable"));
 }
 
 void PrivateRoomDirectory::send(
@@ -247,7 +250,7 @@ void PrivateRoomDirectory::heartbeat() {
             }
             heartbeatInFlight_ = false;
             if (statusCode != 200) {
-                setStatus(QStringLiteral("Private room name lost; direct invite still works"));
+                setStatus(QStringLiteral("Invite code expired; direct invite still works"));
             }
         });
 }
@@ -315,19 +318,27 @@ void PrivateRoomDirectory::setStatus(QString value) {
     emit changed();
 }
 
-QString PrivateRoomDirectory::normalizedCode(const QString& code) const {
-    QString normalized = code.trimmed().toUpper();
-    if (normalized.size() < 4 || normalized.size() > 32) {
+QString PrivateRoomDirectory::validatedCode(const QString& code) const {
+    const QString validated = code.trimmed();
+    if (validated.size() < 4 || validated.size() > 64) {
         return {};
     }
-    for (const QChar character : normalized) {
-        if (!(character >= u'A' && character <= u'Z')
+    for (const QChar character : validated) {
+        const QChar folded = character.toUpper();
+        if (!(folded >= u'A' && folded <= u'Z')
             && !(character >= u'0' && character <= u'9')
-            && character != u'-') {
+            && character != u'-' && character != u'_') {
             return {};
         }
     }
-    return normalized;
+    const QString canonical = validated.toUpper();
+    if (canonical == QStringLiteral("ADMIN") || canonical == QStringLiteral("JAMLINK")
+        || canonical == QStringLiteral("MODERATOR")
+        || canonical == QStringLiteral("SUPPORT")
+        || canonical == QStringLiteral("SYSTEM")) {
+        return {};
+    }
+    return validated;
 }
 
 } // namespace jamlink::desktop

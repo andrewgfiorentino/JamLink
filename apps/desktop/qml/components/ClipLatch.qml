@@ -7,16 +7,19 @@ import QtQuick.Controls.Basic
 Button {
     id: root
     property bool clipped: false
+    property bool testable: false
 
     implicitWidth: 66
     implicitHeight: 24
-    text: clipped ? "● CLIP" : "○ Clean"
+    text: clipped ? "● CLIP" : (testable ? "○ Test" : "○ Clean")
     Accessible.name: clipped
         ? "Clipping detected. Activate to reset the clip indicator."
-        : "No clipping detected"
+        : testable ? "Test the clipping indicator" : "No clipping detected"
     Accessible.description: clipped
         ? "The warning remains until reset and will return immediately if clipping continues."
-        : "The clipping latch is clear."
+        : testable
+            ? "Runs a silent indicator test. No test sound is monitored, recorded, or sent."
+            : "The clipping latch is clear."
 
     contentItem: Text {
         text: root.text

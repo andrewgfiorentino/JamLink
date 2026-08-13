@@ -29,8 +29,16 @@ Item {
                 height: parent.height
                 radius: 1
                 color: {
-                    const active = segment.index
-                        < Math.round(root.displayedLevel * root.segmentCount)
+                    // Reserve the final red segment for the latched detector.
+                    // Rounding previously made a -0.095 dBFS signal look full
+                    // even though it had not reached the clip threshold.
+                    const normalSegments = Math.min(
+                        root.segmentCount - 1,
+                        Math.floor(Math.max(0, Math.min(1, root.displayedLevel))
+                            * root.segmentCount))
+                    const activeSegments = root.clipped
+                        ? root.segmentCount : normalSegments
+                    const active = segment.index < activeSegments
                     if (!active)
                         return Theme.borderSoft
                     if (segment.index > root.segmentCount * 0.92)
@@ -46,7 +54,9 @@ Item {
 
     Rectangle {
         visible: root.peakHold > 0.00001
-        x: Math.max(0, Math.min(root.width - width, root.peakHold * root.width - width / 2))
+        readonly property real shownPeak: root.clipped
+            ? 1 : Math.min(root.peakHold, (root.segmentCount - 1) / root.segmentCount)
+        x: Math.max(0, Math.min(root.width - width, shownPeak * root.width - width / 2))
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 2

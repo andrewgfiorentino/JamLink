@@ -73,6 +73,15 @@ int main(int argc, char** argv) {
 
     jamlink::desktop::PrivateRoomDirectory host;
     jamlink::desktop::PrivateRoomDirectory guest;
+    if (!host.acceptsCode(QStringLiteral("andrew_mike"))
+        || !host.acceptsCode(QString(64, QLatin1Char('A')))
+        || host.acceptsCode(QStringLiteral("abc"))
+        || host.acceptsCode(QStringLiteral("not a code"))
+        || host.acceptsCode(QStringLiteral("JAMLINK"))) {
+        std::cerr << "temporary invite-code validation is incorrect\n";
+        service.kill();
+        return EXIT_FAILURE;
+    }
     const QJsonObject compatibility{
         {QStringLiteral("application_version"), QStringLiteral("0.3.3")},
         {QStringLiteral("build_identity"), QString(40, QLatin1Char('a'))},
@@ -82,10 +91,15 @@ int main(int argc, char** argv) {
     };
     const QString directInvite = QStringLiteral("JL1|203.0.113.20|45000|%1")
         .arg(QString(64, QLatin1Char('b')));
-    host.create(QStringLiteral("thewonderyears"), directInvite, compatibility);
+    host.create(QStringLiteral("andrew_mike"), directInvite, compatibility);
     if (!waitUntil([&host] { return host.hosting(); })) {
         std::cerr << "host failed to register private room: "
                   << host.status().toStdString() << '\n';
+        service.kill();
+        return EXIT_FAILURE;
+    }
+    if (host.roomCode() != QStringLiteral("andrew_mike")) {
+        std::cerr << "host invite-code spelling was not preserved\n";
         service.kill();
         return EXIT_FAILURE;
     }
@@ -94,7 +108,7 @@ int main(int argc, char** argv) {
     QObject::connect(&guest, &jamlink::desktop::PrivateRoomDirectory::inviteResolved,
         [&resolvedInvite](const QString& invite) { resolvedInvite = invite; });
     guest.requestJoin(
-        QStringLiteral("THEWONDERYEARS"), compatibility,
+        QStringLiteral("ANDREW_MIKE"), compatibility,
         QStringLiteral("Mike"), QStringLiteral("Bass"), QStringLiteral("avatar:bass"));
     if (!waitUntil([&guest] { return guest.waiting(); }) || !resolvedInvite.isEmpty()) {
         std::cerr << "guest did not enter media-isolated waiting state\n";

@@ -26,6 +26,7 @@ public:
     [[nodiscard]] virtual bool begin() noexcept = 0;
     virtual void stop() noexcept = 0;
     virtual void clearSignalHealth() noexcept = 0;
+    virtual void requestSignalHealthSelfTest() noexcept = 0;
     [[nodiscard]] virtual bool inputClipped() const noexcept = 0;
     [[nodiscard]] virtual SecondaryCaptureTelemetry telemetry() const noexcept = 0;
 };

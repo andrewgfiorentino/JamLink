@@ -443,6 +443,36 @@ public:
         }
     }
 
+    void requestSignalHealthSelfTest(SignalHealthPath path) noexcept override {
+        switch (path) {
+        case SignalHealthPath::InstrumentInput:
+            instrumentInputHealth_.requestClipSelfTest();
+            break;
+        case SignalHealthPath::VoiceInput:
+            if (hybridVoice_) {
+                secondaryVoice_->requestSignalHealthSelfTest();
+            } else {
+                voiceInputHealth_.requestClipSelfTest();
+            }
+            break;
+        case SignalHealthPath::InstrumentSend:
+            instrumentSendHealth_.requestClipSelfTest();
+            break;
+        case SignalHealthPath::VoiceSend:
+            voiceSendHealth_.requestClipSelfTest();
+            break;
+        case SignalHealthPath::MonitorMix:
+            monitorMixHealth_.requestClipSelfTest();
+            break;
+        case SignalHealthPath::RecordingInstrument:
+            recordingInstrumentHealth_.requestClipSelfTest();
+            break;
+        case SignalHealthPath::RecordingVoice:
+            recordingVoiceHealth_.requestClipSelfTest();
+            break;
+        }
+    }
+
     [[nodiscard]] SoundcheckAudioTelemetry telemetry() const noexcept override {
         const auto secondary = secondaryVoice_->telemetry();
         const auto instrumentInput = signalHealthTelemetry(instrumentInputHealth_.snapshot());
@@ -877,8 +907,14 @@ private:
     RealtimeAtomicFloat instrumentPeak_;
     RealtimeAtomicFloat voicePeak_;
     RealtimeAtomicFloat outputPeak_;
-    LevelMeter instrumentInputHealth_{LevelMeter::nativeInputClipThreshold};
-    LevelMeter voiceInputHealth_{LevelMeter::nativeInputClipThreshold};
+    LevelMeter instrumentInputHealth_{
+        LevelMeter::nativeInputClipThreshold,
+        LevelMeter::nativeInputRiskThreshold,
+        LevelMeter::nativeInputRiskSampleCount};
+    LevelMeter voiceInputHealth_{
+        LevelMeter::nativeInputClipThreshold,
+        LevelMeter::nativeInputRiskThreshold,
+        LevelMeter::nativeInputRiskSampleCount};
     LevelMeter instrumentSendHealth_;
     LevelMeter voiceSendHealth_;
     LevelMeter monitorMixHealth_;

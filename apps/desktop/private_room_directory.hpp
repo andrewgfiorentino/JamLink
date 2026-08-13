@@ -27,6 +27,7 @@ public:
     [[nodiscard]] QString roomCode() const;
     [[nodiscard]] QString status() const;
     [[nodiscard]] QVariantList waitingRequests() const;
+    [[nodiscard]] bool acceptsCode(const QString& code) const;
 
     void create(
         const QString& code,
@@ -58,7 +59,7 @@ private:
     void pollHost();
     void pollGuest();
     void setStatus(QString value);
-    [[nodiscard]] QString normalizedCode(const QString& code) const;
+    [[nodiscard]] QString validatedCode(const QString& code) const;
 
     QNetworkAccessManager network_;
     QTimer heartbeatTimer_;
@@ -68,7 +69,7 @@ private:
     QString ownerToken_;
     QString requestId_;
     QString requestToken_;
-    QString status_{QStringLiteral("Private room names unavailable")};
+    QString status_{QStringLiteral("Private invite codes unavailable")};
     QVariantList waitingRequests_;
     bool busy_{false};
     bool active_{false};
