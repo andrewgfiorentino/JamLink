@@ -219,6 +219,9 @@ int main(int argc, char* argv[]) {
     first.saveSoundcheck();
     passed = expect(first.allReady(), "explicit Sound Check save verifies current selections")
         && passed;
+    passed = expect(first.currentPage() == QStringLiteral("home"),
+                    "successful Sound Check save returns to Home")
+        && passed;
     first.updateWindowPlacement(120, 80, 532, 534);
     const auto avatarInput = directory / "avatar-input.png";
     QImage sourceAvatar(640, 480, QImage::Format_RGB32);
@@ -427,6 +430,8 @@ int main(int argc, char* argv[]) {
         && passed;
     active.saveSoundcheck();
     passed = expect(active.allReady(), "active hybrid setup can be verified") && passed;
+    passed = expect(active.currentPage() == QStringLiteral("home"),
+                    "active hybrid setup advances after verification") && passed;
     passed = expect(active.instrumentDeviceIndex() == 0
                         && active.voiceDeviceIndex() == 1
                         && active.outputDeviceIndex() == 0,
@@ -462,14 +467,18 @@ int main(int argc, char* argv[]) {
                     "input clip latch is visible and blocks Ready to Jam")
         && passed;
     clipped.saveSoundcheck();
-    passed = expect(!clipped.allReady(), "a clipped setup cannot be verified") && passed;
+    passed = expect(!clipped.allReady()
+                        && clipped.currentPage() == QStringLiteral("soundcheck"),
+                    "a clipped setup cannot verify or leave Sound Check") && passed;
     clipped.clearInstrumentClipping();
     passed = expect(!clipped.instrumentInputClipped()
                         && clippedServiceView->clearHealthCount == 2U,
                     "source reset clears both input and send latches")
         && passed;
     clipped.saveSoundcheck();
-    passed = expect(clipped.allReady(), "clean reset setup can be verified") && passed;
+    passed = expect(clipped.allReady()
+                        && clipped.currentPage() == QStringLiteral("home"),
+                    "clean reset setup verifies and advances") && passed;
 
     std::filesystem::remove_all(directory, cleanupError);
     std::cout << (passed ? "[PASS] desktop controller persistence and readiness\n"

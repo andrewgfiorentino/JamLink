@@ -33,25 +33,25 @@ int main(int argc, char* argv[]) {
         ]
       },
       {
-        "tag_name":"v0.3.0-test",
+        "tag_name":"v0.3.1-test",
         "draft":false,
         "published_at":"2026-08-11T00:00:00Z",
         "assets":[
-          {"name":"JamLink-0.3.0-test-windows-x64.zip","browser_download_url":"https://example/test.zip","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-          {"name":"JamLink-0.3.0-test-windows-x64.zip.sha256","browser_download_url":"https://example/test.sha256"}
+          {"name":"JamLink-0.3.1-test-windows-x64.zip","browser_download_url":"https://example/test.zip","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+          {"name":"JamLink-0.3.1-test-windows-x64.zip.sha256","browser_download_url":"https://example/test.sha256"}
         ]
       }
     ])json";
     const auto candidate = jamlink::desktop::selectUpdateCandidate(
-        releases, QStringLiteral("0.2.0"), QStringLiteral("test"));
-    passed = expect(candidate.version == QStringLiteral("0.3.0"),
-                    "test channel selects the matching newer release") && passed;
+        releases, QStringLiteral("0.3.0"), QStringLiteral("test"));
+    passed = expect(candidate.version == QStringLiteral("0.3.1"),
+                    "0.3.0 tester selects the updater-compatible 0.3.1 release") && passed;
     passed = expect(candidate.archiveUrl == QUrl(QStringLiteral("https://example/test.zip")),
                     "archive URL is selected by exact package name") && passed;
     passed = expect(candidate.apiDigest.size() == 64,
                     "GitHub API digest is retained") && passed;
     const auto none = jamlink::desktop::selectUpdateCandidate(
-        releases, QStringLiteral("0.3.0"), QStringLiteral("test"));
+        releases, QStringLiteral("0.3.1"), QStringLiteral("test"));
     passed = expect(none.version.isEmpty(), "current version is not offered again") && passed;
 
     const QByteArray digest = jamlink::desktop::parseSha256(

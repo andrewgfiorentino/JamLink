@@ -4,7 +4,7 @@ find_package(Qt6 6.10.3 REQUIRED COMPONENTS Core Gui Network Qml Quick)
 
 qt_standard_project_setup(REQUIRES 6.10.3)
 
-qt_add_executable(jamlink_desktop
+qt_add_executable(jamlink_desktop WIN32
     app_controller.cpp
     main.cpp
     update_manager.cpp
@@ -142,7 +142,7 @@ if(BUILD_TESTING)
             --visual-fixture
             --reset-preferences
             --width 532
-            --height 534
+            --height 562
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-soundcheck.png"
     )
@@ -152,7 +152,7 @@ if(BUILD_TESTING)
             --visual-fixture
             --expect-restored
             --width 532
-            --height 534
+            --height 562
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-home.png"
     )
@@ -163,7 +163,7 @@ if(BUILD_TESTING)
             --expect-restored
             --page settings
             --width 532
-            --height 534
+            --height 562
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-settings.png"
     )
@@ -174,8 +174,8 @@ if(BUILD_TESTING)
             --expect-restored
             --page room
             --width 532
-            --height 700
-            --minimum-capture-height 700
+            --height 728
+            --minimum-capture-height 728
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room.png"
     )
@@ -186,8 +186,8 @@ if(BUILD_TESTING)
             --expect-restored
             --page tuner
             --width 532
-            --height 560
-            --minimum-capture-height 560
+            --height 588
+            --minimum-capture-height 588
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-tuner.png"
     )
@@ -198,9 +198,9 @@ if(BUILD_TESTING)
             --expect-restored
             --page soundcheck
             --width 532
-            --height 534
+            --height 562
             --expected-capture-width 798
-            --expected-capture-height 801
+            --expected-capture-height 843
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-high-dpi.png"
     )
@@ -211,7 +211,7 @@ if(BUILD_TESTING)
             --expect-restored
             --page soundcheck
             --width 532
-            --height 534
+            --height 562
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-clipping.png"
     )
@@ -269,8 +269,8 @@ if(BUILD_TESTING)
             --expect-restored
             --page profile
             --width 532
-            --height 780
-            --minimum-capture-height 780
+            --height 808
+            --minimum-capture-height 808
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-profile.png"
     )

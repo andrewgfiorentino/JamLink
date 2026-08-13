@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1-test — 2026-08-13
+
+- Removed the extra Windows console from the packaged desktop application.
+- Added compact native move, edge/corner resize, and close controls without adding a full title bar.
+- A successful Sound Check save now returns directly to Home; failed verification remains on Sound Check with the real reason visible.
+- Kept the encrypted reliable two-person chat path in the release gate and added an explicit compatibility test proving a `0.3.0-test` updater selects the `0.3.1-test` package.
+- Made Windows package and corresponding-source filenames derive from the configured project version to reduce the chance of breaking future updates.
+
 ## 0.3.0-test — 2026-08-11
 
 - Added native Steinberg ASIO SDK integration for Windows instrument capture and output.

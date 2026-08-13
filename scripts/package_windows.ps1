@@ -16,7 +16,14 @@ $binary = Join-Path $repositoryRoot (
 $updaterBinary = Join-Path $repositoryRoot (
     "build\windows-gui-vs2022\{0}\JamLinkUpdater.exe" -f $Configuration)
 $distRoot = Join-Path $repositoryRoot "dist"
-$packageName = "JamLink-0.3.0-test-windows-x64"
+$cmakeCache = Join-Path $repositoryRoot "build\windows-gui-vs2022\CMakeCache.txt"
+$versionMatch = Select-String -LiteralPath $cmakeCache `
+    -Pattern '^CMAKE_PROJECT_VERSION:STATIC=(\d+\.\d+\.\d+)$' | Select-Object -First 1
+if ($null -eq $versionMatch) {
+    throw "The configured JamLink version was not found in $cmakeCache"
+}
+$packageVersion = $versionMatch.Matches[0].Groups[1].Value
+$packageName = "JamLink-$packageVersion-test-windows-x64"
 $packageDirectory = Join-Path $distRoot $packageName
 $archivePath = Join-Path $distRoot ($packageName + ".zip")
 $archiveChecksumPath = $archivePath + ".sha256"
@@ -147,7 +154,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Commit staged JamLink source changes before creating a distributable package"
 }
 $sourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
-$sourceArchive = Join-Path $packageDirectory "JamLink-0.3.0-source.zip"
+$sourceArchive = Join-Path $packageDirectory "JamLink-$packageVersion-source.zip"
 & git -C $repositoryRoot archive --format=zip --output=$sourceArchive HEAD
 if ($LASTEXITCODE -ne 0) {
     throw "Could not create the exact JamLink corresponding-source archive"

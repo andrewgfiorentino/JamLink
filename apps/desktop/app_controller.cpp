@@ -1192,6 +1192,7 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
 
 void AppController::saveSoundcheck() {
+    bool saved = false;
     if (instrumentInputClipped() || voiceInputClipped()
         || instrumentSendClipped() || voiceSendClipped() || outputClipped()) {
         setupMessage_ = QStringLiteral(
@@ -1214,6 +1215,7 @@ void AppController::saveSoundcheck() {
                         sampleRateValues_[static_cast<std::size_t>(sampleRateIndex_)],
                         bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)])));
         setupMessage_ = QStringLiteral("Private setup verified and saved for this run");
+        saved = true;
     } else if (devicesAvailable_) {
         setupMessage_ = QStringLiteral("Start the private monitor before verifying this setup");
     } else {
@@ -1221,6 +1223,9 @@ void AppController::saveSoundcheck() {
     }
     persistNow();
     emit setupChanged();
+    if (saved) {
+        setCurrentPage(QStringLiteral("home"));
+    }
 }
 
 void AppController::testOutput() {
