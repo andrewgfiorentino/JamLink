@@ -1,6 +1,10 @@
 # JamLink two-person test guide
 
 This Windows 11 x64 tester is for exactly two people using direct encrypted UDP audio.
+The 0.3.3 tester uses the infrastructure-independent **Copy Invite** flow.
+Temporary custom short codes are not enabled in this package because no shared
+rendezvous endpoint is configured; their absence does not affect direct audio,
+chat, recording, or connection security.
 
 ## Both people
 

@@ -1778,7 +1778,7 @@ void AppController::copyInvite() {
     const QString visibleInvite = inviteCode();
     if (!visibleInvite.isEmpty()) {
         QGuiApplication::clipboard()->setText(visibleInvite);
-        setupMessage_ = QStringLiteral("Invite code copied");
+        setupMessage_ = QStringLiteral("Invite copied");
         emit setupChanged();
     }
 }

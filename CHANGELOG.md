@@ -4,8 +4,9 @@
 
 - Added a silent end-to-end clipping-indicator self-test and a latched near-full-scale risk detector for native inputs that have effectively no remaining headroom.
 - Reserved the meter's final red segment for a real latched condition so a hot signal no longer looks clipped before the detector fires.
-- Added temporary 4-64 character private invite codes with case-insensitive matching, random generation, session expiry/reuse, unlisted rendezvous, and explicit host admission before the direct encrypted invite is released.
+- Added optional temporary 4-64 character private invite-code support with case-insensitive matching, random generation, session expiry/reuse, unlisted rendezvous, and explicit host admission; controls remain hidden in packages without a configured rendezvous endpoint.
 - Preserved the full `JL1` direct-invite path whenever temporary-code rendezvous is unavailable.
+- Hid the direct invitation payload behind a prominent **Copy Invite** action while preserving paste-to-join compatibility.
 - Expanded callback allocation/reset/priority tests, directory validation/expiry/admission tests, and minimum-width GUI coverage.
 
 ## 0.3.2-test — 2026-08-13

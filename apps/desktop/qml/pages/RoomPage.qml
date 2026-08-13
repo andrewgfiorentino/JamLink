@@ -155,18 +155,24 @@ Item {
                                 anchors.fill: parent
                                 anchors.margins: 10
                                 verticalAlignment: Text.AlignVCenter
-                                text: root.controller.inviteCode
+                                text: root.controller.privateRoomCode.length > 0
+                                    ? root.controller.privateRoomCode
+                                    : "Encrypted direct invite ready"
                                 color: "#d9c7f5"
                                 elide: Text.ElideMiddle
-                                font.family: Theme.numericFontFamily
-                                font.pixelSize: 9
+                                font.family: root.controller.privateRoomCode.length > 0
+                                    ? Theme.numericFontFamily : Theme.fontFamily
+                                font.pixelSize: 10
+                                Accessible.name: root.controller.privateRoomCode.length > 0
+                                    ? "Temporary invite code " + root.controller.privateRoomCode
+                                    : "Encrypted direct invite ready"
                             }
                         }
                         JamButton {
                             id: copyInvite
-                            width: 76
+                            width: 104
                             height: 36
-                            text: "Copy"
+                            text: "Copy Invite"
                             onClicked: root.controller.copyInvite()
                         }
                     }
@@ -179,7 +185,7 @@ Item {
                                 ? "No room audio was shared. Leave to return home."
                             : root.controller.privateRoomCode.length > 0
                                 ? "Tell your friend this temporary code. Their request appears quietly here."
-                                : "Your friend can paste this code on Home. Keep JamLink open."
+                                : "Copy the invite and send it privately. Keep JamLink open."
                         color: Theme.textMuted
                         wrapMode: Text.WordWrap
                         font.family: Theme.fontFamily
