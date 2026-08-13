@@ -9,6 +9,8 @@ Item {
     id: root
     required property AppController controller
     property bool joinExpanded: false
+    property bool createExpanded: root.controller.visualFixture
+        && root.controller.privateRoomCodesAvailable
     readonly property string greeting: {
         const hour = new Date().getHours()
         return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening"
@@ -215,16 +217,83 @@ Item {
                     detail: "Create a room and invite a friend"
                     icon: "headphones.svg"
                     enabled: root.canJam
-                    onActivated: root.controller.hostSession()
+                    onActivated: {
+                        if (root.controller.privateRoomCodesAvailable)
+                            root.createExpanded = !root.createExpanded
+                        else
+                            root.controller.hostSession()
+                    }
                 }
                 ActionCard {
                     width: (parent.width - parent.spacing) / 2
                     height: parent.height
                     title: "Join a Friend"
-                    detail: "Enter a room with an invite code"
+                    detail: "Enter a private room name or invite"
                     icon: "music_note.svg"
                     enabled: root.canJam
                     onActivated: root.joinExpanded = !root.joinExpanded
+                }
+            }
+
+            JamCard {
+                visible: root.createExpanded
+                width: parent.width
+                height: visible ? 116 : 0
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 8
+                    Text {
+                        text: "PRIVATE ROOM NAME"
+                        color: Theme.textSecondary
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
+                        font.weight: Font.DemiBold
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: 8
+                        TextField {
+                            id: roomNameField
+                            width: parent.width - namedHostButton.width - 8
+                            height: 40
+                            placeholderText: "THEWONDERYEARS"
+                            maximumLength: 32
+                            color: Theme.text
+                            placeholderTextColor: Theme.textMuted
+                            selectionColor: Theme.accent
+                            font.capitalization: Font.AllUppercase
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 10
+                            background: Rectangle {
+                                radius: Theme.radiusControl
+                                color: Theme.surfaceRaised
+                                border.color: roomNameField.activeFocus
+                                    ? Theme.accentBright : Theme.border
+                            }
+                            Keys.onReturnPressed: event => {
+                                if (roomNameField.text.trim().length >= 4)
+                                    root.controller.hostNamedSession(roomNameField.text)
+                                event.accepted = true
+                            }
+                        }
+                        JamButton {
+                            id: namedHostButton
+                            width: 92
+                            height: 40
+                            primary: true
+                            text: root.controller.privateRoomBusy ? "Creating…" : "Create"
+                            enabled: !root.controller.privateRoomBusy
+                                && roomNameField.text.trim().length >= 4
+                            onClicked: root.controller.hostNamedSession(roomNameField.text)
+                        }
+                    }
+                    Text {
+                        text: "Private and unlisted · your friend asks to enter"
+                        color: Theme.textMuted
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
+                    }
                 }
             }
 
@@ -240,7 +309,8 @@ Item {
                         id: inviteField
                         width: parent.width - joinButton.width - 8
                         height: 40
-                        placeholderText: "Paste the JL1 invite code"
+                        placeholderText: root.controller.privateRoomCodesAvailable
+                            ? "Room name or full JL1 invite" : "Paste the full JL1 invite"
                         color: Theme.text
                         placeholderTextColor: Theme.textMuted
                         selectionColor: Theme.accent
@@ -339,6 +409,11 @@ Item {
             enabled: action.enabled
             hoverEnabled: true
             cursorShape: action.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: action.title
+            Keys.onReturnPressed: action.activated()
+            Keys.onSpacePressed: action.activated()
             onClicked: action.activated()
         }
     }

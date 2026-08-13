@@ -87,6 +87,7 @@ AppController::AppController(
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService)
     : QObject(parent),
       store_(std::move(preferencePath)),
+      roomDirectory_(this),
       updateManager_(
           QStringLiteral(JAMLINK_VERSION_STRING),
           QStringLiteral(JAMLINK_RELEASE_CHANNEL_STRING),
@@ -95,8 +96,16 @@ AppController::AppController(
       currentPage_(std::move(initialPage)),
       visualFixture_(visualFixture),
       visualClipFixture_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_CLIP")),
+      visualPrivateRoomFixture_(visualFixture
+          ? qEnvironmentVariable("JAMLINK_VISUAL_PRIVATE_ROOM") : QString()),
+      visualRecordingFixture_(visualFixture
+          && qEnvironmentVariableIsSet("JAMLINK_VISUAL_RECORDING")),
       audioService_(std::move(audioService)) {
     connect(&updateManager_, &UpdateManager::changed, this, &AppController::updateChanged);
+    connect(&roomDirectory_, &PrivateRoomDirectory::changed,
+        this, &AppController::roomChanged);
+    connect(&roomDirectory_, &PrivateRoomDirectory::inviteResolved,
+        this, &AppController::joinDirectSession);
     const bool automaticPage = currentPage_ == QStringLiteral("auto");
     if (!automaticPage && currentPage_ != QStringLiteral("home")
         && currentPage_ != QStringLiteral("soundcheck")
@@ -155,7 +164,9 @@ AppController::AppController(
         if (participantCountValid) {
             visualRoomParticipantCount_ = std::clamp(requestedParticipantCount, 2, 8);
         }
-        peerTelemetry_.state = jamlink::network::PeerConnectionState::Connected;
+        peerTelemetry_.state = visualPrivateRoomFixture_.startsWith(QStringLiteral("host"))
+            ? jamlink::network::PeerConnectionState::WaitingForPeer
+            : jamlink::network::PeerConnectionState::Connected;
         peerTelemetry_.roundTripMicroseconds = 15'000U;
         peerTelemetry_.packetsSent = 2'840U;
         peerTelemetry_.packetsReceived = 2'836U;
@@ -168,6 +179,14 @@ AppController::AppController(
         remoteParticipant_.displayName = "Mike";
         remoteParticipant_.avatarId = "avatar:guitar-electric";
         remoteParticipant_.primaryInstrument = "Guitar";
+        if (visualPrivateRoomFixture_.startsWith(QStringLiteral("host"))) {
+            visualWaitingRoomRequests_.push_back(QVariantMap{
+                {QStringLiteral("request_id"), QStringLiteral("fixture-request")},
+                {QStringLiteral("display_name"), QStringLiteral("Mike <img>")},
+                {QStringLiteral("primary_instrument"), QStringLiteral("Guitar & Voice")},
+                {QStringLiteral("avatar_id"), QStringLiteral("avatar:guitar-electric")},
+            });
+        }
     }
     if (visualFixture_ && currentPage_ == QStringLiteral("tuner")) {
         tunerReading_ = {true, 329.25, 64, -2.0, 0.58F, 0.94F};
@@ -184,6 +203,7 @@ AppController::AppController(
 }
 
 AppController::~AppController() {
+    roomDirectory_.stop();
     if (audioService_) {
         audioService_->stop();
         audioService_->setPeerAudioExchange(nullptr);
@@ -745,7 +765,9 @@ void AppController::clearCustomAvatar() {
     emit profileChanged();
 }
 
-bool AppController::recording() const noexcept { return recorderTelemetry_.recording; }
+bool AppController::recording() const noexcept {
+    return visualRecordingFixture_ || recorderTelemetry_.recording;
+}
 
 QString AppController::recordingElapsed() const {
     const std::uint32_t seconds = recorderTelemetry_.elapsedSeconds;
@@ -826,6 +848,9 @@ double AppController::tunerLevel() const noexcept {
 }
 
 bool AppController::visualFixture() const noexcept { return visualFixture_; }
+QString AppController::visualPrivateRoomFixture() const {
+    return visualPrivateRoomFixture_;
+}
 bool AppController::restoredPreferences() const noexcept { return restoredPreferences_; }
 bool AppController::devicesAvailable() const noexcept { return devicesAvailable_; }
 bool AppController::audioActive() const noexcept {
@@ -1163,7 +1188,7 @@ QString AppController::outputSignalGuidance() const {
 }
 
 bool AppController::roomActive() const noexcept {
-    return peerTransport_ != nullptr || visualRoomFixture_;
+    return peerTransport_ != nullptr || roomDirectory_.active() || visualRoomFixture_;
 }
 bool AppController::peerConnected() const noexcept {
     return peerTelemetry_.state == jamlink::network::PeerConnectionState::Connected;
@@ -1173,6 +1198,9 @@ QString AppController::roomStatus() const {
         return QStringLiteral("Connected · encrypted small-room session · Excellent");
     }
     if (!peerTransport_) {
+        if (roomDirectory_.active()) {
+            return roomDirectory_.status();
+        }
         return QStringLiteral("No room session");
     }
     if (peerConnected()) {
@@ -1186,7 +1214,31 @@ QString AppController::roomStatus() const {
     }
     return peerStateText(peerTelemetry_.state);
 }
-QString AppController::inviteCode() const { return inviteCode_; }
+QString AppController::inviteCode() const {
+    if (!visualPrivateRoomFixture_.isEmpty()) {
+        return QStringLiteral("THEWONDERYEARS");
+    }
+    return roomDirectory_.hosting() && !roomDirectory_.roomCode().isEmpty()
+        ? roomDirectory_.roomCode() : inviteCode_;
+}
+bool AppController::privateRoomCodesAvailable() const noexcept {
+    return roomDirectory_.available()
+        || visualPrivateRoomFixture_ == QStringLiteral("create");
+}
+bool AppController::privateRoomBusy() const noexcept { return roomDirectory_.busy(); }
+bool AppController::privateRoomWaiting() const noexcept {
+    return visualPrivateRoomFixture_ == QStringLiteral("guest-waiting")
+        || roomDirectory_.waiting();
+}
+QString AppController::privateRoomCode() const {
+    return visualPrivateRoomFixture_.isEmpty()
+        ? roomDirectory_.roomCode() : QStringLiteral("THEWONDERYEARS");
+}
+QString AppController::privateRoomStatus() const { return roomDirectory_.status(); }
+QVariantList AppController::waitingRoomRequests() const {
+    return visualWaitingRoomRequests_.isEmpty()
+        ? roomDirectory_.waitingRequests() : visualWaitingRoomRequests_;
+}
 bool AppController::automaticPortMapping() const noexcept {
     return peerTelemetry_.automaticPortMapping;
 }
@@ -1517,6 +1569,19 @@ void AppController::hostSession() {
     emit roomChanged();
 }
 
+void AppController::hostNamedSession(const QString& roomCode) {
+    if (!roomDirectory_.available()) {
+        setupMessage_ = QStringLiteral(
+            "Private room names need the JamLink directory service; use the direct invite");
+        emit setupChanged();
+        return;
+    }
+    hostSession();
+    if (peerTransport_ && !inviteCode_.isEmpty()) {
+        roomDirectory_.create(roomCode, inviteCode_, roomCompatibility());
+    }
+}
+
 void AppController::joinSession(const QString& inviteCode) {
     if (visualFixture_ || !audioService_ || !audioActive() || !allReady()) {
         setupMessage_ = QStringLiteral("Verify the real private audio setup before joining");
@@ -1524,6 +1589,29 @@ void AppController::joinSession(const QString& inviteCode) {
         emit setupChanged();
         return;
     }
+    const QString normalized = inviteCode.trimmed();
+    if (!normalized.startsWith(QStringLiteral("JL1|"), Qt::CaseInsensitive)) {
+        if (!roomDirectory_.available()) {
+            setupMessage_ = QStringLiteral(
+                "Private room names are unavailable; paste the full direct invite");
+            emit setupChanged();
+            return;
+        }
+        leaveSession();
+        roomDirectory_.requestJoin(
+            normalized,
+            roomCompatibility(),
+            profileDisplayName(),
+            profilePrimaryInstrument(),
+            profileAvatarId());
+        setCurrentPage(QStringLiteral("room"));
+        emit roomChanged();
+        return;
+    }
+    joinDirectSession(normalized);
+}
+
+void AppController::joinDirectSession(const QString& inviteCode) {
     leaveSession();
     auto transport = jamlink::network::createPlatformPeerAudioTransport();
     if (transport) {
@@ -1563,15 +1651,18 @@ void AppController::joinSession(const QString& inviteCode) {
 }
 
 void AppController::leaveSession() {
-    if (!peerTransport_) {
+    if (!peerTransport_ && !roomDirectory_.active() && !roomDirectory_.hosting()) {
         return;
     }
+    roomDirectory_.stop();
     if (audioService_) {
         audioService_->stop();
         audioService_->setPeerAudioExchange(nullptr);
     }
-    peerTransport_->stop();
-    peerTransport_.reset();
+    if (peerTransport_) {
+        peerTransport_->stop();
+        peerTransport_.reset();
+    }
     peerTelemetry_ = {};
     remoteParticipant_ = {};
     remoteParticipants_.clear();
@@ -1585,8 +1676,9 @@ void AppController::leaveSession() {
 }
 
 void AppController::copyInvite() {
-    if (!inviteCode_.isEmpty()) {
-        QGuiApplication::clipboard()->setText(inviteCode_);
+    const QString visibleInvite = inviteCode();
+    if (!visibleInvite.isEmpty()) {
+        QGuiApplication::clipboard()->setText(visibleInvite);
         setupMessage_ = QStringLiteral("Invite code copied");
         emit setupChanged();
     }
@@ -1604,6 +1696,22 @@ jamlink::network::PeerParticipantInfo AppController::localParticipant() const {
     participant.buildIdentity = JAMLINK_BUILD_IDENTITY_STRING;
     participant.releaseChannel = JAMLINK_RELEASE_CHANNEL_STRING;
     return participant;
+}
+
+QJsonObject AppController::roomCompatibility() const {
+    return {
+        {QStringLiteral("application_version"), QStringLiteral(JAMLINK_VERSION_STRING)},
+        {QStringLiteral("build_identity"), QStringLiteral(JAMLINK_BUILD_IDENTITY_STRING)},
+        {QStringLiteral("release_channel"), QStringLiteral(JAMLINK_RELEASE_CHANNEL_STRING)},
+        {QStringLiteral("media_protocol"),
+            static_cast<int>(jamlink::network::currentMediaProtocolVersion)},
+        {QStringLiteral("control_protocol"),
+            static_cast<int>(jamlink::network::currentControlProtocolVersion)},
+    };
+}
+
+void AppController::decideWaitingRequest(const QString& requestId, bool admit) {
+    roomDirectory_.decide(requestId, admit);
 }
 
 bool AppController::sendChatMessage(const QString& text) {

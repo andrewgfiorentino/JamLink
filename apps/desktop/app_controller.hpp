@@ -6,8 +6,10 @@
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
+#include "private_room_directory.hpp"
 #include "update_manager.hpp"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -29,6 +31,7 @@ class AppController final : public QObject {
     QML_UNCREATABLE("Created by the JamLink application")
     Q_PROPERTY(QString currentPage READ currentPage WRITE setCurrentPage NOTIFY currentPageChanged)
     Q_PROPERTY(bool visualFixture READ visualFixture CONSTANT)
+    Q_PROPERTY(QString visualPrivateRoomFixture READ visualPrivateRoomFixture CONSTANT)
     Q_PROPERTY(bool restoredPreferences READ restoredPreferences CONSTANT)
     Q_PROPERTY(bool devicesAvailable READ devicesAvailable NOTIFY setupChanged)
     Q_PROPERTY(bool audioActive READ audioActive NOTIFY setupChanged)
@@ -75,6 +78,12 @@ class AppController final : public QObject {
     Q_PROPERTY(bool peerConnected READ peerConnected NOTIFY roomChanged)
     Q_PROPERTY(QString roomStatus READ roomStatus NOTIFY roomChanged)
     Q_PROPERTY(QString inviteCode READ inviteCode NOTIFY roomChanged)
+    Q_PROPERTY(bool privateRoomCodesAvailable READ privateRoomCodesAvailable CONSTANT)
+    Q_PROPERTY(bool privateRoomBusy READ privateRoomBusy NOTIFY roomChanged)
+    Q_PROPERTY(bool privateRoomWaiting READ privateRoomWaiting NOTIFY roomChanged)
+    Q_PROPERTY(QString privateRoomCode READ privateRoomCode NOTIFY roomChanged)
+    Q_PROPERTY(QString privateRoomStatus READ privateRoomStatus NOTIFY roomChanged)
+    Q_PROPERTY(QVariantList waitingRoomRequests READ waitingRoomRequests NOTIFY roomChanged)
     Q_PROPERTY(bool automaticPortMapping READ automaticPortMapping NOTIFY roomChanged)
     Q_PROPERTY(int roomPort READ roomPort NOTIFY roomChanged)
     Q_PROPERTY(int roundTripMilliseconds READ roundTripMilliseconds NOTIFY roomChanged)
@@ -160,6 +169,7 @@ public:
     [[nodiscard]] QString currentPage() const;
     void setCurrentPage(const QString& page);
     [[nodiscard]] bool visualFixture() const noexcept;
+    [[nodiscard]] QString visualPrivateRoomFixture() const;
     [[nodiscard]] bool restoredPreferences() const noexcept;
     [[nodiscard]] bool devicesAvailable() const noexcept;
     [[nodiscard]] bool audioActive() const noexcept;
@@ -216,6 +226,12 @@ public:
     [[nodiscard]] bool peerConnected() const noexcept;
     [[nodiscard]] QString roomStatus() const;
     [[nodiscard]] QString inviteCode() const;
+    [[nodiscard]] bool privateRoomCodesAvailable() const noexcept;
+    [[nodiscard]] bool privateRoomBusy() const noexcept;
+    [[nodiscard]] bool privateRoomWaiting() const noexcept;
+    [[nodiscard]] QString privateRoomCode() const;
+    [[nodiscard]] QString privateRoomStatus() const;
+    [[nodiscard]] QVariantList waitingRoomRequests() const;
     [[nodiscard]] bool automaticPortMapping() const noexcept;
     [[nodiscard]] int roomPort() const noexcept;
     [[nodiscard]] int roundTripMilliseconds() const noexcept;
@@ -315,7 +331,9 @@ public:
     Q_INVOKABLE void clearVoiceClipping();
     Q_INVOKABLE void clearOutputClipping();
     Q_INVOKABLE void hostSession();
+    Q_INVOKABLE void hostNamedSession(const QString& roomCode);
     Q_INVOKABLE void joinSession(const QString& inviteCode);
+    Q_INVOKABLE void decideWaitingRequest(const QString& requestId, bool admit);
     Q_INVOKABLE void leaveSession();
     Q_INVOKABLE void copyInvite();
     Q_INVOKABLE bool setCustomAvatar(const QUrl& source);
@@ -396,6 +414,8 @@ private:
         double gain);
     void applyTunerMute();
     [[nodiscard]] jamlink::network::PeerParticipantInfo localParticipant() const;
+    [[nodiscard]] QJsonObject roomCompatibility() const;
+    void joinDirectSession(const QString& inviteCode);
     void processRoomControlEvents();
     void appendChatEntry(
         const QString& sender,
@@ -412,6 +432,7 @@ private:
         static_cast<std::size_t>(jamlink::network::AudioStreamId::Voice);
 
     jamlink::preferences::PreferencesStore store_;
+    PrivateRoomDirectory roomDirectory_;
     UpdateManager updateManager_;
     jamlink::preferences::UserPreferences preferences_;
     jamlink::control::ReadinessTracker readiness_;
@@ -425,6 +446,9 @@ private:
     bool visualFixture_{false};
     bool visualClipFixture_{false};
     bool visualRoomFixture_{false};
+    QString visualPrivateRoomFixture_;
+    QVariantList visualWaitingRoomRequests_;
+    bool visualRecordingFixture_{false};
     int visualRoomParticipantCount_{2};
     bool restoredPreferences_{false};
     bool restoredSetupAvailable_{false};

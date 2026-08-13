@@ -9,6 +9,8 @@ set_source_files_properties(qml/components/Theme.qml PROPERTIES QT_QML_SINGLETON
 qt_add_executable(jamlink_desktop WIN32
     app_controller.cpp
     main.cpp
+    private_room_directory.cpp
+    private_room_directory.hpp
     update_manager.cpp
     update_manager.hpp
 )
@@ -74,6 +76,7 @@ target_compile_definitions(jamlink_desktop
         JAMLINK_VERSION_STRING="${PROJECT_VERSION}"
         JAMLINK_BUILD_IDENTITY_STRING="${JAMLINK_BUILD_IDENTITY}"
         JAMLINK_RELEASE_CHANNEL_STRING="${JAMLINK_RELEASE_CHANNEL}"
+        JAMLINK_DIRECTORY_URL_STRING="${JAMLINK_DIRECTORY_URL}"
 )
 set_target_properties(jamlink_desktop PROPERTIES
     CXX_EXTENSIONS OFF
@@ -113,10 +116,38 @@ if(BUILD_TESTING)
     set_tests_properties(jamlink_desktop_updater_tests PROPERTIES
         TIMEOUT 30 LABELS "gui;update")
 
+    if(Python3_Interpreter_FOUND)
+        add_executable(jamlink_private_room_directory_tests
+            private_room_directory.cpp
+            private_room_directory.hpp
+            private_room_directory_tests.cpp
+        )
+        target_link_libraries(
+            jamlink_private_room_directory_tests PRIVATE Qt6::Core Qt6::Network)
+        target_compile_features(jamlink_private_room_directory_tests PRIVATE cxx_std_20)
+        set_target_properties(
+            jamlink_private_room_directory_tests PROPERTIES CXX_EXTENSIONS OFF)
+        jamlink_set_warnings(jamlink_private_room_directory_tests)
+        if(MSVC)
+            target_compile_options(
+                jamlink_private_room_directory_tests PRIVATE /external:W0)
+        endif()
+        add_test(
+            NAME jamlink_private_room_directory_tests
+            COMMAND jamlink_private_room_directory_tests
+                "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/services/directory/jamlink_directory.py"
+        )
+        set_tests_properties(jamlink_private_room_directory_tests PROPERTIES
+            TIMEOUT 20 LABELS "gui;service;security")
+    endif()
+
     add_executable(jamlink_desktop_controller_tests
         app_controller.cpp
         app_controller.hpp
         controller_tests.cpp
+        private_room_directory.cpp
+        private_room_directory.hpp
         update_manager.cpp
         update_manager.hpp
     )
@@ -129,6 +160,7 @@ if(BUILD_TESTING)
             JAMLINK_VERSION_STRING="${PROJECT_VERSION}"
             JAMLINK_BUILD_IDENTITY_STRING="${JAMLINK_BUILD_IDENTITY}"
             JAMLINK_RELEASE_CHANNEL_STRING="${JAMLINK_RELEASE_CHANNEL}"
+            JAMLINK_DIRECTORY_URL_STRING="${JAMLINK_DIRECTORY_URL}"
     )
     set_target_properties(jamlink_desktop_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_desktop_controller_tests)
@@ -181,6 +213,46 @@ if(BUILD_TESTING)
             --minimum-capture-height 728
             --preferences "${_jamlink_visual_preferences}"
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-room.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_named_room_create
+        COMMAND jamlink_desktop
+            --visual-fixture --expect-restored --page home
+            --width 532 --height 680 --minimum-capture-height 680
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-named-create.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_named_room_guest_waiting
+        COMMAND jamlink_desktop
+            --visual-fixture --expect-restored --page room
+            --width 532 --height 620 --minimum-capture-height 620
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-named-guest-waiting.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_named_room_host_drawer
+        COMMAND jamlink_desktop
+            --visual-fixture --expect-restored --page room
+            --width 532 --height 728 --minimum-capture-height 728
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-named-host-drawer.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_named_room_host_drawer_wide
+        COMMAND jamlink_desktop
+            --visual-fixture --expect-restored --page room
+            --width 980 --height 760 --minimum-capture-width 980 --minimum-capture-height 760
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-named-host-drawer-wide.png"
+    )
+    add_test(
+        NAME jamlink_desktop_visual_named_room_recording_queue
+        COMMAND jamlink_desktop
+            --visual-fixture --expect-restored --page room
+            --width 532 --height 728 --minimum-capture-height 728
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-named-recording-queue.png"
     )
     add_test(
         NAME jamlink_desktop_visual_tuner
@@ -283,6 +355,11 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_second_launch
         jamlink_desktop_visual_settings
         jamlink_desktop_visual_room
+        jamlink_desktop_visual_named_room_create
+        jamlink_desktop_visual_named_room_guest_waiting
+        jamlink_desktop_visual_named_room_host_drawer
+        jamlink_desktop_visual_named_room_host_drawer_wide
+        jamlink_desktop_visual_named_room_recording_queue
         jamlink_desktop_visual_tuner
         jamlink_desktop_visual_four_musician_room
         jamlink_desktop_visual_four_musician_room_wide
@@ -299,6 +376,10 @@ if(BUILD_TESTING)
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
     set_tests_properties(jamlink_desktop_updater_tests PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
+    if(TARGET jamlink_private_room_directory_tests)
+        set_tests_properties(jamlink_private_room_directory_tests PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_jamlink_qt_bin}")
+    endif()
     set_tests_properties(
         jamlink_desktop_visual_second_launch
         PROPERTIES DEPENDS jamlink_desktop_visual_first_launch)
@@ -311,6 +392,25 @@ if(BUILD_TESTING)
     set_tests_properties(
         jamlink_desktop_visual_tuner
         PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_tests_properties(
+        jamlink_desktop_visual_named_room_create
+        jamlink_desktop_visual_named_room_guest_waiting
+        jamlink_desktop_visual_named_room_host_drawer
+        jamlink_desktop_visual_named_room_host_drawer_wide
+        jamlink_desktop_visual_named_room_recording_queue
+        PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_property(TEST jamlink_desktop_visual_named_room_create APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_PRIVATE_ROOM=set:create")
+    set_property(TEST jamlink_desktop_visual_named_room_guest_waiting APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_PRIVATE_ROOM=set:guest-waiting")
+    set_property(TEST jamlink_desktop_visual_named_room_host_drawer APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_PRIVATE_ROOM=set:host-drawer")
+    set_property(TEST jamlink_desktop_visual_named_room_host_drawer_wide APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_PRIVATE_ROOM=set:host-drawer")
+    set_property(TEST jamlink_desktop_visual_named_room_recording_queue APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION
+            "JAMLINK_VISUAL_PRIVATE_ROOM=set:host-drawer"
+            "JAMLINK_VISUAL_RECORDING=set:1")
     set_tests_properties(
         jamlink_desktop_visual_four_musician_room
         PROPERTIES DEPENDS jamlink_desktop_visual_room)

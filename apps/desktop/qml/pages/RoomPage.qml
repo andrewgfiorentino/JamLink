@@ -9,6 +9,7 @@ Item {
     id: root
     required property AppController controller
     property bool chatOpen: false
+    property bool waitingOpen: root.controller.visualPrivateRoomFixture === "host-drawer"
 
     Rectangle {
         id: header
@@ -19,20 +20,30 @@ Item {
         color: "transparent"
 
         Column {
+            id: roomHeading
             anchors.left: parent.left
             anchors.leftMargin: 20
+            anchors.right: headerActions.left
+            anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
             Text {
-                text: "Room: Private Jam"
+                width: parent.width
+                text: root.controller.privateRoomCode.length > 0
+                    ? "Room: " + root.controller.privateRoomCode : "Room: Private Jam"
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
                 color: Theme.text
                 font.family: Theme.fontFamily
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
             }
             Text {
+                width: parent.width
                 text: root.controller.peerConnected
                     ? "Encrypted room session" : root.controller.roomStatus
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
                 color: root.controller.peerConnected ? Theme.connected : Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: 9
@@ -40,6 +51,7 @@ Item {
         }
 
         Row {
+            id: headerActions
             anchors.right: parent.right
             anchors.rightMargin: 15
             anchors.verticalCenter: parent.verticalCenter
@@ -59,6 +71,17 @@ Item {
                     color: Theme.connected
                     font.family: Theme.numericFontFamily
                     font.pixelSize: 9
+                }
+            }
+            Item {
+                width: 82
+                height: 30
+                JamButton {
+                    anchors.fill: parent
+                    visible: !root.controller.recording
+                        && root.controller.waitingRoomRequests.length > 0
+                    text: "Waiting " + root.controller.waitingRoomRequests.length
+                    onClicked: root.waitingOpen = !root.waitingOpen
                 }
             }
             JamButton {
@@ -106,8 +129,13 @@ Item {
                     anchors.margins: 13
                     spacing: 8
                     Text {
-                        text: root.controller.inviteCode.length > 0
-                            ? "Your invite is ready" : "Opening your private room…"
+                        text: root.controller.privateRoomWaiting
+                            ? "Waiting for host approval"
+                            : root.controller.inviteCode.length === 0
+                                && root.controller.privateRoomCode.length > 0
+                                ? root.controller.privateRoomStatus
+                            : root.controller.inviteCode.length > 0
+                                ? "Your private invite is ready" : "Opening your private room…"
                         color: Theme.text
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
@@ -144,7 +172,14 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        text: "Your friend can paste this code on Home. Keep JamLink open."
+                        text: root.controller.privateRoomWaiting
+                            ? "No room audio or media key is available until the host lets you in."
+                            : root.controller.inviteCode.length === 0
+                                && root.controller.privateRoomCode.length > 0
+                                ? "No room audio was shared. Leave to return home."
+                            : root.controller.privateRoomCode.length > 0
+                                ? "Tell your friend this room name. Their request appears quietly here."
+                                : "Your friend can paste this code on Home. Keep JamLink open."
                         color: Theme.textMuted
                         wrapMode: Text.WordWrap
                         font.family: Theme.fontFamily
@@ -155,13 +190,15 @@ Item {
 
             Flow {
                 id: participantsFlow
+                visible: !root.controller.privateRoomWaiting
                 readonly property int cardColumns: width >= 900
                     ? Math.min(3, root.controller.roomParticipantCount)
                     : width >= 440 ? Math.min(2, root.controller.roomParticipantCount) : 1
                 readonly property int cardRows: Math.ceil(
                     root.controller.roomParticipantCount / Math.max(1, cardColumns))
                 width: parent.width
-                height: cardRows * 330 + Math.max(0, cardRows - 1) * spacing
+                height: visible
+                    ? cardRows * 330 + Math.max(0, cardRows - 1) * spacing : 0
                 spacing: 10
 
                 Repeater {
@@ -185,6 +222,7 @@ Item {
                                 Text {
                                     width: parent.width - participantState.width
                                     text: participantCard.modelData.displayName.toUpperCase()
+                                    textFormat: Text.PlainText
                                     color: Theme.text
                                     elide: Text.ElideRight
                                     font.family: Theme.fontFamily
@@ -194,6 +232,7 @@ Item {
                                 Text {
                                     id: participantState
                                     text: participantCard.modelData.stateLabel
+                                    textFormat: Text.PlainText
                                     color: participantCard.modelData.present
                                         ? Theme.connected : Theme.textMuted
                                     font.family: Theme.fontFamily
@@ -220,6 +259,8 @@ Item {
                                 enabled: participantCard.modelData.controlsEnabled
                                 interactiveMute: !participantCard.modelData.local
                                     && participantCard.modelData.controlsEnabled
+                                accessibleLabel: participantCard.modelData.displayName
+                                    + " " + participantCard.modelData.instrument
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "instrument", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -236,6 +277,8 @@ Item {
                                 enabled: participantCard.modelData.controlsEnabled
                                 interactiveMute: !participantCard.modelData.local
                                     && participantCard.modelData.controlsEnabled
+                                accessibleLabel: participantCard.modelData.displayName
+                                    + " microphone"
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "voice", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -247,8 +290,9 @@ Item {
             }
 
             Row {
+                visible: !root.controller.privateRoomWaiting
                 width: parent.width
-                height: 44
+                height: visible ? 44 : 0
                 spacing: 9
                 JamButton {
                     width: (parent.width - 18) / 3
@@ -280,8 +324,9 @@ Item {
             }
 
             JamCard {
+                visible: !root.controller.privateRoomWaiting
                 width: parent.width
-                height: 70
+                height: visible ? 70 : 0
                 Row {
                     anchors.fill: parent
                     anchors.margins: 12
@@ -407,6 +452,7 @@ Item {
                             Text {
                                 width: parent.width - timeText.width
                                 text: chatEntry.modelData.own ? "You" : chatEntry.modelData.sender
+                                textFormat: Text.PlainText
                                 color: chatEntry.modelData.own ? "#d0aaf4" : Theme.connected
                                 font.family: Theme.fontFamily
                                 font.pixelSize: 9
@@ -424,6 +470,7 @@ Item {
                             id: messageText
                             width: Math.min(chatList.width - 28, implicitWidth)
                             text: chatEntry.modelData.text
+                            textFormat: Text.PlainText
                             color: chatEntry.modelData.system ? Theme.textMuted : Theme.text
                             wrapMode: Text.Wrap
                             horizontalAlignment: chatEntry.modelData.system
@@ -493,6 +540,135 @@ Item {
         }
     }
 
+    Rectangle {
+        id: waitingDrawer
+        z: 31
+        visible: root.waitingOpen && !root.controller.recording
+        anchors.top: header.bottom
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        width: Math.min(390, parent.width - 16)
+        color: Theme.surfaceNested
+        border.color: "#3a454d"
+        radius: Theme.radiusPanel
+
+        Rectangle {
+            id: waitingHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 62
+            color: "transparent"
+            Column {
+                anchors.left: parent.left
+                anchors.leftMargin: 17
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 2
+                Text {
+                    text: "Waiting to join"
+                    color: Theme.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    text: "No room audio is available before approval"
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 9
+                }
+            }
+            IconButton {
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                iconSource: Qt.resolvedUrl("../../assets/close.svg")
+                Accessible.name: "Close waiting list"
+                onClicked: root.waitingOpen = false
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.borderSoft
+            }
+        }
+
+        ListView {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: waitingHeader.bottom
+            anchors.bottom: parent.bottom
+            anchors.margins: 14
+            spacing: 10
+            clip: true
+            model: root.controller.waitingRoomRequests
+            delegate: JamCard {
+                id: waitingEntry
+                required property var modelData
+                width: ListView.view.width
+                height: 128
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 7
+                    Row {
+                        width: parent.width
+                        spacing: 10
+                        ProfileAvatar {
+                            width: 38
+                            height: 38
+                            avatarId: waitingEntry.modelData.avatar_id
+                        }
+                        Column {
+                            width: parent.width - 48
+                            spacing: 2
+                            Text {
+                                text: waitingEntry.modelData.display_name
+                                textFormat: Text.PlainText
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                text: waitingEntry.modelData.primary_instrument.length > 0
+                                    ? waitingEntry.modelData.primary_instrument : "Musician"
+                                textFormat: Text.PlainText
+                                color: Theme.textSecondary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 9
+                            }
+                        }
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: 8
+                        JamButton {
+                            width: (parent.width - 8) / 2
+                            height: 34
+                            text: "Deny"
+                            enabled: !root.controller.privateRoomBusy
+                            onClicked: root.controller.decideWaitingRequest(
+                                waitingEntry.modelData.request_id, false)
+                        }
+                        JamButton {
+                            width: (parent.width - 8) / 2
+                            height: 34
+                            primary: true
+                            text: root.controller.peerConnected ? "Room full" : "Let In"
+                            enabled: !root.controller.privateRoomBusy
+                                && !root.controller.peerConnected
+                            onClicked: root.controller.decideWaitingRequest(
+                                waitingEntry.modelData.request_id, true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     component StreamPanel: Rectangle {
         id: stream
         required property string title
@@ -502,6 +678,7 @@ Item {
         property bool muted: false
         property color accent: Theme.accent
         property bool interactiveMute: false
+        property string accessibleLabel: title
         signal gainMoved(real value)
         signal muteToggled(bool muted)
         height: 88
@@ -549,6 +726,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     width: parent.width - (stream.interactiveMute ? muteSwitch.width + 7 : 0)
                     value: stream.gain
+                    Accessible.name: stream.accessibleLabel + " level"
                     onMoved: stream.gainMoved(value)
                 }
                 JamSwitch {
@@ -556,6 +734,7 @@ Item {
                     visible: stream.interactiveMute
                     anchors.verticalCenter: parent.verticalCenter
                     checked: !stream.muted
+                    Accessible.name: stream.accessibleLabel + " enabled"
                     onToggled: stream.muteToggled(!checked)
                 }
             }

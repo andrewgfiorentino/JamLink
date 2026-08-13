@@ -8,6 +8,7 @@ import asyncio
 import collections
 import dataclasses
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
@@ -21,8 +22,13 @@ MAX_HEADER_BYTES = 16 * 1024
 MAX_BODY_BYTES = 64 * 1024
 PRESENCE_TTL_SECONDS = 45.0
 LOBBY_TTL_SECONDS = 45.0
+PRIVATE_ROOM_TTL_SECONDS = 90.0
+PRIVATE_REQUEST_TTL_SECONDS = 120.0
+MAXIMUM_PRIVATE_REQUESTS_PER_ROOM = 16
 HANDLE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,23}$")
+PRIVATE_ROOM_CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9-]{3,31}$")
 RESERVED_HANDLES = {"admin", "administrator", "jamlink", "moderator", "support", "system"}
+RESERVED_ROOM_CODES = {"ADMIN", "JAMLINK", "MODERATOR", "SUPPORT", "SYSTEM"}
 
 
 @dataclasses.dataclass(slots=True)
@@ -65,6 +71,32 @@ class Lobby:
     media_protocol: int
     control_protocol: int
     invite_code: str
+    expires_at: float
+
+
+@dataclasses.dataclass(slots=True)
+class PrivateRoom:
+    code: str
+    invite_code: str
+    owner_token_hash: str
+    application_version: str
+    build_identity: str
+    release_channel: str
+    media_protocol: int
+    control_protocol: int
+    admission_closed: bool
+    expires_at: float
+
+
+@dataclasses.dataclass(slots=True)
+class PrivateJoinRequest:
+    request_id: str
+    room_code: str
+    request_token_hash: str
+    display_name: str
+    primary_instrument: str
+    avatar_id: str
+    status: str
     expires_at: float
 
 
@@ -116,8 +148,13 @@ class DirectoryState:
         self.database.commit()
         self.presences: dict[str, Presence] = {}
         self.lobbies: dict[str, Lobby] = {}
+        # Private room names are deliberately ephemeral and never written to
+        # SQLite or returned by the public lobby endpoint. The human-readable
+        # code is a rendezvous alias; the high-entropy JL1 media secret stays
+        # withheld until the host explicitly admits a request.
+        self.private_rooms: dict[str, PrivateRoom] = {}
+        self.private_requests: dict[str, PrivateJoinRequest] = {}
         self.rate_windows: dict[str, collections.deque[float]] = {}
-        self.event_clients: set[asyncio.StreamWriter] = set()
 
     def close(self) -> None:
         self.database.close()
@@ -339,7 +376,233 @@ class DirectoryState:
                 "error": "update_required",
                 "required_version": lobby.application_version,
             })
-        return Response(200, {"invite_code": lobby.invite_code})
+        # Public discovery never conveys the bearer media invite. Public-room
+        # waiting/admission will issue participant-bound authorization; until
+        # that path is active, joining fails closed instead of leaking JL1.
+        return Response(403, {"error": "host_admission_required"})
+
+    @staticmethod
+    def private_token_matches(authorization: str, expected_hash: str) -> bool:
+        if not authorization.startswith("Bearer "):
+            return False
+        token = authorization[7:]
+        if len(token) != 64 or not all(character in "0123456789abcdef" for character in token):
+            return False
+        return secrets.compare_digest(
+            hashlib.sha256(token.encode("ascii")).hexdigest(), expected_hash
+        )
+
+    @staticmethod
+    def normalize_private_code(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("room code has the wrong type")
+        code = value.strip().upper()
+        if not PRIVATE_ROOM_CODE_PATTERN.fullmatch(code) or code in RESERVED_ROOM_CODES:
+            raise ValueError("room code is invalid")
+        return code
+
+    def create_private_room(
+        self, payload: dict[str, Any], authorization: str = ""
+    ) -> Response:
+        self.expire()
+        try:
+            code = self.normalize_private_code(payload.get("code", ""))
+            invite_code = _clean_text(payload.get("invite_code", ""), 2048, required=True)
+            application_version = _clean_text(
+                payload.get("application_version", ""), 32, required=True
+            )
+            build_identity = _clean_text(payload.get("build_identity", ""), 64, required=True)
+            release_channel = _clean_text(
+                payload.get("release_channel", ""), 16, required=True
+            )
+            media_protocol = int(payload.get("media_protocol", 0))
+            control_protocol = int(payload.get("control_protocol", 0))
+        except (ValueError, TypeError):
+            return Response(400, {"error": "private_room_invalid"})
+        if not invite_code.startswith("JL1|") \
+                or not 1 <= media_protocol <= 65_535 \
+                or not 1 <= control_protocol <= 65_535:
+            return Response(400, {"error": "private_room_invalid"})
+
+        existing = self.private_rooms.get(code)
+        if existing is not None and not self.private_token_matches(
+            authorization, existing.owner_token_hash
+        ):
+            return Response(409, {"error": "room_code_taken"})
+        owner_token = secrets.token_hex(32)
+        self.private_rooms[code] = PrivateRoom(
+            code,
+            invite_code,
+            hashlib.sha256(owner_token.encode("ascii")).hexdigest(),
+            application_version,
+            build_identity,
+            release_channel,
+            media_protocol,
+            control_protocol,
+            False,
+            self.clock() + PRIVATE_ROOM_TTL_SECONDS,
+        )
+        for request_id, request in list(self.private_requests.items()):
+            if request.room_code == code:
+                del self.private_requests[request_id]
+        return Response(201, {
+            "code": code,
+            "owner_token": owner_token,
+            "expires_in_seconds": int(PRIVATE_ROOM_TTL_SECONDS),
+        })
+
+    def heartbeat_private_room(self, code: str, authorization: str) -> Response:
+        self.expire()
+        room = self.private_rooms.get(code)
+        if room is None:
+            return Response(404, {"error": "private_room_not_found"})
+        if not self.private_token_matches(authorization, room.owner_token_hash):
+            return Response(403, {"error": "not_room_owner"})
+        room.expires_at = self.clock() + PRIVATE_ROOM_TTL_SECONDS
+        return Response(200, {
+            "ok": True,
+            "admission_closed": room.admission_closed,
+        })
+
+    def remove_private_room(self, code: str, authorization: str) -> Response:
+        self.expire()
+        room = self.private_rooms.get(code)
+        if room is None:
+            return Response(204, {})
+        if not self.private_token_matches(authorization, room.owner_token_hash):
+            return Response(403, {"error": "not_room_owner"})
+        del self.private_rooms[code]
+        self.private_requests = {
+            key: value
+            for key, value in self.private_requests.items()
+            if value.room_code != code
+        }
+        return Response(204, {})
+
+    def request_private_room(self, code: str, payload: dict[str, Any]) -> Response:
+        self.expire()
+        room = self.private_rooms.get(code)
+        if room is None:
+            return Response(404, {"error": "private_room_not_found"})
+        if room.admission_closed:
+            return Response(409, {"error": "room_already_admitted"})
+        compatible = (
+            payload.get("application_version") == room.application_version
+            and payload.get("build_identity") == room.build_identity
+            and payload.get("release_channel") == room.release_channel
+            and payload.get("media_protocol") == room.media_protocol
+            and payload.get("control_protocol") == room.control_protocol
+        )
+        if not compatible:
+            return Response(409, {
+                "error": "update_required",
+                "required_version": room.application_version,
+            })
+        try:
+            display_name = _clean_text(
+                payload.get("display_name", "Musician"), 48, required=True
+            )
+            primary_instrument = _clean_text(
+                payload.get("primary_instrument", ""), 48
+            )
+            avatar_id = _clean_text(
+                payload.get("avatar_id", "avatar:listener"), 48, required=True
+            )
+        except ValueError:
+            return Response(400, {"error": "join_request_invalid"})
+        pending_count = sum(
+            1
+            for request in self.private_requests.values()
+            if request.room_code == code and request.status == "waiting"
+        )
+        if pending_count >= MAXIMUM_PRIVATE_REQUESTS_PER_ROOM:
+            return Response(429, {"error": "waiting_room_full"})
+        request_id = str(uuid.uuid4())
+        request_token = secrets.token_hex(32)
+        self.private_requests[request_id] = PrivateJoinRequest(
+            request_id,
+            code,
+            hashlib.sha256(request_token.encode("ascii")).hexdigest(),
+            display_name,
+            primary_instrument,
+            avatar_id,
+            "waiting",
+            self.clock() + PRIVATE_REQUEST_TTL_SECONDS,
+        )
+        return Response(201, {
+            "request_id": request_id,
+            "request_token": request_token,
+            "status": "waiting",
+        })
+
+    def list_private_requests(self, code: str, authorization: str) -> Response:
+        self.expire()
+        room = self.private_rooms.get(code)
+        if room is None:
+            return Response(404, {"error": "private_room_not_found"})
+        if not self.private_token_matches(authorization, room.owner_token_hash):
+            return Response(403, {"error": "not_room_owner"})
+        requests = [
+            {
+                "request_id": request.request_id,
+                "display_name": request.display_name,
+                "primary_instrument": request.primary_instrument,
+                "avatar_id": request.avatar_id,
+                "status": request.status,
+            }
+            for request in self.private_requests.values()
+            if request.room_code == code and request.status == "waiting"
+        ]
+        return Response(200, {"requests": requests})
+
+    def decide_private_request(
+        self,
+        code: str,
+        request_id: str,
+        authorization: str,
+        approve: bool,
+    ) -> Response:
+        self.expire()
+        room = self.private_rooms.get(code)
+        request = self.private_requests.get(request_id)
+        if room is None or request is None or request.room_code != code:
+            return Response(404, {"error": "join_request_not_found"})
+        if not self.private_token_matches(authorization, room.owner_token_hash):
+            return Response(403, {"error": "not_room_owner"})
+        if request.status != "waiting":
+            return Response(409, {"error": "join_request_already_decided"})
+        if approve and room.admission_closed:
+            return Response(409, {"error": "room_already_admitted"})
+        request.status = "admitted" if approve else "denied"
+        request.expires_at = self.clock() + PRIVATE_REQUEST_TTL_SECONDS
+        if approve:
+            # JL1 is a single-performer bearer-key session. Atomically close
+            # this room-name slot on first admission so the same media secret
+            # cannot authorize a later requester after the active peer drops.
+            room.admission_closed = True
+            for other in self.private_requests.values():
+                if other.room_code == code and other.request_id != request_id \
+                        and other.status == "waiting":
+                    other.status = "denied"
+                    other.expires_at = self.clock() + PRIVATE_REQUEST_TTL_SECONDS
+        return Response(200, {"status": request.status})
+
+    def private_request_status(
+        self, request_id: str, authorization: str
+    ) -> Response:
+        self.expire()
+        request = self.private_requests.get(request_id)
+        if request is None:
+            return Response(404, {"error": "join_request_not_found"})
+        if not self.private_token_matches(authorization, request.request_token_hash):
+            return Response(403, {"error": "not_request_owner"})
+        payload: dict[str, Any] = {"status": request.status}
+        if request.status == "admitted":
+            room = self.private_rooms.get(request.room_code)
+            if room is None:
+                return Response(404, {"error": "private_room_not_found"})
+            payload["invite_code"] = room.invite_code
+        return Response(200, payload)
 
     def report(self, reporter: str, payload: dict[str, Any]) -> Response:
         try:
@@ -358,19 +621,43 @@ class DirectoryState:
 
     def expire(self) -> bool:
         now = self.clock()
-        before = (len(self.presences), len(self.lobbies))
+        before = (
+            len(self.presences), len(self.lobbies),
+            len(self.private_rooms), len(self.private_requests),
+        )
         self.presences = {
             key: value for key, value in self.presences.items() if value.expires_at > now
         }
         self.lobbies = {
             key: value for key, value in self.lobbies.items() if value.expires_at > now
         }
-        return before != (len(self.presences), len(self.lobbies))
+        self.private_rooms = {
+            key: value
+            for key, value in self.private_rooms.items()
+            if value.expires_at > now
+        }
+        self.private_requests = {
+            key: value
+            for key, value in self.private_requests.items()
+            if value.expires_at > now and value.room_code in self.private_rooms
+        }
+        for peer, window in list(self.rate_windows.items()):
+            while window and window[0] < now - 60.0:
+                window.popleft()
+            if not window:
+                del self.rate_windows[peer]
+        return before != (
+            len(self.presences), len(self.lobbies),
+            len(self.private_rooms), len(self.private_requests),
+        )
 
 
 class DirectoryServer:
-    def __init__(self, state: DirectoryState) -> None:
+    def __init__(
+        self, state: DirectoryState, trusted_proxies: set[str] | None = None
+    ) -> None:
         self.state = state
+        self.trusted_proxies = trusted_proxies or set()
         self.server: asyncio.AbstractServer | None = None
         self.cleanup_task: asyncio.Task[None] | None = None
 
@@ -388,8 +675,6 @@ class DirectoryServer:
         if self.server is not None:
             self.server.close()
             await self.server.wait_closed()
-        for writer in tuple(self.state.event_clients):
-            writer.close()
         self.state.close()
 
     @property
@@ -400,8 +685,7 @@ class DirectoryServer:
     async def cleanup_loop(self) -> None:
         while True:
             await asyncio.sleep(5.0)
-            if self.state.expire():
-                await self.broadcast()
+            self.state.expire()
 
     async def read_request(self, reader: asyncio.StreamReader, peer: str) -> Request:
         header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10.0)
@@ -428,20 +712,24 @@ class DirectoryServer:
         peer = str(peer_info[0]) if peer_info else "unknown"
         try:
             request = await self.read_request(reader, peer)
-            if request.method == "GET" and request.target == "/v1/events":
-                await self.handle_events(writer)
-                return
-            response, changed = self.route(request)
+            response, _changed = self.route(request)
         except (ValueError, UnicodeError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             response, changed = Response(400, {"error": "bad_request"}), False
         except asyncio.TimeoutError:
             response, changed = Response(408, {"error": "request_timeout"}), False
         await self.write_response(writer, response)
-        if changed:
-            await self.broadcast()
+
+    def rate_identity(self, request: Request) -> str:
+        if request.peer not in self.trusted_proxies:
+            return request.peer
+        forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+        try:
+            return str(ipaddress.ip_address(forwarded))
+        except ValueError:
+            return request.peer
 
     def route(self, request: Request) -> tuple[Response, bool]:
-        if not self.state.rate_allowed(request.peer):
+        if not self.state.rate_allowed(self.rate_identity(request)):
             return Response(429, {"error": "rate_limited"}), False
         try:
             payload = json.loads(request.body.decode("utf-8")) if request.body else {}
@@ -452,10 +740,61 @@ class DirectoryServer:
         authorization = request.headers.get("authorization", "")
         profile_id = self.state.authenticate(authorization)
 
+        if request.target == "/v1/events":
+            return Response(404, {"error": "not_found"}), False
         if request.method == "GET" and request.target == "/v1/health":
-            return Response(200, {"service": "jamlink-directory", "version": 1}), False
+            return Response(200, {"service": "jamlink-directory", "version": 2}), False
         if request.method == "GET" and request.target == "/v1/lobbies":
             return self.state.list_lobbies(), False
+        if request.method == "POST" and request.target == "/v1/private-rooms":
+            response = self.state.create_private_room(payload, authorization)
+            return response, False
+        match = re.fullmatch(
+            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})/(heartbeat|requests)",
+            request.target,
+        )
+        if match:
+            try:
+                room_code = self.state.normalize_private_code(match.group(1))
+            except ValueError:
+                return Response(400, {"error": "private_room_invalid"}), False
+            action = match.group(2)
+            if request.method == "POST" and action == "heartbeat":
+                return self.state.heartbeat_private_room(room_code, authorization), False
+            if request.method == "POST" and action == "requests":
+                return self.state.request_private_room(room_code, payload), False
+            if request.method == "GET" and action == "requests":
+                return self.state.list_private_requests(room_code, authorization), False
+        match = re.fullmatch(
+            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})/requests/"
+            r"([0-9a-f-]{36})/(admit|deny)",
+            request.target,
+        )
+        if request.method == "POST" and match:
+            try:
+                room_code = self.state.normalize_private_code(match.group(1))
+            except ValueError:
+                return Response(400, {"error": "private_room_invalid"}), False
+            return self.state.decide_private_request(
+                room_code,
+                match.group(2),
+                authorization,
+                match.group(3) == "admit",
+            ), False
+        match = re.fullmatch(
+            r"/v1/private-requests/([0-9a-f-]{36})", request.target
+        )
+        if request.method == "GET" and match:
+            return self.state.private_request_status(match.group(1), authorization), False
+        match = re.fullmatch(
+            r"/v1/private-rooms/([A-Za-z0-9-]{4,32})", request.target
+        )
+        if request.method == "DELETE" and match:
+            try:
+                room_code = self.state.normalize_private_code(match.group(1))
+            except ValueError:
+                return Response(400, {"error": "private_room_invalid"}), False
+            return self.state.remove_private_room(room_code, authorization), False
         if request.method == "POST" and request.target == "/v1/profiles/register":
             response = self.state.register_profile(payload, authorization)
             return response, response.status < 300
@@ -500,44 +839,9 @@ class DirectoryServer:
         writer.close()
         await writer.wait_closed()
 
-    async def handle_events(self, writer: asyncio.StreamWriter) -> None:
-        writer.write(
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
-            b"Cache-Control: no-store\r\nConnection: keep-alive\r\n\r\n"
-        )
-        await writer.drain()
-        self.state.event_clients.add(writer)
-        try:
-            while not writer.is_closing():
-                data = _json_bytes({
-                    "online_count": self.state.online_count(),
-                    "lobby_count": len(self.state.lobbies),
-                })
-                writer.write(b"event: directory\ndata: " + data + b"\n\n")
-                await writer.drain()
-                await asyncio.sleep(20.0)
-        except (ConnectionError, asyncio.CancelledError):
-            pass
-        finally:
-            self.state.event_clients.discard(writer)
-            writer.close()
-
-    async def broadcast(self) -> None:
-        data = _json_bytes({
-            "online_count": self.state.online_count(),
-            "lobby_count": len(self.state.lobbies),
-        })
-        for writer in tuple(self.state.event_clients):
-            try:
-                writer.write(b"event: directory\ndata: " + data + b"\n\n")
-                await writer.drain()
-            except ConnectionError:
-                self.state.event_clients.discard(writer)
-
-
 async def _run(arguments: argparse.Namespace) -> None:
     state = DirectoryState(Path(arguments.database))
-    server = DirectoryServer(state)
+    server = DirectoryServer(state, set(arguments.trusted_proxy))
     await server.start(arguments.host, arguments.port)
     print(f"JamLink directory listening on {arguments.host}:{server.port}", flush=True)
     try:
@@ -551,6 +855,12 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--database", default="data/jamlink-directory.sqlite3")
+    parser.add_argument(
+        "--trusted-proxy",
+        action="append",
+        default=[],
+        help="Proxy IP allowed to supply X-Forwarded-For; repeat as needed",
+    )
     arguments = parser.parse_args()
     try:
         asyncio.run(_run(arguments))

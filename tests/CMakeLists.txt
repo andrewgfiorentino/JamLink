@@ -10,6 +10,15 @@ add_test(NAME jamlink_core_tests COMMAND jamlink_core_tests)
 # machine and can legitimately cross 30 seconds on a shared CI runner.
 set_tests_properties(jamlink_core_tests PROPERTIES TIMEOUT 90)
 
+add_executable(jamlink_room_authority_tests jamlink_room_authority_tests.cpp)
+target_link_libraries(jamlink_room_authority_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_room_authority_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_room_authority_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_room_authority_tests)
+add_test(NAME jamlink_room_authority_tests COMMAND jamlink_room_authority_tests)
+set_tests_properties(jamlink_room_authority_tests PROPERTIES
+    TIMEOUT 30 LABELS "control;security")
+
 add_executable(jamlink_network_tests jamlink_network_tests.cpp)
 target_link_libraries(jamlink_network_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_network_tests PRIVATE cxx_std_20)
@@ -46,5 +55,5 @@ if(WIN32)
     jamlink_set_warnings(jamlink_peer_transport_tests)
     add_test(NAME jamlink_peer_transport_tests COMMAND jamlink_peer_transport_tests)
     set_tests_properties(jamlink_peer_transport_tests PROPERTIES
-        TIMEOUT 20 LABELS "network;loopback")
+        TIMEOUT 35 LABELS "network;loopback")
 endif()

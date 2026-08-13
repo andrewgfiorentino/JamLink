@@ -415,31 +415,40 @@ void survivesHostileDatagrams() {
         return static_cast<std::uint8_t>(state >> 56U);
     };
 
-    std::array<std::uint8_t, 1'400U> datagram{};
-    for (std::size_t attempt = 0U; attempt < 2'000U; ++attempt) {
-        for (std::uint8_t& byte : datagram) {
-            byte = nextByte();
+    std::atomic<bool> floodRunning{true};
+    std::thread flood([&] {
+        std::array<std::uint8_t, 1'400U> datagram{};
+        for (std::size_t attempt = 0U; attempt < 20'000U
+             && floodRunning.load(std::memory_order_acquire); ++attempt) {
+            for (std::uint8_t& byte : datagram) {
+                byte = nextByte();
+            }
+            // A quarter of the attempts wear a valid magic and version so the
+            // parser is pushed past its cheapest rejection.
+            if (attempt % 4U == 0U) {
+                datagram[0] = 0x4AU;
+                datagram[1] = 0x4CU;
+                datagram[2] = 0x4BU;
+                datagram[3] = 0x31U;
+                datagram[4] = 2U;
+            }
+            const int length = static_cast<int>(1U + (attempt * 7U) % datagram.size());
+            static_cast<void>(sendto(
+                attacker.get(), reinterpret_cast<const char*>(datagram.data()), length, 0,
+                reinterpret_cast<const sockaddr*>(&target), sizeof(target)));
         }
-        // A quarter of the attempts wear a valid magic and version so the
-        // parser is pushed past its cheapest rejection.
-        if (attempt % 4U == 0U) {
-            datagram[0] = 0x4AU;
-            datagram[1] = 0x4CU;
-            datagram[2] = 0x4BU;
-            datagram[3] = 0x31U;
-            datagram[4] = 2U;
-        }
-        const int length = static_cast<int>(1U + (attempt * 7U) % datagram.size());
-        static_cast<void>(sendto(
-            attacker.get(), reinterpret_cast<const char*>(datagram.data()), length, 0,
-            reinterpret_cast<const sockaddr*>(&target), sizeof(target)));
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    });
+
+    const bool audioDuringFlood = exchangeAudio(*host, *guest);
+    floodRunning.store(false, std::memory_order_release);
+    flood.join();
 
     check(
         host->telemetry().state == PeerConnectionState::Connected,
         "session survives hostile datagrams");
-    check(exchangeAudio(*host, *guest), "audio still flows after hostile datagrams");
+    check(audioDuringFlood, "audio flows concurrently with hostile datagrams");
+    check(guest->telemetry().state == PeerConnectionState::Connected,
+        "peer remains connected during hostile datagrams");
 
     host->stop();
     guest->stop();
@@ -561,8 +570,21 @@ void reconnectsAfterGuestRestart() {
     check(firstSessionPackets > 64U, "first session outlives the replay window");
     guest->stop();
 
-    // Rejoining reuses the room secret, so the derived keys and nonce prefixes
-    // must be re-established rather than continuing an old counter.
+    // JL1 has no cryptographic device identity or resume token. Fail closed:
+    // the host must first expire the old endpoint before a fresh endpoint can
+    // reuse the bearer invite. JL2 will replace this delay with signed,
+    // rotating session resumption.
+    const auto expiryDeadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(6);
+    while (std::chrono::steady_clock::now() < expiryDeadline
+           && host->telemetry().state != PeerConnectionState::WaitingForPeer) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(host->telemetry().state == PeerConnectionState::WaitingForPeer,
+          "host expires the old endpoint before JL1 reconnect");
+
+    // Rejoining reuses the room secret after that fail-closed expiry, so the
+    // derived keys and nonce prefixes are re-established from a clean session.
     const bool rejoined = guest->join(invite) && waitForConnected(*host, *guest);
     check(rejoined, "guest rejoins the same room after leaving");
     check(rejoined && exchangeAudio(*host, *guest), "audio resumes after rejoin");
@@ -661,7 +683,9 @@ void additionalGuestCannotDisplaceActivePerformer() {
     }
     host->setLocalParticipant(participant("profile-host", "Andrew"));
     guest->setLocalParticipant(participant("profile-guest", "Mike"));
-    additionalGuest->setLocalParticipant(participant("profile-extra", "Chris"));
+    // A copied invite plus a copied, self-asserted profile ID must not be
+    // mistaken for a secure reconnect while the real performer is healthy.
+    additionalGuest->setLocalParticipant(participant("profile-guest", "Impostor"));
     const std::string invite = forceLoopback(host->host(0U, false));
     const bool connected = !invite.empty() && guest->join(invite)
         && waitForConnected(*host, *guest);
@@ -677,6 +701,8 @@ void additionalGuestCannotDisplaceActivePerformer() {
           "additional join never displaces the active performer");
     check(host->remoteParticipant().profileId == "profile-guest",
           "host keeps the original authenticated participant identity");
+    check(host->remoteParticipant().displayName == "Mike",
+          "copied profile ID cannot repin the active endpoint");
     check(exchangeAudio(*host, *guest),
           "active two-person audio continues during an additional join attempt");
 

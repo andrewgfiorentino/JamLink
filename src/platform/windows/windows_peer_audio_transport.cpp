@@ -1463,7 +1463,9 @@ private:
                 timeval timeout{0, 5'000};
                 const int selected = select(0, &readSet, nullptr, nullptr, &timeout);
                 if (selected > 0 && FD_ISSET(socket_.get(), &readSet)) {
-                    for (;;) {
+                    constexpr std::size_t maximumDatagramsPerCycle = 64U;
+                    for (std::size_t datagram = 0U;
+                         datagram < maximumDatagramsPerCycle; ++datagram) {
                         sockaddr_in source{};
                         int sourceBytes = sizeof(source);
                         const int bytes = recvfrom(
@@ -1489,6 +1491,11 @@ private:
                             state_.store(
                                 PeerConnectionState::SocketFailed, std::memory_order_release);
                             return;
+                        }
+                        if (connected && remoteAddress_.sin_port != 0U
+                            && !sameEndpoint(source, remoteAddress_)) {
+                            packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
+                            continue;
                         }
                         if (handlePacket(
                                 sendCipher, receiveCipher,
@@ -1611,6 +1618,21 @@ private:
         if (type != PacketType::Hello && !sameEndpoint(source, remoteAddress_)) {
             return false;
         }
+        const auto payload = std::span<const std::uint8_t>(
+            plaintext.data(), payloadBytes);
+        // A bearer invite is not identity proof. While a performer is healthy,
+        // no other endpoint may repin the host even if it copies that person's
+        // self-reported profile ID. Secure cross-endpoint resume belongs to the
+        // JL2 identity/session-token path; JL1 waits for the existing session
+        // to time out before considering a replacement endpoint.
+        if (type == PacketType::Hello && hostMode_) {
+            PeerParticipantInfo proposedParticipant;
+            if (!decodeParticipant(payload, proposedParticipant)
+                || (connected && remoteAddress_.sin_port != 0U
+                    && !sameEndpoint(source, remoteAddress_))) {
+                return false;
+            }
+        }
         // A peer that leaves and rejoins the same room restarts its nonce
         // counter from zero while this host keeps running, so its first packets
         // look far older than the window's high water mark and every one of
@@ -1626,21 +1648,10 @@ private:
             return false;
         }
         lastReceive = GetTickCount64();
-        const auto payload = std::span<const std::uint8_t>(
-            plaintext.data(), payloadBytes);
 
         if (type == PacketType::Hello && hostMode_) {
             PeerParticipantInfo participant;
             if (!decodeParticipant(payload, participant)) {
-                return false;
-            }
-            // Until a multi-peer topology owns distinct session state, never
-            // let another identity replace a healthy performer merely because
-            // it has a copied invite. The same authenticated identity may
-            // reconnect from a new ephemeral port after its socket restarts.
-            if (connected && remoteAddress_.sin_port != 0U
-                && !sameEndpoint(source, remoteAddress_)
-                && participant.profileId != remoteParticipant().profileId) {
                 return false;
             }
             remoteAddress_ = source;

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.3.2
+    VERSION 0.3.3
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
@@ -25,6 +25,8 @@ if(Git_FOUND)
     endif()
 endif()
 set(JAMLINK_RELEASE_CHANNEL "test" CACHE STRING "JamLink release channel")
+set(JAMLINK_DIRECTORY_URL "" CACHE STRING
+    "HTTPS URL for the optional JamLink private-room/directory service")
 
 set(JAMLINK_LICENSE_ID "GPL-3.0-or-later")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
@@ -43,6 +45,7 @@ add_library(jamlink_core STATIC
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
+    src/control/room_authority.cpp
     src/network/audio_stream_receiver.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp
