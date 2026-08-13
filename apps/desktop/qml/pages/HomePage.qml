@@ -228,7 +228,9 @@ Item {
                     width: (parent.width - parent.spacing) / 2
                     height: parent.height
                     title: "Join a Friend"
-                    detail: "Enter a temporary code or full invite"
+                    detail: root.controller.privateRoomCodesAvailable
+                        ? "Enter a temporary code or full invite"
+                        : "Paste a private encrypted invite"
                     icon: "music_note.svg"
                     enabled: root.canJam
                     onActivated: root.joinExpanded = !root.joinExpanded
