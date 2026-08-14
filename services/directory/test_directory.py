@@ -134,7 +134,7 @@ class DirectoryStateTests(unittest.TestCase):
         room_payload = {
             "code": "thewonderyears",
             "invite_code": "JL1|203.0.113.2|45000|" + "b" * 64,
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "c" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -152,7 +152,7 @@ class DirectoryStateTests(unittest.TestCase):
         requested = self.state.request_private_room(
             "THEWONDERYEARS",
             {
-                "application_version": "0.3.3",
+                "application_version": "0.3.4",
                 "build_identity": "c" * 40,
                 "release_channel": "test",
                 "media_protocol": 2,
@@ -183,7 +183,7 @@ class DirectoryStateTests(unittest.TestCase):
         second = self.state.request_private_room(
             "THEWONDERYEARS",
             {
-                "application_version": "0.3.3",
+                "application_version": "0.3.4",
                 "build_identity": "c" * 40,
                 "release_channel": "test",
                 "media_protocol": 2,
@@ -224,7 +224,7 @@ class DirectoryStateTests(unittest.TestCase):
         rejected_after_admission = self.state.request_private_room(
             "THEWONDERYEARS",
             {
-                "application_version": "0.3.3",
+                "application_version": "0.3.4",
                 "build_identity": "c" * 40,
                 "release_channel": "test",
                 "media_protocol": 2,
@@ -251,7 +251,7 @@ class DirectoryStateTests(unittest.TestCase):
         payload = {
             "code": "CAPPED-ROOM",
             "invite_code": "JL1|198.51.100.8|45003|" + "a" * 64,
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "b" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -259,7 +259,7 @@ class DirectoryStateTests(unittest.TestCase):
         }
         self.assertEqual(self.state.create_private_room(payload).status, 201)
         compatibility = {
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "b" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -278,7 +278,7 @@ class DirectoryStateTests(unittest.TestCase):
         created = self.state.create_private_room({
             "code": "BAND-PRACTICE",
             "invite_code": "JL1|198.51.100.7|45001|" + "d" * 64,
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "e" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -288,7 +288,7 @@ class DirectoryStateTests(unittest.TestCase):
         requested = self.state.request_private_room(
             "BAND-PRACTICE",
             {
-                "application_version": "0.3.3",
+                "application_version": "0.3.4",
                 "build_identity": "e" * 40,
                 "release_channel": "test",
                 "media_protocol": 2,
@@ -303,7 +303,7 @@ class DirectoryStateTests(unittest.TestCase):
         reused = self.state.create_private_room({
             "code": "band-practice",
             "invite_code": "JL1|198.51.100.7|45001|" + "e" * 64,
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "e" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -314,7 +314,7 @@ class DirectoryStateTests(unittest.TestCase):
 
     def test_private_invite_code_validation_case_matching_and_display(self) -> None:
         compatibility = {
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "9" * 40,
             "release_channel": "test",
             "media_protocol": 2,
@@ -356,7 +356,7 @@ class DirectoryStateTests(unittest.TestCase):
     def test_private_room_http_routes_never_reveal_invite_before_admission(self) -> None:
         server = DirectoryServer(self.state)
         compatibility = {
-            "application_version": "0.3.3",
+            "application_version": "0.3.4",
             "build_identity": "f" * 40,
             "release_channel": "test",
             "media_protocol": 2,

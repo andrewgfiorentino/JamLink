@@ -166,10 +166,10 @@ UpdateManager::UpdateManager(
     if (visualFixture_) {
         if (qEnvironmentVariableIsSet("JAMLINK_VISUAL_UPDATE")) {
             candidate_ = UpdateCandidate{
-                QStringLiteral("0.3.3"), QStringLiteral("v0.3.3-test"),
+                QStringLiteral("0.3.4"), QStringLiteral("v0.3.4-test"),
                 QUrl(QStringLiteral("https://example.invalid/JamLink.zip")),
                 QUrl(QStringLiteral("https://example.invalid/JamLink.zip.sha256")), {}};
-            status_ = QStringLiteral("JamLink 0.3.3 is ready");
+            status_ = QStringLiteral("JamLink 0.3.4 is ready");
         } else {
             status_ = QStringLiteral("JamLink is up to date");
         }

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4-test — 2026-08-14
 
 - Added a pre-host connection check for Sound Check readiness, local build/protocol identity, UDP binding, public-address discovery, and automatic router mapping.
 - Added clear **Ready**, **Direct connection may need help**, and fail-safe action states while keeping the full encrypted direct invite available when optional Internet preparation is inconclusive.

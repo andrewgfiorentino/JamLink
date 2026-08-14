@@ -2,12 +2,13 @@
 
 JamLink is a free, open-source Windows application for private two-person remote music sessions.
 
-Version 0.3.3-test provides:
+Version 0.3.4-test provides:
 
 - native ASIO instrument/output with a separately synchronized WASAPI USB microphone, plus all-WASAPI fallback;
 - local Private Sound Check with device/channel selection, monitoring, meters, mute, gain, and output test;
 - persistent per-source clipping warnings with peak hold, input/send/mix diagnosis, a silent indicator self-test, and callback-safe reset;
 - encrypted `JL1` invite codes for direct two-person Internet rooms, including automatic UPnP mapping and public-address discovery;
+- a pre-host connection check that distinguishes a likely-ready direct path from a path that may need firewall or router help without calling estimates measurements;
 - temporary, private, unlisted invite-code rendezvous with host admission when the build is connected to the included directory service;
 - independent instrument and voice streams with adaptive jitter buffering, packet-loss concealment, and separate remote mix controls;
 - authenticated participant identity, exact-build compatibility checks, reliable private room chat, reconnect handling, and malformed-packet protection;

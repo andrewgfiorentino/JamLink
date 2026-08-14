@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     const QJsonObject compatibility{
-        {QStringLiteral("application_version"), QStringLiteral("0.3.3")},
+        {QStringLiteral("application_version"), QStringLiteral("0.3.4")},
         {QStringLiteral("build_identity"), QString(40, QLatin1Char('a'))},
         {QStringLiteral("release_channel"), QStringLiteral("test")},
         {QStringLiteral("media_protocol"), 2},
