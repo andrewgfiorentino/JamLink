@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added a pre-host connection check for Sound Check readiness, local build/protocol identity, UDP binding, public-address discovery, and automatic router mapping.
+- Added clear **Ready**, **Direct connection may need help**, and fail-safe action states while keeping the full encrypted direct invite available when optional Internet preparation is inconclusive.
+- Clarified that reachability is inferred rather than measured and that a friend’s exact build is verified during the encrypted join.
+
 ## 0.3.3-test — 2026-08-13
 
 - Added a silent end-to-end clipping-indicator self-test and a latched near-full-scale risk detector for native inputs that have effectively no remaining headroom.

@@ -558,6 +558,28 @@ int main(int argc, char* argv[]) {
                     "scaled room keeps stable local-first participant ordering") && passed;
     qunsetenv("JAMLINK_VISUAL_ROOM_SIZE");
 
+    qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host-drawer"));
+    jamlink::desktop::AppController preflightFixture(
+        directory / "preflight.jlpf", true,
+        QStringLiteral("room"), 532U, 728U);
+    passed = expect(preflightFixture.connectionPreflightStatus() == QStringLiteral("Ready")
+                        && preflightFixture.connectionPreflightReady(),
+                    "host fixture exposes the musician-facing Ready preflight result")
+        && passed;
+    passed = expect(preflightFixture.connectionPreflightDetail().contains(
+                        QStringLiteral("not a measured Internet connection"))
+                        && preflightFixture.connectionPreflightDetail().contains(
+                            QStringLiteral("verified during the encrypted join")),
+                    "preflight copy separates inferred reachability from join-time identity")
+        && passed;
+    preflightFixture.leaveSession();
+    passed = expect(!preflightFixture.connectionPreflightReady()
+                        && preflightFixture.connectionPreflightStatus()
+                            == QStringLiteral("Connection check not run"),
+                    "leaving clears the preflight result instead of preserving stale Ready")
+        && passed;
+    qunsetenv("JAMLINK_VISUAL_PRIVATE_ROOM");
+
     std::filesystem::remove_all(directory, cleanupError);
     std::cout << (passed ? "[PASS] desktop controller persistence and readiness\n"
                          : "[FAIL] desktop controller persistence and readiness\n");

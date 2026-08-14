@@ -804,31 +804,54 @@ public:
 
     [[nodiscard]] std::string host(
         std::uint16_t port,
-        bool prepareInternetReachability) override {
+        bool discoverPublicAddress,
+        bool requestAutomaticPortMapping) override {
         stop();
         if (!winsock_.available() || !createBoundSocket(port)) {
             state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
             return {};
         }
+        udpBound_.store(true, std::memory_order_release);
         if (!BCRYPT_SUCCESS(BCryptGenRandom(
                 nullptr, secret_.data(), static_cast<ULONG>(secret_.size()),
                 BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
             state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
             socket_.reset();
+            localPort_ = 0U;
+            udpBound_.store(false, std::memory_order_release);
             return {};
         }
 
         const std::string localAddress = localIpv4Address();
-        const PortMappingResult mapping = prepareInternetReachability
+        const bool mappingRequested = discoverPublicAddress
+            && requestAutomaticPortMapping;
+        const PortMappingResult mapping = mappingRequested
             ? addAutomaticPortMapping(localPort_, localAddress)
             : PortMappingResult{};
         mappedPort_ = mapping.mapped;
-        const StunEndpoint publicEndpoint = prepareInternetReachability
+        portMapping_.store(
+            mappingRequested
+                ? (mapping.mapped ? PortMappingState::Succeeded : PortMappingState::Failed)
+                : PortMappingState::NotRequested,
+            std::memory_order_release);
+        const StunEndpoint publicEndpoint = discoverPublicAddress
             ? queryStun(socket_.get())
             : StunEndpoint{};
+        publicAddressDiscovery_.store(
+            discoverPublicAddress
+                ? (publicEndpoint.succeeded
+                    ? PublicAddressDiscoveryState::Succeeded
+                    : PublicAddressDiscoveryState::Failed)
+                : PublicAddressDiscoveryState::NotAttempted,
+            std::memory_order_release);
         const bool usableAutomaticMapping = mapping.mapped
             && (publicEndpoint.succeeded || !mapping.externalAddress.empty());
         automaticPortMapping_.store(usableAutomaticMapping, std::memory_order_relaxed);
+        reachability_.store(
+            usableAutomaticMapping
+                ? ReachabilityAssessment::LikelyReachable
+                : ReachabilityAssessment::Unknown,
+            std::memory_order_release);
         std::string inviteAddress;
         if (publicEndpoint.succeeded) {
             inviteAddress = publicEndpoint.address;
@@ -860,12 +883,15 @@ public:
             state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
             return false;
         }
+        udpBound_.store(true, std::memory_order_release);
         remoteAddress_ = {};
         remoteAddress_.sin_family = AF_INET;
         remoteAddress_.sin_port = htons(port);
         if (inet_pton(AF_INET, address.c_str(), &remoteAddress_.sin_addr) != 1) {
             state_.store(PeerConnectionState::InviteInvalid, std::memory_order_release);
             socket_.reset();
+            localPort_ = 0U;
+            udpBound_.store(false, std::memory_order_release);
             return false;
         }
         inviteCode_ = inviteCode;
@@ -887,6 +913,12 @@ public:
         mappedPort_ = false;
         localPort_ = 0U;
         inviteCode_.clear();
+        automaticPortMapping_.store(false, std::memory_order_relaxed);
+        udpBound_.store(false, std::memory_order_release);
+        publicAddressDiscovery_.store(
+            PublicAddressDiscoveryState::NotAttempted, std::memory_order_release);
+        portMapping_.store(PortMappingState::NotRequested, std::memory_order_release);
+        reachability_.store(ReachabilityAssessment::Unknown, std::memory_order_release);
         {
             const std::scoped_lock lock(controlMutex_);
             pendingChat_.clear();
@@ -1010,6 +1042,11 @@ public:
             roundTripMicroseconds_.load(std::memory_order_relaxed);
         snapshot.automaticPortMapping =
             automaticPortMapping_.load(std::memory_order_relaxed);
+        snapshot.udpBound = udpBound_.load(std::memory_order_acquire);
+        snapshot.publicAddressDiscovery =
+            publicAddressDiscovery_.load(std::memory_order_acquire);
+        snapshot.portMapping = portMapping_.load(std::memory_order_acquire);
+        snapshot.reachability = reachability_.load(std::memory_order_acquire);
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
             snapshot.localAudioDrops += localAudio_[index].overrunCount();
             const auto receiver = receivers_[index].telemetry();
@@ -1820,6 +1857,11 @@ private:
     std::atomic<std::uint64_t> packetsRejected_{0U};
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};
     std::atomic<bool> automaticPortMapping_{false};
+    std::atomic<bool> udpBound_{false};
+    std::atomic<PublicAddressDiscoveryState> publicAddressDiscovery_{
+        PublicAddressDiscoveryState::NotAttempted};
+    std::atomic<PortMappingState> portMapping_{PortMappingState::NotRequested};
+    std::atomic<ReachabilityAssessment> reachability_{ReachabilityAssessment::Unknown};
     std::array<audio::RealtimeAtomicFloat, audioStreamCount> remotePeak_{
         audio::RealtimeAtomicFloat(0.0F), audio::RealtimeAtomicFloat(0.0F)};
 };

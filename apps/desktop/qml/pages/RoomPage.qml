@@ -123,7 +123,7 @@ Item {
             JamCard {
                 visible: root.controller.roomActive && !root.controller.peerConnected
                 width: parent.width
-                height: visible ? 116 : 0
+                height: visible ? 142 : 0
                 Column {
                     anchors.fill: parent
                     anchors.margins: 13
@@ -135,8 +135,11 @@ Item {
                                 && root.controller.privateRoomCode.length > 0
                                 ? root.controller.privateRoomStatus
                             : root.controller.inviteCode.length > 0
-                                ? "Your private invite is ready" : "Opening your private room…"
-                        color: Theme.text
+                                ? root.controller.connectionPreflightStatus
+                                : "Opening your private room…"
+                        color: root.controller.connectionPreflightReady
+                            ? Theme.connected : root.controller.inviteCode.length > 0
+                                ? Theme.warning : Theme.text
                         font.family: Theme.fontFamily
                         font.pixelSize: 12
                         font.weight: Font.DemiBold
@@ -185,7 +188,7 @@ Item {
                                 ? "No room audio was shared. Leave to return home."
                             : root.controller.privateRoomCode.length > 0
                                 ? "Tell your friend this temporary code. Their request appears quietly here."
-                                : "Copy the invite and send it privately. Keep JamLink open."
+                                : root.controller.connectionPreflightDetail
                         color: Theme.textMuted
                         wrapMode: Text.WordWrap
                         font.family: Theme.fontFamily

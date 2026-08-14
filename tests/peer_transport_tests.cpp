@@ -263,6 +263,38 @@ void rejectsMalformedInvites() {
         && !transport->join("JL1|999.999.999.999|1234|"
                             "0000000000000000000000000000000000000000000000000000000000000000");
     check(rejected, "malformed invites are rejected");
+    check(transport && !transport->telemetry().udpBound
+              && transport->localPort() == 0U,
+          "invalid invite cleanup never reports a closed UDP socket as bound");
+}
+
+void reportsDeterministicOfflineHostPreflight() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host) {
+        check(false, "offline preflight transport factory");
+        return;
+    }
+    const std::string invite = host->host(0U, false);
+    const auto telemetry = host->telemetry();
+    check(!invite.empty(), "offline preflight creates the direct fallback invite");
+    check(telemetry.udpBound, "offline preflight reports successful UDP bind");
+    check(telemetry.publicAddressDiscovery
+              == jamlink::network::PublicAddressDiscoveryState::NotAttempted,
+          "offline preflight does not pretend public discovery ran");
+    check(telemetry.portMapping == jamlink::network::PortMappingState::NotRequested,
+          "offline preflight does not pretend router mapping ran");
+    check(telemetry.reachability == jamlink::network::ReachabilityAssessment::Unknown,
+          "offline preflight leaves Internet reachability unknown");
+    check(!telemetry.automaticPortMapping,
+          "offline preflight does not report automatic mapping");
+
+    host->stop();
+    const auto stopped = host->telemetry();
+    check(!stopped.udpBound
+              && stopped.publicAddressDiscovery
+                  == jamlink::network::PublicAddressDiscoveryState::NotAttempted
+              && stopped.portMapping == jamlink::network::PortMappingState::NotRequested,
+          "stopping clears preflight telemetry before the next room");
 }
 
 void exchangesEncryptedAudioOnLoopback() {
@@ -721,6 +753,7 @@ int main() {
     }
 
     rejectsMalformedInvites();
+    reportsDeterministicOfflineHostPreflight();
     exchangesEncryptedAudioOnLoopback();
     rejectsReflectedOwnTraffic();
     survivesHostileDatagrams();

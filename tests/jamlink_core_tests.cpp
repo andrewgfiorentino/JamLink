@@ -10,6 +10,7 @@
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/clock/clock_domain_controller.hpp"
 #include "jamlink/control/readiness_tracker.hpp"
+#include "jamlink/network/connection_preflight.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
 #include "support/simulated_audio_device_backend.hpp"
 
@@ -156,6 +157,71 @@ bool near(double actual, double expected, double tolerance) {
     do { if (!near((actual), (expected), (tolerance))) { \
         fail(#actual " ~= " #expected, __FILE__, __LINE__); \
     } } while (false)
+
+JAMLINK_TEST(connection_preflight_classifies_deterministic_fake_outcomes) {
+    using namespace jamlink::network;
+    const ConnectionPreflightChecks ready{
+        true,
+        true,
+        true,
+        true,
+        PublicAddressDiscoveryState::Succeeded,
+        PortMappingState::Succeeded,
+        ReachabilityAssessment::LikelyReachable};
+
+    const auto readyResult = evaluateConnectionPreflight(ready);
+    EXPECT_TRUE(readyResult.outcome == ConnectionPreflightOutcome::Ready);
+    EXPECT_TRUE(readyResult.action == ConnectionPreflightAction::None);
+    EXPECT_TRUE(readyResult.directInviteAllowed);
+
+    auto simulated = ready;
+    simulated.audioReady = false;
+    auto result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::Blocked);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::FinishSoundCheck);
+    EXPECT_TRUE(!result.directInviteAllowed);
+
+    simulated = ready;
+    simulated.buildIdentityReady = false;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::UseCurrentBuild);
+    EXPECT_TRUE(!result.directInviteAllowed);
+
+    simulated = ready;
+    simulated.protocolIdentityReady = false;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::UseCurrentBuild);
+
+    simulated = ready;
+    simulated.udpBindSucceeded = false;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::ChooseAnotherUdpPort);
+    EXPECT_TRUE(!result.directInviteAllowed);
+
+    simulated = ready;
+    simulated.publicAddress = PublicAddressDiscoveryState::Failed;
+    simulated.portMapping = PortMappingState::Failed;
+    simulated.reachability = ReachabilityAssessment::Unknown;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::DirectMayNeedHelp);
+    EXPECT_TRUE(result.action
+        == ConnectionPreflightAction::EnableMappingOrForwardPort);
+    EXPECT_TRUE(result.directInviteAllowed);
+
+    simulated = ready;
+    simulated.reachability = ReachabilityAssessment::LikelyBlocked;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::DirectMayNeedHelp);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::CheckFirewall);
+    EXPECT_TRUE(result.directInviteAllowed);
+
+    simulated = ready;
+    simulated.reachability = ReachabilityAssessment::RelayRequired;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::RelayRequired);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::ConfigureRelay);
+    EXPECT_TRUE(!result.directInviteAllowed);
+}
 
 JAMLINK_TEST(spsc_ring_preserves_order_across_wrap) {
     jamlink::audio::SpscAudioRing ring(8U, 1U);

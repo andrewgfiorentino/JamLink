@@ -85,6 +85,9 @@ class AppController final : public QObject {
     Q_PROPERTY(QString privateRoomStatus READ privateRoomStatus NOTIFY roomChanged)
     Q_PROPERTY(QVariantList waitingRoomRequests READ waitingRoomRequests NOTIFY roomChanged)
     Q_PROPERTY(bool automaticPortMapping READ automaticPortMapping NOTIFY roomChanged)
+    Q_PROPERTY(QString connectionPreflightStatus READ connectionPreflightStatus NOTIFY roomChanged)
+    Q_PROPERTY(QString connectionPreflightDetail READ connectionPreflightDetail NOTIFY roomChanged)
+    Q_PROPERTY(bool connectionPreflightReady READ connectionPreflightReady NOTIFY roomChanged)
     Q_PROPERTY(int roomPort READ roomPort NOTIFY roomChanged)
     Q_PROPERTY(int roundTripMilliseconds READ roundTripMilliseconds NOTIFY roomChanged)
     Q_PROPERTY(double remoteLevel READ remoteLevel NOTIFY roomChanged)
@@ -233,6 +236,9 @@ public:
     [[nodiscard]] QString privateRoomStatus() const;
     [[nodiscard]] QVariantList waitingRoomRequests() const;
     [[nodiscard]] bool automaticPortMapping() const noexcept;
+    [[nodiscard]] QString connectionPreflightStatus() const;
+    [[nodiscard]] QString connectionPreflightDetail() const;
+    [[nodiscard]] bool connectionPreflightReady() const noexcept;
     [[nodiscard]] int roomPort() const noexcept;
     [[nodiscard]] int roundTripMilliseconds() const noexcept;
     [[nodiscard]] double remoteLevel() const noexcept;
@@ -461,6 +467,7 @@ private:
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;
     jamlink::network::PeerTransportTelemetry peerTelemetry_;
+    jamlink::network::ConnectionPreflightResult connectionPreflight_;
     QString inviteCode_;
     bool sendMuted_{false};
     bool remoteInstrumentMuted_{false};

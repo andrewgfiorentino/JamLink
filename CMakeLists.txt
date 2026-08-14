@@ -23,7 +23,61 @@ if(Git_FOUND)
     string(LENGTH "${JAMLINK_GIT_COMMIT}" JAMLINK_GIT_COMMIT_LENGTH)
     if(JAMLINK_GIT_COMMIT_LENGTH EQUAL 40
         AND JAMLINK_GIT_COMMIT MATCHES "^[0-9a-fA-F]+$")
-        set(JAMLINK_BUILD_IDENTITY "${JAMLINK_GIT_COMMIT}")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=all
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE JAMLINK_GIT_STATUS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(JAMLINK_GIT_STATUS STREQUAL "")
+            set(JAMLINK_BUILD_IDENTITY "${JAMLINK_GIT_COMMIT}")
+        else()
+            # A dirty build must never negotiate as the clean commit it was
+            # configured from. The desktop deliberately refuses to host when
+            # the identity is not one exact 40-character commit.
+            set(JAMLINK_BUILD_IDENTITY "${JAMLINK_GIT_COMMIT}-dirty")
+        endif()
+
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" ls-files --cached --others --exclude-standard
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE JAMLINK_GIT_INPUTS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT JAMLINK_GIT_INPUTS STREQUAL "")
+            string(REPLACE "\n" ";" JAMLINK_GIT_INPUTS "${JAMLINK_GIT_INPUTS}")
+            list(TRANSFORM JAMLINK_GIT_INPUTS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                ${JAMLINK_GIT_INPUTS})
+        endif()
+
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE JAMLINK_GIT_HEAD_PATH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" symbolic-ref -q HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE JAMLINK_GIT_HEAD_REF
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(NOT JAMLINK_GIT_HEAD_REF STREQUAL "")
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path "${JAMLINK_GIT_HEAD_REF}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE JAMLINK_GIT_HEAD_REF_PATH
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+            )
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${JAMLINK_GIT_HEAD_PATH}" "${JAMLINK_GIT_HEAD_REF_PATH}")
     endif()
 endif()
 set(JAMLINK_RELEASE_CHANNEL "test" CACHE STRING "JamLink release channel")
@@ -49,6 +103,7 @@ add_library(jamlink_core STATIC
     src/control/readiness_tracker.cpp
     src/control/room_authority.cpp
     src/network/audio_stream_receiver.cpp
+    src/network/connection_preflight.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp
 )

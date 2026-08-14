@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "jamlink/network/connection_preflight.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -115,6 +117,11 @@ struct PeerTransportTelemetry final {
     // for interactive playing is well below millisecond display resolution.
     std::uint64_t roundTripMicroseconds{0U};
     bool automaticPortMapping{false};
+    bool udpBound{false};
+    PublicAddressDiscoveryState publicAddressDiscovery{
+        PublicAddressDiscoveryState::NotAttempted};
+    PortMappingState portMapping{PortMappingState::NotRequested};
+    ReachabilityAssessment reachability{ReachabilityAssessment::Unknown};
     std::array<RemoteStreamTelemetry, audioStreamCount> streams{};
 };
 
@@ -145,7 +152,8 @@ public:
     // on failure and contains the address, port, and a random 256-bit secret.
     [[nodiscard]] virtual std::string host(
         std::uint16_t port = 0U,
-        bool prepareInternetReachability = true) = 0;
+        bool discoverPublicAddress = true,
+        bool requestAutomaticPortMapping = true) = 0;
     [[nodiscard]] virtual bool join(const std::string& inviteCode) = 0;
     virtual void stop() noexcept = 0;
 

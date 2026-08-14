@@ -43,6 +43,20 @@ QString boundedSingleLine(const QString& value, qsizetype maximum) {
     return result.left(maximum);
 }
 
+bool exactBuildIdentityReady(const QString& value) noexcept {
+    if (value.size() != 40) {
+        return false;
+    }
+    for (const QChar character : value) {
+        const QChar lower = character.toLower();
+        if (!character.isDigit()
+            && (lower < QLatin1Char('a') || lower > QLatin1Char('f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 QString normalizedHandle(const QString& value) {
     QString source = value.trimmed().normalized(QString::NormalizationForm_KC);
     if (source.startsWith(QLatin1Char('@'))) {
@@ -175,6 +189,19 @@ AppController::AppController(
         peerTelemetry_.streams[instrumentStream].playing = true;
         peerTelemetry_.streams[voiceStream].peak = 0.48F;
         peerTelemetry_.streams[voiceStream].playing = true;
+        if (visualPrivateRoomFixture_.startsWith(QStringLiteral("host"))) {
+            peerTelemetry_.udpBound = true;
+            peerTelemetry_.publicAddressDiscovery =
+                jamlink::network::PublicAddressDiscoveryState::Succeeded;
+            peerTelemetry_.portMapping = jamlink::network::PortMappingState::Succeeded;
+            peerTelemetry_.reachability =
+                jamlink::network::ReachabilityAssessment::LikelyReachable;
+            connectionPreflight_ = jamlink::network::evaluateConnectionPreflight({
+                true, true, true, true,
+                peerTelemetry_.publicAddressDiscovery,
+                peerTelemetry_.portMapping,
+                peerTelemetry_.reachability});
+        }
         remoteParticipant_.profileId = "fixture:friend";
         remoteParticipant_.handle = "mike";
         remoteParticipant_.displayName = "Mike";
@@ -1245,9 +1272,10 @@ QString AppController::roomStatus() const {
             .arg(connectionQuality());
     }
     if (peerTelemetry_.state == jamlink::network::PeerConnectionState::WaitingForPeer
-        && !peerTelemetry_.automaticPortMapping) {
-        return QStringLiteral(
-            "Waiting for your friend · automatic router mapping unavailable");
+        && connectionPreflight_.outcome
+            != jamlink::network::ConnectionPreflightOutcome::NotRun) {
+        return QStringLiteral("Waiting for your friend · %1")
+            .arg(connectionPreflightStatus());
     }
     return peerStateText(peerTelemetry_.state);
 }
@@ -1278,6 +1306,81 @@ QVariantList AppController::waitingRoomRequests() const {
 }
 bool AppController::automaticPortMapping() const noexcept {
     return peerTelemetry_.automaticPortMapping;
+}
+QString AppController::connectionPreflightStatus() const {
+    using jamlink::network::ConnectionPreflightOutcome;
+    switch (connectionPreflight_.outcome) {
+    case ConnectionPreflightOutcome::Ready:
+        return QStringLiteral("Ready");
+    case ConnectionPreflightOutcome::DirectMayNeedHelp:
+        return QStringLiteral("Direct connection may need help");
+    case ConnectionPreflightOutcome::RelayRequired:
+        return QStringLiteral("Relay required");
+    case ConnectionPreflightOutcome::Blocked:
+        return QStringLiteral("Action needed");
+    case ConnectionPreflightOutcome::NotRun:
+        break;
+    }
+    return QStringLiteral("Connection check not run");
+}
+QString AppController::connectionPreflightDetail() const {
+    using jamlink::network::ConnectionPreflightAction;
+    using jamlink::network::PortMappingState;
+    using jamlink::network::PublicAddressDiscoveryState;
+    switch (connectionPreflight_.action) {
+    case ConnectionPreflightAction::None:
+        if (connectionPreflight_.outcome
+            == jamlink::network::ConnectionPreflightOutcome::Ready) {
+            return QStringLiteral(
+                "Public address and automatic router mapping found. This indicates likely "
+                "reachability; it is not a measured Internet connection. Your friend’s "
+                "exact build is verified during the encrypted join.");
+        }
+        break;
+    case ConnectionPreflightAction::FinishSoundCheck:
+        return QStringLiteral("Finish Sound Check before starting a private jam.");
+    case ConnectionPreflightAction::UseCurrentBuild:
+        return QStringLiteral(
+            "Install the current packaged JamLink build before hosting. Your friend’s exact "
+            "build is verified during the encrypted join.");
+    case ConnectionPreflightAction::ChooseAnotherUdpPort:
+        return QStringLiteral(
+            "JamLink could not open UDP port %1. Choose another port or allow JamLink through "
+            "Windows Firewall.").arg(preferences_.preferredUdpPort);
+    case ConnectionPreflightAction::EnableMappingOrForwardPort: {
+        const QString publicCheck = peerTelemetry_.publicAddressDiscovery
+                == PublicAddressDiscoveryState::Succeeded
+            ? QStringLiteral("A public address was found")
+            : peerTelemetry_.publicAddressDiscovery
+                    == PublicAddressDiscoveryState::Failed
+                ? QStringLiteral("Public-address discovery did not respond")
+                : QStringLiteral("Public-address discovery was not run");
+        const QString mappingCheck = peerTelemetry_.portMapping
+                == PortMappingState::Failed
+            ? QStringLiteral("automatic router mapping failed")
+            : QStringLiteral("automatic router mapping is off");
+        return QStringLiteral(
+            "%1, but %2. Turn mapping on or forward UDP port %3. Internet reachability was "
+            "not measured.")
+            .arg(publicCheck, mappingCheck)
+            .arg(roomPort() > 0 ? roomPort() : preferences_.preferredUdpPort);
+    }
+    case ConnectionPreflightAction::CheckFirewall:
+        return QStringLiteral(
+            "The direct path may be blocked. Allow JamLink through Windows Firewall and "
+            "forward the shown UDP port. Internet reachability was not measured.");
+    case ConnectionPreflightAction::ConfigureRelay:
+        return QStringLiteral(
+            "Direct traversal was assessed as unavailable. A relay is not configured in this "
+            "build, so no relay connection was attempted.");
+    }
+    return QStringLiteral(
+        "Start a private jam to check audio, build identity, UDP, public address, and router "
+        "mapping.");
+}
+bool AppController::connectionPreflightReady() const noexcept {
+    return connectionPreflight_.outcome
+        == jamlink::network::ConnectionPreflightOutcome::Ready;
 }
 int AppController::roomPort() const noexcept {
     return peerTransport_ ? static_cast<int>(peerTransport_->localPort()) : 0;
@@ -1399,7 +1502,12 @@ QString AppController::connectionQuality() const {
 
 QString AppController::networkDiagnostics() const {
     if (!peerTransport_) {
-        return QStringLiteral("No room session");
+        if (connectionPreflight_.outcome
+            == jamlink::network::ConnectionPreflightOutcome::NotRun) {
+            return QStringLiteral("No room session");
+        }
+        return QStringLiteral("%1 · %2")
+            .arg(connectionPreflightStatus(), connectionPreflightDetail());
     }
     const auto& instrument = peerTelemetry_.streams[instrumentStream];
     const auto& voice = peerTelemetry_.streams[voiceStream];
@@ -1595,10 +1703,25 @@ void AppController::testOutputClipping() {
 }
 
 void AppController::hostSession() {
-    if (visualFixture_ || !audioService_ || !audioActive() || !allReady()) {
+    jamlink::network::ConnectionPreflightChecks checks;
+    checks.audioReady = !visualFixture_ && audioService_ && audioActive() && allReady();
+    checks.buildIdentityReady = exactBuildIdentityReady(
+        QStringLiteral(JAMLINK_BUILD_IDENTITY_STRING));
+    checks.protocolIdentityReady =
+        jamlink::network::currentMediaProtocolVersion != 0U
+        && jamlink::network::currentControlProtocolVersion != 0U;
+    connectionPreflight_ = jamlink::network::evaluateConnectionPreflight(checks);
+    if (!checks.audioReady) {
         setupMessage_ = QStringLiteral("Verify the real private audio setup before hosting");
         setCurrentPage(QStringLiteral("soundcheck"));
         emit setupChanged();
+        emit roomChanged();
+        return;
+    }
+    if (!checks.buildIdentityReady || !checks.protocolIdentityReady) {
+        setupMessage_ = connectionPreflightDetail();
+        emit setupChanged();
+        emit roomChanged();
         return;
     }
     leaveSession();
@@ -1613,11 +1736,19 @@ void AppController::hostSession() {
         static_cast<jamlink::network::LatencyPreference>(preferences_.latencyMode));
     const std::string invite = transport->host(
         static_cast<std::uint16_t>(preferences_.preferredUdpPort),
+        true,
         preferences_.automaticPortMapping);
     peerTelemetry_ = transport->telemetry();
+    checks.udpBindSucceeded = peerTelemetry_.udpBound;
+    checks.publicAddress = peerTelemetry_.publicAddressDiscovery;
+    checks.portMapping = peerTelemetry_.portMapping;
+    checks.reachability = peerTelemetry_.reachability;
+    connectionPreflight_ = jamlink::network::evaluateConnectionPreflight(checks);
     if (invite.empty()) {
-        setupMessage_ = peerStateText(peerTelemetry_.state);
+        setupMessage_ = peerTelemetry_.state == jamlink::network::PeerConnectionState::SocketFailed
+            ? connectionPreflightDetail() : peerStateText(peerTelemetry_.state);
         emit setupChanged();
+        emit roomChanged();
         return;
     }
     audioService_->stop();
@@ -1751,6 +1882,11 @@ void AppController::joinDirectSession(const QString& inviteCode) {
 
 void AppController::leaveSession() {
     if (!peerTransport_ && !roomDirectory_.active() && !roomDirectory_.hosting()) {
+        if (connectionPreflight_.outcome
+            != jamlink::network::ConnectionPreflightOutcome::NotRun) {
+            connectionPreflight_ = {};
+            emit roomChanged();
+        }
         return;
     }
     roomDirectory_.stop();
@@ -1763,6 +1899,7 @@ void AppController::leaveSession() {
         peerTransport_.reset();
     }
     peerTelemetry_ = {};
+    connectionPreflight_ = {};
     remoteParticipant_ = {};
     remoteParticipants_.clear();
     inviteCode_.clear();

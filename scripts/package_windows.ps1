@@ -7,6 +7,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+$sourceStatus = (& git -C $repositoryRoot status --porcelain --untracked-files=all) -join "`n"
+if (-not [string]::IsNullOrWhiteSpace($sourceStatus)) {
+    throw "Commit JamLink source changes before creating a distributable package"
+}
+$sourceCommit = (& git -C $repositoryRoot rev-parse --verify HEAD).Trim()
+if ($sourceCommit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw "Could not determine the exact JamLink source commit"
+}
+
+$configurePreset = "windows-gui-vs2022"
+$buildPreset = if ($Configuration -eq "Release") {
+    "windows-gui-release"
+} else {
+    "windows-gui-debug"
+}
+& cmake --preset $configurePreset
+if ($LASTEXITCODE -ne 0) {
+    throw "JamLink configure failed with exit code $LASTEXITCODE"
+}
+& cmake --build --preset $buildPreset
+if ($LASTEXITCODE -ne 0) {
+    throw "JamLink build failed with exit code $LASTEXITCODE"
+}
+& ctest --test-dir (Join-Path $repositoryRoot "build\windows-gui-vs2022") `
+    -C $Configuration --output-on-failure
+if ($LASTEXITCODE -ne 0) {
+    throw "JamLink tests failed with exit code $LASTEXITCODE"
+}
+
 $qtRoot = Join-Path $repositoryRoot ".qt\6.10.3\msvc2022_64"
 $qtBin = Join-Path $qtRoot "bin"
 $deployTool = Join-Path $qtBin "windeployqt.exe"
@@ -145,15 +175,6 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\asio-sdk\LICENSE.
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\asio-sdk\README.md") `
     -Destination (Join-Path $packageDirectory "ASIO_SDK_PROVENANCE.md")
 
-& git -C $repositoryRoot diff --quiet
-if ($LASTEXITCODE -ne 0) {
-    throw "Commit JamLink source changes before creating a distributable package"
-}
-& git -C $repositoryRoot diff --cached --quiet
-if ($LASTEXITCODE -ne 0) {
-    throw "Commit staged JamLink source changes before creating a distributable package"
-}
-$sourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
 $sourceArchive = Join-Path $packageDirectory "JamLink-$packageVersion-source.zip"
 & git -C $repositoryRoot archive --format=zip --output=$sourceArchive HEAD
 if ($LASTEXITCODE -ne 0) {
