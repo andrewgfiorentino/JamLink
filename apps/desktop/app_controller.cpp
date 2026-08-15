@@ -1471,33 +1471,87 @@ QString AppController::connectionQuality() const {
         return QStringLiteral("Not connected");
     }
     const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    const bool haveRoundTrip = peerTelemetry_.roundTripMeasured;
     const double oneWayMilliseconds =
         static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 2'000.0;
     const double bufferMilliseconds = instrument.bufferedFrames == 0U
         ? 0.0
         : static_cast<double>(instrument.bufferedFrames) / 48.0;
     const double playableMilliseconds = oneWayMilliseconds + bufferMilliseconds;
-    const double concealRatio = peerTelemetry_.packetsReceived == 0U
-        ? 0.0
-        : static_cast<double>(instrument.packetsConcealed)
-            / static_cast<double>(peerTelemetry_.packetsReceived);
+
+    // A stream that has stopped arriving parks playout past the last packet, so
+    // its buffer reads zero and nothing is booked as concealment. Graded on
+    // those numbers alone a silent link scores better than a working one, so
+    // the absence of arrivals has to be stated outright.
+    if (qualityWindow_.stalled) {
+        return QStringLiteral("No audio from your friend · still connected");
+    }
 
     QString grade;
-    if (concealRatio > 0.05 || playableMilliseconds > 60.0) {
+    if (!qualityWindow_.hasRate) {
+        grade = QStringLiteral("Measuring");
+    } else if (qualityWindow_.concealRatio > 0.05 || playableMilliseconds > 60.0) {
         grade = QStringLiteral("Conversation only");
-    } else if (concealRatio > 0.02 || playableMilliseconds > 40.0) {
+    } else if (qualityWindow_.concealRatio > 0.02 || playableMilliseconds > 40.0) {
         grade = QStringLiteral("Poor");
-    } else if (concealRatio > 0.005 || playableMilliseconds > 25.0) {
+    } else if (qualityWindow_.concealRatio > 0.005 || playableMilliseconds > 25.0) {
         grade = QStringLiteral("Playable");
     } else if (playableMilliseconds > 15.0) {
         grade = QStringLiteral("Good");
     } else {
         grade = QStringLiteral("Excellent");
     }
+    if (!haveRoundTrip) {
+        return QStringLiteral("%1 · round trip not measured yet · %2 ms buffer")
+            .arg(grade)
+            .arg(bufferMilliseconds, 0, 'f', 1);
+    }
     return QStringLiteral("%1 · about %2 ms one way · %3 ms buffer")
         .arg(grade)
         .arg(oneWayMilliseconds, 0, 'f', 1)
         .arg(bufferMilliseconds, 0, 'f', 1);
+}
+
+// The grade has to describe the last few seconds. Lifetime totals go deaf: an
+// hour of clean play makes the denominator so large that a fresh dropout cannot
+// move it at all.
+void AppController::updateQualityWindow() {
+    if (!peerTransport_ || !peerConnected()) {
+        qualityWindow_ = {};
+        qualitySamples_.clear();
+        return;
+    }
+    if (!qualityClock_.isValid()) {
+        qualityClock_.start();
+    }
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    qualitySamples_.push_back(
+        {qualityClock_.elapsed(), instrument.packetsAccepted, instrument.packetsConcealed});
+    while (qualitySamples_.size() > 2U
+           && qualitySamples_.back().elapsedMilliseconds - qualitySamples_.front().elapsedMilliseconds
+               > qualityWindowMilliseconds) {
+        qualitySamples_.pop_front();
+    }
+
+    const auto& oldest = qualitySamples_.front();
+    const auto& newest = qualitySamples_.back();
+    const qint64 span = newest.elapsedMilliseconds - oldest.elapsedMilliseconds;
+    const std::uint64_t accepted = newest.packetsAccepted - oldest.packetsAccepted;
+    const std::uint64_t concealed = newest.packetsConcealed - oldest.packetsConcealed;
+
+    QualityWindow window;
+    // Long enough that a couple of missing packets do not swing the grade.
+    if (span >= 2'000) {
+        // Nothing arrived for two seconds while the session is still up.
+        window.stalled = accepted == 0U;
+        const std::uint64_t expected = accepted + concealed;
+        if (expected > 0U) {
+            window.hasRate = true;
+            window.concealRatio =
+                static_cast<double>(concealed) / static_cast<double>(expected);
+        }
+    }
+    qualityWindow_ = window;
 }
 
 QString AppController::networkDiagnostics() const {
@@ -1511,11 +1565,15 @@ QString AppController::networkDiagnostics() const {
     }
     const auto& instrument = peerTelemetry_.streams[instrumentStream];
     const auto& voice = peerTelemetry_.streams[voiceStream];
+    const QString roundTrip = peerTelemetry_.roundTripMeasured
+        ? QStringLiteral("round trip %1 ms measured")
+              .arg(static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 1'000.0, 0, 'f', 1)
+        : QStringLiteral("round trip not measured yet");
     return QStringLiteral(
-               "round trip %1 ms measured · jitter %2 ms\n"
+               "%1 · jitter %2 ms\n"
                "instrument concealed %3 · late %4 · buffer %5 ms\n"
                "voice concealed %6 · late %7 · buffer %8 ms")
-        .arg(static_cast<double>(peerTelemetry_.roundTripMicroseconds) / 1'000.0, 0, 'f', 1)
+        .arg(roundTrip)
         .arg(static_cast<double>(instrument.jitterMicroseconds) / 1'000.0, 0, 'f', 1)
         .arg(instrument.packetsConcealed)
         .arg(instrument.packetsLate)
@@ -1899,6 +1957,9 @@ void AppController::leaveSession() {
         peerTransport_.reset();
     }
     peerTelemetry_ = {};
+    qualitySamples_.clear();
+    qualityWindow_ = {};
+    qualityClock_.invalidate();
     connectionPreflight_ = {};
     remoteParticipant_ = {};
     remoteParticipants_.clear();
@@ -2549,6 +2610,7 @@ void AppController::pollAudioTelemetry() {
     }
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
+        updateQualityWindow();
         processRoomControlEvents();
         emit roomChanged();
     }

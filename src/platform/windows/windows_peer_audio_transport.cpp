@@ -1040,6 +1040,8 @@ public:
         snapshot.packetsRejected = packetsRejected_.load(std::memory_order_relaxed);
         snapshot.roundTripMicroseconds =
             roundTripMicroseconds_.load(std::memory_order_relaxed);
+        snapshot.roundTripMeasured =
+            roundTripMeasured_.load(std::memory_order_relaxed);
         snapshot.automaticPortMapping =
             automaticPortMapping_.load(std::memory_order_relaxed);
         snapshot.udpBound = udpBound_.load(std::memory_order_acquire);
@@ -1054,7 +1056,8 @@ public:
             stream.peak = remotePeak_[index].load();
             stream.sourceClipped =
                 remoteSourceClipped_[index].load(std::memory_order_acquire) != 0U;
-            stream.packetsConcealed = receiver.packetsConcealed;
+            stream.packetsAccepted = receiver.packetsAccepted;
+        stream.packetsConcealed = receiver.packetsConcealed;
             stream.packetsLate = receiver.packetsLate;
             stream.bufferStretches = receiver.bufferStretches;
             stream.latencyTrims = receiver.latencyTrims;
@@ -1221,6 +1224,7 @@ private:
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
         roundTripMicroseconds_.store(0U, std::memory_order_relaxed);
+        roundTripMeasured_.store(false, std::memory_order_relaxed);
         for (auto& peak : remotePeak_) {
             peak.store(0.0F);
         }
@@ -1771,6 +1775,7 @@ private:
                 roundTripMicroseconds_.store(
                     std::min<std::uint64_t>(now - sentAt, 60'000'000ULL),
                     std::memory_order_relaxed);
+                roundTripMeasured_.store(true, std::memory_order_relaxed);
             }
             return true;
         }
@@ -1856,6 +1861,7 @@ private:
     std::atomic<std::uint64_t> packetsReceived_{0U};
     std::atomic<std::uint64_t> packetsRejected_{0U};
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};
+    std::atomic<bool> roundTripMeasured_{false};
     std::atomic<bool> automaticPortMapping_{false};
     std::atomic<bool> udpBound_{false};
     std::atomic<PublicAddressDiscoveryState> publicAddressDiscovery_{

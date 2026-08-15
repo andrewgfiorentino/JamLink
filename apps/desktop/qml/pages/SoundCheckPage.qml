@@ -104,6 +104,8 @@ Item {
                     peakHold: root.controller.instrumentPeakHold
                     clipped: root.controller.instrumentInputClipped
                         || root.controller.instrumentSendClipped
+                    resettable: true
+                    onResetRequested: root.controller.clearInstrumentClipping()
                 }
                 Row {
                     width: parent.width
@@ -222,6 +224,8 @@ Item {
                     peakHold: root.controller.voicePeakHold
                     clipped: root.controller.voiceInputClipped
                         || root.controller.voiceSendClipped
+                    resettable: true
+                    onResetRequested: root.controller.clearVoiceClipping()
                 }
                 Row {
                     width: parent.width
@@ -353,6 +357,8 @@ Item {
             level: root.controller.outputLevel
             peakHold: root.controller.outputPeakHold
             clipped: root.controller.outputClipped
+            resettable: true
+            onResetRequested: root.controller.clearOutputClipping()
         }
         Rectangle {
             anchors.left: parent.left
