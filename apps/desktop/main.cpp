@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include "jamlink/diagnostics/session_log.hpp"
+
 #include <filesystem>
 
 namespace {
@@ -84,6 +86,17 @@ int main(int argc, char* argv[]) {
     parser.process(application);
 
     const auto resolvedPreferencePath = preferencePath(parser.value(preferencesOption));
+    // Local only, and never uploaded. The first two-person test failed with no
+    // record of which step broke, so a session now leaves evidence behind.
+    if (!parser.isSet(visualFixtureOption)) {
+        const auto logDirectory = QStandardPaths::writableLocation(
+            QStandardPaths::AppLocalDataLocation);
+        if (!logDirectory.isEmpty()) {
+            jamlink::diagnostics::SessionLog::instance().open(
+                std::filesystem::path(logDirectory.toStdWString()));
+            JAMLINK_LOG("app", "JamLink " JAMLINK_VERSION_STRING " started");
+        }
+    }
     if (parser.isSet(resetPreferencesOption)) {
         std::error_code removeError;
         std::filesystem::remove(resolvedPreferencePath, removeError);

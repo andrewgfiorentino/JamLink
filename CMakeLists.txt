@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.3.4
+    VERSION 0.3.5
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
@@ -102,6 +102,7 @@ add_library(jamlink_core STATIC
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
     src/control/room_authority.cpp
+    src/diagnostics/session_log.cpp
     src/network/audio_stream_receiver.cpp
     src/network/connection_preflight.cpp
     src/preferences/preferences_store.cpp
@@ -146,7 +147,7 @@ if(WIN32)
     )
     target_link_libraries(jamlink_platform_audio
         PUBLIC JamLink::Core
-        PRIVATE jamlink_asio_sdk advapi32 avrt bcrypt ole32 oleaut32 propsys ws2_32
+        PRIVATE jamlink_asio_sdk advapi32 avrt bcrypt iphlpapi ole32 oleaut32 propsys ws2_32
     )
 else()
     add_library(jamlink_platform_audio STATIC
@@ -183,6 +184,7 @@ if(JAMLINK_BUILD_TOOLS)
     add_subdirectory(tools/core_stress)
     if(WIN32)
         add_subdirectory(tools/audio_probe)
+        add_subdirectory(tools/net_probe)
     endif()
 endif()
 

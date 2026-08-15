@@ -124,6 +124,9 @@ struct PeerTransportTelemetry final {
     // False until a Pong has actually come back. Zero is a legitimate value for
     // "no measurement yet", so it must never be presented as a measured one.
     bool roundTripMeasured{false};
+    // Which of UPnP, PCP, or NAT-PMP opened the port, or empty if none did.
+    // Points at a string literal.
+    const char* portMappingProtocol{""};
     bool automaticPortMapping{false};
     bool udpBound{false};
     PublicAddressDiscoveryState publicAddressDiscovery{
