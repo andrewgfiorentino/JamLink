@@ -9,6 +9,11 @@ Item {
     id: root
     required property AppController controller
     property bool chatOpen: false
+    property bool tunerOpen: false
+
+    // The detector only runs while the panel is up, and closing it always
+    // releases the mute so nobody is left silently muted to the room.
+    onTunerOpenChanged: root.controller.tunerActive = root.tunerOpen
     property bool waitingOpen: root.controller.visualPrivateRoomFixture === "host-drawer"
 
     Rectangle {
@@ -308,7 +313,10 @@ Item {
                     height: parent.height
                     text: "Tuner"
                     iconSource: Qt.resolvedUrl("../../assets/tune.svg")
-                    onClicked: root.controller.navigate("tuner")
+                    onClicked: {
+                        root.chatOpen = false
+                        root.tunerOpen = !root.tunerOpen
+                    }
                 }
                 JamButton {
                     width: (parent.width - 18) / 3
@@ -328,6 +336,95 @@ Item {
                     onClicked: {
                         root.chatOpen = true
                         root.controller.markChatRead()
+                    }
+                }
+            }
+
+            // Anyone whose interface does direct hardware monitoring is hearing
+            // themselves twice: once instantly through the interface and once
+            // late through JamLink. Turning the software monitor off leaves the
+            // near-zero-latency hardware path on its own, and must not disturb
+            // capture, meters, clipping, the tuner, recording, or what the
+            // other person hears.
+            JamCard {
+                visible: !root.controller.privateRoomWaiting
+                width: parent.width
+                height: visible ? 78 : 0
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Monitor yourself"
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                    }
+                    Item { width: 4; height: 1 }
+
+                    Repeater {
+                        model: [
+                            {label: "Guitar", icon: "music_note.svg", instrument: true},
+                            {label: "Voice", icon: "mic.svg", instrument: false}
+                        ]
+                        Row {
+                            id: monitorRow
+                            required property var modelData
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 7
+
+                            readonly property bool monitorOn: monitorRow.modelData.instrument
+                                ? root.controller.instrumentMonitorEnabled
+                                : root.controller.voiceMonitorEnabled
+
+                            JamIcon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 15
+                                height: 15
+                                source: Qt.resolvedUrl(
+                                    "../../assets/" + monitorRow.modelData.icon)
+                                color: monitorRow.monitorOn ? Theme.accent : "#5d666c"
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: monitorRow.modelData.label
+                                color: monitorRow.monitorOn
+                                    ? Theme.textSecondary : "#5d666c"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 10
+                            }
+                            JamSwitch {
+                                anchors.verticalCenter: parent.verticalCenter
+                                checked: monitorRow.monitorOn
+                                Accessible.name: "Hear my own "
+                                    + monitorRow.modelData.label + " through JamLink"
+                                onToggled: {
+                                    if (monitorRow.modelData.instrument)
+                                        root.controller.instrumentMonitorEnabled = checked
+                                    else
+                                        root.controller.voiceMonitorEnabled = checked
+                                }
+                            }
+                            Item { width: 6; height: 1 }
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 470
+                        visible: width > 60
+                        text: (!root.controller.instrumentMonitorEnabled
+                                && !root.controller.voiceMonitorEnabled)
+                            ? "Off · use your interface's direct monitoring"
+                            : "Your friend still hears you either way"
+                        color: Theme.textSecondary
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
                     }
                 }
             }
@@ -377,6 +474,151 @@ Item {
                 wrapMode: Text.WordWrap
                 font.family: Theme.fontFamily
                 font.pixelSize: 9
+            }
+        }
+    }
+
+    // A compact tuner that lives beside the room rather than replacing it, so
+    // the meters, the participants and the chat stay visible while tuning.
+    // Opening it mutes the guitar to the room by default, because the usual
+    // reason to open it is not wanting to be heard tuning; the switch lets it
+    // stay open while playing for anyone who would rather watch their pitch.
+    Rectangle {
+        id: tunerDrawer
+        z: 31
+        visible: root.tunerOpen
+        anchors.top: header.bottom
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        width: Math.min(268, parent.width - 16)
+        color: Theme.surfaceNested
+        border.color: "#3a454d"
+        radius: Theme.radiusPanel
+
+        readonly property real cents: root.controller.tunerCents
+        readonly property bool inTune: root.controller.tunerDetected
+            && Math.abs(tunerDrawer.cents) <= 3.0
+
+        Column {
+            anchors.fill: parent
+            anchors.margins: 14
+            spacing: 10
+
+            Row {
+                width: parent.width
+                height: 26
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - 28
+                    text: "Tuner"
+                    color: Theme.text
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+                IconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconSource: Qt.resolvedUrl("../../assets/close.svg")
+                    Accessible.name: "Close tuner"
+                    onClicked: root.tunerOpen = false
+                }
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.controller.tunerNote
+                    + (root.controller.tunerDetected ? root.controller.tunerOctave : "")
+                color: root.controller.tunerDetected
+                    ? (tunerDrawer.inTune ? Theme.connected : Theme.text)
+                    : Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: 46
+                font.weight: Font.Light
+                Behavior on color { ColorAnimation { duration: 120 } }
+            }
+
+            Item {
+                width: parent.width
+                height: 28
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    height: 3
+                    radius: 2
+                    color: Theme.borderSoft
+                }
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width * 0.12
+                    height: 3
+                    radius: 2
+                    color: "#1f5c33"
+                }
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 2
+                    height: 14
+                    color: Theme.textMuted
+                    x: parent.width / 2 - 1
+                }
+                Rectangle {
+                    visible: root.controller.tunerDetected
+                    width: 4
+                    height: 22
+                    radius: 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: parent.width / 2
+                        + Math.max(-50, Math.min(50, tunerDrawer.cents)) / 50.0
+                            * (parent.width / 2) - 2
+                    color: tunerDrawer.inTune ? Theme.connected : Theme.accent
+                    Behavior on x { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+                }
+            }
+
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.controller.tunerDetected
+                    ? (tunerDrawer.cents >= 0 ? "+" : "") + tunerDrawer.cents.toFixed(1) + " cents"
+                    : "Play a single string"
+                color: tunerDrawer.inTune ? Theme.connected : Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: 10
+            }
+
+            Rectangle { width: parent.width; height: 1; color: Theme.borderSoft }
+
+            Row {
+                width: parent.width
+                spacing: 8
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - tunerMuteSwitch.width - 8
+                    spacing: 2
+                    Text {
+                        text: "Mute guitar while tuning"
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 10
+                    }
+                    Text {
+                        width: parent.width
+                        text: root.controller.tunerMutesInstrument
+                            ? "Your friend cannot hear you tune. Your mic still works."
+                            : "Your friend can hear you. Leave the tuner open and play."
+                        color: Theme.textSecondary
+                        wrapMode: Text.WordWrap
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 8
+                    }
+                }
+                JamSwitch {
+                    id: tunerMuteSwitch
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: root.controller.tunerMutesInstrument
+                    Accessible.name: "Mute my guitar to the room while the tuner is open"
+                    onToggled: root.controller.tunerMutesInstrument = checked
+                }
             }
         }
     }

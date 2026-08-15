@@ -8,6 +8,8 @@ set_source_files_properties(qml/components/Theme.qml PROPERTIES QT_QML_SINGLETON
 
 qt_add_executable(jamlink_desktop WIN32
     app_controller.cpp
+    firewall_access.cpp
+    firewall_access.hpp
     main.cpp
     private_room_directory.cpp
     private_room_directory.hpp

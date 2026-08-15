@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "firewall_access.hpp"
+
 #include "jamlink/audio/soundcheck_audio_service.hpp"
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
@@ -139,6 +141,12 @@ class AppController final : public QObject {
     Q_PROPERTY(int roomParticipantCount READ roomParticipantCount NOTIFY roomChanged)
     Q_PROPERTY(QVariantList chatMessages READ chatMessages NOTIFY chatChanged)
     Q_PROPERTY(int unreadChatCount READ unreadChatCount NOTIFY chatChanged)
+
+    Q_PROPERTY(bool firewallNeedsAttention READ firewallNeedsAttention NOTIFY firewallChanged)
+    Q_PROPERTY(bool firewallFixable READ firewallFixable NOTIFY firewallChanged)
+    Q_PROPERTY(bool firewallBusy READ firewallBusy NOTIFY firewallChanged)
+    Q_PROPERTY(QString firewallMessage READ firewallMessage NOTIFY firewallChanged)
+    Q_PROPERTY(QString firewallActionMessage READ firewallActionMessage NOTIFY firewallChanged)
 
     Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
     Q_PROPERTY(QString recordingElapsed READ recordingElapsed NOTIFY recordingChanged)
@@ -308,6 +316,12 @@ public:
     [[nodiscard]] QVariantList chatMessages() const;
     [[nodiscard]] int unreadChatCount() const noexcept;
 
+    [[nodiscard]] bool firewallNeedsAttention() const noexcept;
+    [[nodiscard]] bool firewallFixable() const noexcept;
+    [[nodiscard]] bool firewallBusy() const noexcept;
+    [[nodiscard]] QString firewallMessage() const;
+    [[nodiscard]] QString firewallActionMessage() const;
+
     [[nodiscard]] bool recording() const noexcept;
     [[nodiscard]] QString recordingElapsed() const;
     [[nodiscard]] QString recordingMessage() const;
@@ -358,6 +372,8 @@ public:
         const QString& participantId, const QString& stream, bool muted);
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void openRecordingFolder();
+    Q_INVOKABLE void checkFirewall();
+    Q_INVOKABLE void fixFirewall();
     Q_INVOKABLE void updateWindowPlacement(int x, int y, int width, int height);
     Q_INVOKABLE void persistNow();
     Q_INVOKABLE void checkForUpdates();
@@ -370,6 +386,7 @@ signals:
     void roomChanged();
     void tunerChanged();
     void recordingChanged();
+    void firewallChanged();
     void settingsChanged();
     void profileChanged();
     void chatChanged();
@@ -494,6 +511,9 @@ private:
     bool remoteVoiceMuted_{false};
     jamlink::audio::TunerReading tunerReading_;
     bool tunerActive_{false};
+    FirewallAccess firewall_;
+    QString firewallActionMessage_;
+    bool firewallBusy_{false};
     jamlink::record::RecorderTelemetry recorderTelemetry_;
     QString recordingLocation_;
     jamlink::network::PeerParticipantInfo remoteParticipant_;
