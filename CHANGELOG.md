@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6-test — 2026-08-15
+
+- Added in-application Windows Firewall detection and repair. A router mapping only carries a packet as far as the PC; the firewall then decides whether JamLink receives it, and for an unsigned application run from a ZIP the answer is usually no while every other check still reports success. Home now states the problem and offers **Fix Firewall**, which requests elevation through the standard UAC prompt and creates the narrowest useful rule: this executable, inbound, UDP, allow, private and domain profiles.
+- Firewall repair distinguishes no rule, a rule left pointing at an older copy of the executable after an update or a move, a network marked Public, and a firewall that is simply off. Earlier JamLink rules are removed first so repairs cannot accumulate duplicates. The firewall is never disabled and rules are never widened to other programs or ports. A network marked Public is explained rather than silently opened.
+- Added per-input monitor switches for guitar and voice in the room. Turning one off silences only JamLink's own monitor mix while capture, meters, peak hold, clipping detection, the tuner tap, recording, and what the other person hears all continue, so an interface with direct hardware monitoring can be used on its own near-zero-latency path.
+- Moved the tuner into a panel beside the room instead of a separate screen, so meters, participants, and chat stay visible. It mutes the guitar to the room by default and can be left open while playing once that is switched off.
+- Recorded the audio backend, requested and running buffer size, sample rate, and resulting monitor round trip in the session log, so a report of delayed monitoring can be answered from evidence.
+
 ## 0.3.5-test — 2026-08-15
 
 - Added PCP and NAT-PMP port mapping alongside UPnP. With a single invite code the host cannot learn the guest's endpoint first, so a working router mapping is the only thing that makes it reachable; many routers ship one of these three with the others disabled or broken.
