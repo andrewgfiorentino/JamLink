@@ -2,6 +2,12 @@
 
 ## 0.3.4-test — 2026-08-14
 
+- Made the clipping meters themselves clickable to clear a latched warning, so input gain can be adjusted and rechecked without hunting for the small indicator button; the meter shows a Reset affordance on hover and only accepts the click while a latch is actually set.
+- Fixed the connection grade reporting a silent link as better than a working one. A stream that stops arriving parks playout past its last packet, so the buffer reads zero and nothing is booked as concealment; the room now states plainly that no audio is arriving instead of upgrading the grade.
+- Fixed the loss rate being divided by every datagram the transport received, including the other stream and control traffic, which understated instrument loss by roughly half and reported one grade band better than reality.
+- Fixed the grade going deaf over a long session: it is now measured over a trailing eight-second window rather than session totals, so a fresh dropout still moves it after an hour of clean play.
+- Stopped presenting an unmeasured round trip of zero as a measurement; the transport now reports whether a pong has actually returned.
+- Restored the receive-path design note, and recorded the three reporting rules that these defects each broke.
 - Added a pre-host connection check for Sound Check readiness, local build/protocol identity, UDP binding, public-address discovery, and automatic router mapping.
 - Added clear **Ready**, **Direct connection may need help**, and fail-safe action states while keeping the full encrypted direct invite available when optional Internet preparation is inconclusive.
 - Clarified that reachability is inferred rather than measured and that a friend’s exact build is verified during the encrypted join.

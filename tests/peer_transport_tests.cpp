@@ -297,6 +297,56 @@ void reportsDeterministicOfflineHostPreflight() {
           "stopping clears preflight telemetry before the next room");
 }
 
+// Zero is a legitimate "no measurement yet" for the round trip, and the UI
+// labels this value "measured", so the transport has to say which it is.
+// Per-stream accepted counts matter for the same reason: a loss rate divided by
+// every datagram the transport ever received understates loss by about half.
+void reportsRoundTripOnlyOnceMeasured() {
+    using jamlink::network::AudioStreamId;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "round trip harness setup");
+        return;
+    }
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty()) {
+        check(false, "round trip harness host start");
+        return;
+    }
+    check(
+        !host->telemetry().roundTripMeasured,
+        "round trip is not claimed as measured before any pong");
+    check(
+        host->telemetry().roundTripMicroseconds == 0U,
+        "unmeasured round trip stays at zero rather than a stale value");
+
+    if (!guest->join(invite) || !waitForConnected(*host, *guest)
+        || !exchangeAudio(*host, *guest)) {
+        check(false, "round trip harness handshake");
+        return;
+    }
+
+    const auto telemetry = host->telemetry();
+    // The ping cadence is 500 ms and exchangeAudio runs longer than that.
+    check(telemetry.roundTripMeasured, "round trip becomes measured once a pong returns");
+    check(
+        telemetry.streams[static_cast<std::size_t>(AudioStreamId::Instrument)].packetsAccepted > 0U
+            && telemetry.streams[static_cast<std::size_t>(AudioStreamId::Voice)].packetsAccepted > 0U,
+        "each stream publishes its own accepted packet count");
+    // The per-stream counts must be a strict subset of the transport total,
+    // which is what makes the transport-wide figure the wrong denominator.
+    const std::uint64_t perStream =
+        telemetry.streams[static_cast<std::size_t>(AudioStreamId::Instrument)].packetsAccepted
+        + telemetry.streams[static_cast<std::size_t>(AudioStreamId::Voice)].packetsAccepted;
+    check(
+        perStream <= telemetry.packetsReceived,
+        "stream accepted counts never exceed everything the transport received");
+
+    host->stop();
+    guest->stop();
+}
+
 void exchangesEncryptedAudioOnLoopback() {
     auto host = jamlink::network::createPlatformPeerAudioTransport();
     auto guest = jamlink::network::createPlatformPeerAudioTransport();
@@ -754,6 +804,7 @@ int main() {
 
     rejectsMalformedInvites();
     reportsDeterministicOfflineHostPreflight();
+    reportsRoundTripOnlyOnceMeasured();
     exchangesEncryptedAudioOnLoopback();
     rejectsReflectedOwnTraffic();
     survivesHostileDatagrams();

@@ -96,6 +96,11 @@ struct RemoteStreamTelemetry final {
     // is not inferred from received PCM and therefore does not overclaim which
     // physical stage clipped on the remote machine.
     bool sourceClipped{false};
+    // Audio packets accepted for this stream alone. A loss rate has to be
+    // measured against the stream it belongs to; dividing by every datagram the
+    // transport ever received folds in the other stream and the control
+    // traffic, which understates loss by roughly half.
+    std::uint64_t packetsAccepted{0U};
     std::uint64_t packetsConcealed{0U};
     std::uint64_t packetsLate{0U};
     std::uint64_t bufferStretches{0U};
@@ -116,6 +121,9 @@ struct PeerTransportTelemetry final {
     // Measured round trip. Reported in microseconds because the useful range
     // for interactive playing is well below millisecond display resolution.
     std::uint64_t roundTripMicroseconds{0U};
+    // False until a Pong has actually come back. Zero is a legitimate value for
+    // "no measurement yet", so it must never be presented as a measured one.
+    bool roundTripMeasured{false};
     bool automaticPortMapping{false};
     bool udpBound{false};
     PublicAddressDiscoveryState publicAddressDiscovery{

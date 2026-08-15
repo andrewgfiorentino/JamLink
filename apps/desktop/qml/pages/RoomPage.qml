@@ -363,6 +363,8 @@ Item {
                         level: root.controller.outputLevel
                         peakHold: root.controller.outputPeakHold
                         clipped: root.controller.outputClipped
+                        resettable: true
+                        onResetRequested: root.controller.clearOutputClipping()
                     }
                 }
             }

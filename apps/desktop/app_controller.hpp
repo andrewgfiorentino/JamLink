@@ -10,6 +10,7 @@
 #include "update_manager.hpp"
 
 #include <QJsonObject>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -19,6 +20,7 @@
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -423,6 +425,21 @@ private:
         float& stored,
         double gain);
     void applyTunerMute();
+    void updateQualityWindow();
+
+    // Rolling view of the friend's instrument stream, so the connection grade
+    // describes the last few seconds rather than the whole session.
+    static constexpr qint64 qualityWindowMilliseconds = 8'000;
+    struct QualitySample final {
+        qint64 elapsedMilliseconds{0};
+        std::uint64_t packetsAccepted{0U};
+        std::uint64_t packetsConcealed{0U};
+    };
+    struct QualityWindow final {
+        bool hasRate{false};
+        bool stalled{false};
+        double concealRatio{0.0};
+    };
     [[nodiscard]] jamlink::network::PeerParticipantInfo localParticipant() const;
     [[nodiscard]] QJsonObject roomCompatibility() const;
     void joinDirectSession(const QString& inviteCode);
@@ -467,6 +484,9 @@ private:
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;
     jamlink::network::PeerTransportTelemetry peerTelemetry_;
+    std::deque<QualitySample> qualitySamples_;
+    QualityWindow qualityWindow_;
+    QElapsedTimer qualityClock_;
     jamlink::network::ConnectionPreflightResult connectionPreflight_;
     QString inviteCode_;
     bool sendMuted_{false};
