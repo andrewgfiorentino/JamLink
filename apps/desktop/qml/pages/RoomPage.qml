@@ -332,6 +332,95 @@ Item {
                 }
             }
 
+            // Anyone whose interface does direct hardware monitoring is hearing
+            // themselves twice: once instantly through the interface and once
+            // late through JamLink. Turning the software monitor off leaves the
+            // near-zero-latency hardware path on its own, and must not disturb
+            // capture, meters, clipping, the tuner, recording, or what the
+            // other person hears.
+            JamCard {
+                visible: !root.controller.privateRoomWaiting
+                width: parent.width
+                height: visible ? 78 : 0
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Monitor yourself"
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                    }
+                    Item { width: 4; height: 1 }
+
+                    Repeater {
+                        model: [
+                            {label: "Guitar", icon: "music_note.svg", instrument: true},
+                            {label: "Voice", icon: "mic.svg", instrument: false}
+                        ]
+                        Row {
+                            id: monitorRow
+                            required property var modelData
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 7
+
+                            readonly property bool monitorOn: monitorRow.modelData.instrument
+                                ? root.controller.instrumentMonitorEnabled
+                                : root.controller.voiceMonitorEnabled
+
+                            JamIcon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 15
+                                height: 15
+                                source: Qt.resolvedUrl(
+                                    "../../assets/" + monitorRow.modelData.icon)
+                                color: monitorRow.monitorOn ? Theme.accent : "#5d666c"
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: monitorRow.modelData.label
+                                color: monitorRow.monitorOn
+                                    ? Theme.textSecondary : "#5d666c"
+                                font.family: Theme.fontFamily
+                                font.pixelSize: 10
+                            }
+                            JamSwitch {
+                                anchors.verticalCenter: parent.verticalCenter
+                                checked: monitorRow.monitorOn
+                                Accessible.name: "Hear my own "
+                                    + monitorRow.modelData.label + " through JamLink"
+                                onToggled: {
+                                    if (monitorRow.modelData.instrument)
+                                        root.controller.instrumentMonitorEnabled = checked
+                                    else
+                                        root.controller.voiceMonitorEnabled = checked
+                                }
+                            }
+                            Item { width: 6; height: 1 }
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 470
+                        visible: width > 60
+                        text: (!root.controller.instrumentMonitorEnabled
+                                && !root.controller.voiceMonitorEnabled)
+                            ? "Off · use your interface's direct monitoring"
+                            : "Your friend still hears you either way"
+                        color: Theme.textSecondary
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 9
+                    }
+                }
+            }
+
             JamCard {
                 visible: !root.controller.privateRoomWaiting
                 width: parent.width
