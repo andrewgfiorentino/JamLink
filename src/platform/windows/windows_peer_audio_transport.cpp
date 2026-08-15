@@ -13,6 +13,7 @@
 #endif
 
 #include "jamlink/audio/async_mono_resampler.hpp"
+#include "jamlink/diagnostics/session_log.hpp"
 #include "jamlink/audio/gain_stage.hpp"
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
@@ -58,6 +59,9 @@ constexpr std::uint8_t protocolVersion = 2U;
 constexpr std::uint32_t networkSampleRate = 48'000U;
 constexpr std::size_t networkPacketFrames = 240U;
 constexpr std::size_t noncePrefixBytes = 8U;
+// Two hours. Long enough for a jam, short enough that an abandoned mapping
+// does not sit on the router indefinitely.
+constexpr std::uint32_t portMappingLifetimeSeconds = 7'200U;
 constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 constexpr std::uint8_t streamIndexMask = 0x7FU;
 constexpr std::uint8_t sourceClipFlag = 0x80U;
@@ -70,7 +74,14 @@ enum class PacketType : std::uint8_t {
     Pong = 5U,
     VersionMismatch = 6U,
     Chat = 7U,
-    ChatAck = 8U
+    ChatAck = 8U,
+    // Sent by the host toward a known guest endpoint before a session exists.
+    // A home router only forwards inbound UDP for an endpoint it has already
+    // seen outbound traffic to, so a host that transmits nothing until it
+    // receives can never be reached: the guest's Hello is discarded by the
+    // router before JamLink sees it. Punching opens that mapping from both
+    // sides at once. It carries no payload and changes no session state.
+    Punch = 9U
 };
 
 // Both peers know the same room secret, so a single key would let an attacker
@@ -595,6 +606,171 @@ private:
     return fallback;
 }
 
+// Default IPv4 gateway, which is where PCP and NAT-PMP requests go.
+[[nodiscard]] std::string defaultGatewayAddress() {
+    ULONG size = 0U;
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS, nullptr, nullptr, &size)
+        != ERROR_BUFFER_OVERFLOW) {
+        return {};
+    }
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_INCLUDE_GATEWAYS, nullptr, adapters, &size)
+        != NO_ERROR) {
+        return {};
+    }
+    for (const IP_ADAPTER_ADDRESSES* adapter = adapters; adapter != nullptr;
+         adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp
+            || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        for (const IP_ADAPTER_GATEWAY_ADDRESS_LH* gateway = adapter->FirstGatewayAddress;
+             gateway != nullptr; gateway = gateway->Next) {
+            if (gateway->Address.lpSockaddr == nullptr
+                || gateway->Address.lpSockaddr->sa_family != AF_INET) {
+                continue;
+            }
+            const auto* address =
+                reinterpret_cast<const sockaddr_in*>(gateway->Address.lpSockaddr);
+            char text[INET_ADDRSTRLEN]{};
+            if (inet_ntop(AF_INET, &address->sin_addr, text, sizeof(text)) != nullptr) {
+                return text;
+            }
+        }
+    }
+    return {};
+}
+
+// Port Control Protocol (RFC 6887) and its predecessor NAT-PMP (RFC 6886).
+// Plenty of routers ship one of these with UPnP switched off, or support them
+// where their UPnP implementation is broken, so trying all three materially
+// raises the chance that a host is reachable from a single invite.
+struct GatewayMapping final {
+    bool mapped{false};
+    std::string externalAddress;
+    std::uint16_t externalPort{0U};
+    const char* protocol{""};
+};
+
+[[nodiscard]] GatewayMapping requestGatewayMapping(
+    std::uint16_t port,
+    const std::string& localAddress,
+    std::uint32_t lifetimeSeconds) {
+    GatewayMapping result;
+    const std::string gateway = defaultGatewayAddress();
+    if (gateway.empty() || localAddress.empty()) {
+        return result;
+    }
+
+    SocketHandle probe(::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP));
+    if (!probe) {
+        return result;
+    }
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_port = htons(5351U);
+    if (inet_pton(AF_INET, gateway.c_str(), &target.sin_addr) != 1) {
+        return result;
+    }
+
+    in_addr local{};
+    if (inet_pton(AF_INET, localAddress.c_str(), &local) != 1) {
+        return result;
+    }
+
+    // PCP MAP: version 2, opcode 1. The nonce ties the response to this request.
+    std::array<std::uint8_t, 60U> pcp{};
+    pcp[0] = 2U;
+    pcp[1] = 1U;
+    writeU32(pcp.data() + 4U, lifetimeSeconds);
+    // Client address as an IPv4-mapped IPv6 address.
+    pcp[18] = 0xFFU;
+    pcp[19] = 0xFFU;
+    std::memcpy(pcp.data() + 20U, &local.s_addr, 4U);
+    std::array<std::uint8_t, 12U> nonce{};
+    if (!BCRYPT_SUCCESS(BCryptGenRandom(
+            nullptr, nonce.data(), static_cast<ULONG>(nonce.size()),
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
+        return result;
+    }
+    std::memcpy(pcp.data() + 24U, nonce.data(), nonce.size());
+    pcp[36] = 17U; // UDP
+    writeU16(pcp.data() + 40U, port);
+    writeU16(pcp.data() + 42U, port);
+    pcp[46] = 0xFFU;
+    pcp[47] = 0xFFU;
+
+    // NAT-PMP MAP UDP: version 0, opcode 1.
+    std::array<std::uint8_t, 12U> natpmp{};
+    natpmp[1] = 1U;
+    writeU16(natpmp.data() + 4U, port);
+    writeU16(natpmp.data() + 6U, port);
+    writeU32(natpmp.data() + 8U, lifetimeSeconds);
+
+    struct Attempt final {
+        const std::uint8_t* data;
+        std::size_t size;
+        const char* name;
+    };
+    const std::array<Attempt, 2U> attempts{{
+        {pcp.data(), pcp.size(), "PCP"},
+        {natpmp.data(), natpmp.size(), "NAT-PMP"},
+    }};
+
+    for (const Attempt& attempt : attempts) {
+        if (sendto(
+                probe.get(), reinterpret_cast<const char*>(attempt.data),
+                static_cast<int>(attempt.size), 0,
+                reinterpret_cast<const sockaddr*>(&target), sizeof(target))
+            != static_cast<int>(attempt.size)) {
+            continue;
+        }
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(probe.get(), &readSet);
+        timeval timeout{1, 0};
+        if (select(0, &readSet, nullptr, nullptr, &timeout) <= 0) {
+            continue;
+        }
+        std::array<std::uint8_t, 128U> response{};
+        const int received = recvfrom(
+            probe.get(), reinterpret_cast<char*>(response.data()),
+            static_cast<int>(response.size()), 0, nullptr, nullptr);
+        if (received < 12) {
+            continue;
+        }
+        // PCP replies carry version 2 and the response bit; NAT-PMP uses
+        // version 0. Both report success as result code zero.
+        if (response[0] == 2U && received >= 60 && (response[1] & 0x80U) != 0U) {
+            if (response[3] != 0U
+                || std::memcmp(response.data() + 24U, nonce.data(), nonce.size()) != 0) {
+                continue;
+            }
+            result.externalPort = readU16(response.data() + 42U);
+            in_addr external{};
+            std::memcpy(&external.s_addr, response.data() + 56U, 4U);
+            char text[INET_ADDRSTRLEN]{};
+            if (inet_ntop(AF_INET, &external, text, sizeof(text)) != nullptr) {
+                result.externalAddress = text;
+            }
+            result.mapped = true;
+            result.protocol = attempt.name;
+            return result;
+        }
+        if (response[0] == 0U && response[1] == 129U && received >= 16) {
+            if (readU16(response.data() + 2U) != 0U) {
+                continue;
+            }
+            result.externalPort = readU16(response.data() + 10U);
+            result.mapped = true;
+            result.protocol = attempt.name;
+            return result;
+        }
+    }
+    return result;
+}
+
 struct PortMappingResult final {
     bool mapped{false};
     std::string externalAddress;
@@ -825,9 +1001,42 @@ public:
         const std::string localAddress = localIpv4Address();
         const bool mappingRequested = discoverPublicAddress
             && requestAutomaticPortMapping;
-        const PortMappingResult mapping = mappingRequested
+        PortMappingResult mapping = mappingRequested
             ? addAutomaticPortMapping(localPort_, localAddress)
             : PortMappingResult{};
+        // UPnP is the most common of the three but is switched off by default
+        // on plenty of routers, and some ship a broken implementation while
+        // supporting PCP or NAT-PMP perfectly well. With a single invite code
+        // the host cannot learn the guest's endpoint first, so a working port
+        // mapping is the only thing that makes it reachable at all.
+        JAMLINK_LOG("host", "bound UDP port " + std::to_string(localPort_)
+            + ", local address " + localAddress
+            + ", gateway " + (defaultGatewayAddress().empty()
+                ? std::string("not found") : defaultGatewayAddress()));
+        if (mappingRequested && !mapping.mapped) {
+            JAMLINK_LOG("host", "UPnP mapping refused, trying PCP and NAT-PMP");
+            const GatewayMapping gateway = requestGatewayMapping(
+                localPort_, localAddress, portMappingLifetimeSeconds);
+            if (gateway.mapped && gateway.externalPort == localPort_) {
+                mapping.mapped = true;
+                mapping.externalAddress = gateway.externalAddress;
+                gatewayMappingProtocol_ = gateway.protocol;
+                JAMLINK_LOG("host", std::string("port mapped by ") + gateway.protocol);
+            } else if (gateway.mapped) {
+                // The router granted a different external port. The invite
+                // carries the internal port, so a rewritten port would send the
+                // guest somewhere that is not us.
+                gatewayMappingProtocol_ = "";
+                JAMLINK_LOG("host", std::string("router granted external port ")
+                    + std::to_string(gateway.externalPort) + " instead of "
+                    + std::to_string(localPort_) + ", unusable for a direct invite");
+            } else {
+                JAMLINK_LOG("host", "no router mapping from UPnP, PCP, or NAT-PMP");
+            }
+        } else if (mapping.mapped) {
+            gatewayMappingProtocol_ = "UPnP";
+            JAMLINK_LOG("host", "port mapped by UPnP");
+        }
         mappedPort_ = mapping.mapped;
         portMapping_.store(
             mappingRequested
@@ -844,6 +1053,15 @@ public:
                     : PublicAddressDiscoveryState::Failed)
                 : PublicAddressDiscoveryState::NotAttempted,
             std::memory_order_release);
+        JAMLINK_LOG("host", publicEndpoint.succeeded
+            ? "STUN reported public endpoint " + publicEndpoint.address + ":"
+                + std::to_string(publicEndpoint.port)
+                + (publicEndpoint.port == localPort_
+                    ? " (port preserved)"
+                    : " (port rewritten from " + std::to_string(localPort_)
+                        + ", which means this router is symmetric and a direct"
+                          " invite cannot work)")
+            : std::string("STUN public address discovery failed"));
         const bool usableAutomaticMapping = mapping.mapped
             && (publicEndpoint.succeeded || !mapping.externalAddress.empty());
         automaticPortMapping_.store(usableAutomaticMapping, std::memory_order_relaxed);
@@ -866,6 +1084,8 @@ public:
         inviteCode_ = "JL1|" + inviteAddress + "|" + std::to_string(localPort_)
             + "|" + hexEncode(secret_);
         hostMode_ = true;
+        JAMLINK_LOG("host", "waiting for a guest, invite "
+            + jamlink::diagnostics::SessionLog::redactInvite(inviteCode_));
         state_.store(PeerConnectionState::WaitingForPeer, std::memory_order_release);
         launchWorker();
         return inviteCode_;
@@ -884,6 +1104,9 @@ public:
             return false;
         }
         udpBound_.store(true, std::memory_order_release);
+        JAMLINK_LOG("join", "joining " + address + ":" + std::to_string(port)
+            + " from local port " + std::to_string(localPort_));
+        remoteEndpointKnown_.store(true, std::memory_order_release);
         remoteAddress_ = {};
         remoteAddress_.sin_family = AF_INET;
         remoteAddress_.sin_port = htons(port);
@@ -1042,6 +1265,7 @@ public:
             roundTripMicroseconds_.load(std::memory_order_relaxed);
         snapshot.roundTripMeasured =
             roundTripMeasured_.load(std::memory_order_relaxed);
+        snapshot.portMappingProtocol = gatewayMappingProtocol_;
         snapshot.automaticPortMapping =
             automaticPortMapping_.load(std::memory_order_relaxed);
         snapshot.udpBound = udpBound_.load(std::memory_order_acquire);
@@ -1473,17 +1697,65 @@ private:
             ULONGLONG lastHello = 0U;
             ULONGLONG lastPing = 0U;
             ULONGLONG lastReceive = GetTickCount64();
+            ULONGLONG lastSummary = GetTickCount64();
             bool connected = false;
+            bool loggedConnected = false;
+            JAMLINK_LOG("session", hostMode_ ? "worker started as host"
+                                             : "worker started as guest");
 
             while (!stopRequested_.load(std::memory_order_acquire)) {
                 const ULONGLONG now = GetTickCount64();
-                if (!hostMode_ && !connected
-                    && state_.load(std::memory_order_acquire)
-                        != PeerConnectionState::VersionMismatch
+                const bool versionMismatch = state_.load(std::memory_order_acquire)
+                    == PeerConnectionState::VersionMismatch;
+                if (!hostMode_ && !connected && !versionMismatch
                     && now - lastHello >= 250U) {
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Hello, 0U, 0U, encodedParticipant));
                     lastHello = now;
+                }
+                // The host punches toward the guest as soon as it knows where
+                // the guest is. Without this the host's router never opens a
+                // mapping for the guest and drops every Hello, which is exactly
+                // how a direct connection fails with both public addresses
+                // discovered and both invites looking correct.
+                if (hostMode_ && !connected && !versionMismatch
+                    && remoteEndpointKnown_.load(std::memory_order_acquire)
+                    && now - lastHello >= 250U) {
+                    static_cast<void>(sendPacket(
+                        sendCipher, PacketType::Punch, 0U, 0U, {}));
+                    lastHello = now;
+                }
+                if (connected && !loggedConnected) {
+                    loggedConnected = true;
+                    JAMLINK_LOG("session", "connected");
+                }
+                // Every five seconds while unconnected, record what has and has
+                // not arrived. A stalled connection otherwise leaves no trace of
+                // whether our packets were sent, whether anything came back, and
+                // whether the router discarded it before we ever saw it.
+                if (now - lastSummary >= 5'000U) {
+                    lastSummary = now;
+                    const std::uint64_t received =
+                        packetsReceived_.load(std::memory_order_relaxed);
+                    const std::uint64_t rejected =
+                        packetsRejected_.load(std::memory_order_relaxed);
+                    const std::uint64_t sent =
+                        packetsSent_.load(std::memory_order_relaxed);
+                    if (!connected) {
+                        JAMLINK_LOG("stalled", "not connected after "
+                            + std::to_string((now - lastReceive) / 1000U) + "s: sent "
+                            + std::to_string(sent) + ", received " + std::to_string(received)
+                            + ", rejected " + std::to_string(rejected)
+                            + (received == 0U
+                                ? std::string(" - nothing has arrived at all, which points at"
+                                    " the router discarding it rather than at JamLink")
+                                : std::string(" - packets are arriving but the handshake has"
+                                    " not completed")));
+                    } else {
+                        JAMLINK_LOG("session", "sent " + std::to_string(sent)
+                            + ", received " + std::to_string(received)
+                            + ", rejected " + std::to_string(rejected));
+                    }
                 }
                 if (connected && now - lastPing >= 500U) {
                     const std::uint64_t stamp = nowMicroseconds();
@@ -1696,6 +1968,10 @@ private:
                 return false;
             }
             remoteAddress_ = source;
+            // Once the guest's endpoint is known, keep it: if the session drops
+            // and the guest's router lets its mapping expire, punching from
+            // this side reopens the path without a new invite.
+            remoteEndpointKnown_.store(true, std::memory_order_release);
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
                 connected = false;
@@ -1863,6 +2139,10 @@ private:
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};
     std::atomic<bool> roundTripMeasured_{false};
     std::atomic<bool> automaticPortMapping_{false};
+    std::atomic<bool> remoteEndpointKnown_{false};
+    // Which of the three mapping protocols opened the port, for the preflight
+    // to report. Empty when none of them did.
+    const char* gatewayMappingProtocol_{""};
     std::atomic<bool> udpBound_{false};
     std::atomic<PublicAddressDiscoveryState> publicAddressDiscovery_{
         PublicAddressDiscoveryState::NotAttempted};

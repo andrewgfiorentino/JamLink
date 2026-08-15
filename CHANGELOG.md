@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5-test — 2026-08-15
+
+- Added PCP and NAT-PMP port mapping alongside UPnP. With a single invite code the host cannot learn the guest's endpoint first, so a working router mapping is the only thing that makes it reachable; many routers ship one of these three with the others disabled or broken.
+- Added a local session log recording the connection lifecycle: port binding, each mapping protocol tried and its answer, public-address discovery, whether the router rewrote the port, and a five-second summary while a connection stalls that distinguishes "nothing has arrived at all" from "packets arrive but the handshake has not completed". The room secret is never written and the log never leaves the machine.
+- Added `jamlink_net_probe`, which reports what this network actually allows and names Windows Firewall explicitly, since a router mapping only delivers a packet as far as the PC and every other check still looks healthy when the firewall drops it.
+- The host now punches toward a known guest endpoint while reconnecting, so a session that drops does not need a new invite when the guest's router lets its mapping expire.
+- Recorded that a router which rewrites the external port is symmetric, and that a direct invite cannot work through it.
+
 ## 0.3.4-test — 2026-08-14
 
 - Made the clipping meters themselves clickable to clear a latched warning, so input gain can be adjusted and rechecked without hunting for the small indicator button; the meter shows a Reset affordance on hover and only accepts the click while a latch is actually set.
