@@ -114,6 +114,69 @@ Item {
                 }
             }
 
+            // Windows drops incoming audio before JamLink sees it when this is
+            // unset, while every other check still reports healthy. It is the
+            // difference between a jam working and a silent spinner, so it sits
+            // above everything else and states what it needs.
+            JamCard {
+                id: firewallBanner
+                visible: root.controller.firewallNeedsAttention
+                width: parent.width
+                height: visible ? 92 : 0
+                border.color: "#7a4b12"
+
+                Row {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 12
+
+                    JamIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 20
+                        height: 20
+                        source: Qt.resolvedUrl("../../assets/headphones.svg")
+                        color: "#e4b352"
+                    }
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 32 - fixFirewallButton.width - 24
+                        spacing: 4
+                        Text {
+                            width: parent.width
+                            text: root.controller.firewallMessage
+                            color: Theme.text
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            width: parent.width
+                            visible: root.controller.firewallActionMessage.length > 0
+                            text: root.controller.firewallActionMessage
+                            color: Theme.textSecondary
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.fontFamily
+                            font.pixelSize: 9
+                        }
+                    }
+                    JamButton {
+                        id: fixFirewallButton
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 116
+                        height: 32
+                        primary: true
+                        // A network marked Public is the user's call to change
+                        // in Windows, so there is nothing to press here.
+                        visible: root.controller.firewallFixable
+                        enabled: !root.controller.firewallBusy
+                        text: root.controller.firewallBusy ? "Working…" : "Fix Firewall"
+                        Accessible.name: "Allow JamLink through Windows Firewall"
+                        onClicked: root.controller.fixFirewall()
+                    }
+                }
+            }
+
             JamCard {
                 width: parent.width
                 height: 190

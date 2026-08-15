@@ -4,6 +4,8 @@
 
 #include <QByteArray>
 #include <QClipboard>
+#include "jamlink/diagnostics/session_log.hpp"
+
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QFileInfo>
@@ -222,6 +224,11 @@ AppController::AppController(
     if (!visualFixture_ && devicesAvailable_
         && (!restoredPreferences_ || restoredSetupAvailable_)) {
         audioRestartTimer_.start(0);
+    }
+    if (!visualFixture_) {
+        // Known before the first invite is created, so a musician is told what
+        // to fix rather than discovering it when nobody can reach them.
+        checkFirewall();
     }
     if (!visualFixture_) {
         // The first event-loop turn gives QML time to display, then version
@@ -792,6 +799,81 @@ void AppController::clearCustomAvatar() {
     scheduleSave();
     emit profileChanged();
 }
+
+bool AppController::firewallNeedsAttention() const noexcept {
+    return firewall_.state == FirewallRuleState::Missing
+        || firewall_.state == FirewallRuleState::StalePath
+        || firewall_.state == FirewallRuleState::PublicNetwork;
+}
+
+QString AppController::firewallMessage() const {
+    switch (firewall_.state) {
+    case FirewallRuleState::Missing:
+        return QStringLiteral(
+            "Windows Firewall needs permission for JamLink to receive musicians.");
+    case FirewallRuleState::StalePath:
+        return QStringLiteral(
+            "Windows Firewall still points at an older copy of JamLink, so this "
+            "build cannot receive musicians until it is repaired.");
+    case FirewallRuleState::PublicNetwork:
+        return QStringLiteral(
+            "This network is marked Public, so Windows blocks incoming audio. "
+            "Set it to Private in Windows network settings, then check again.");
+    case FirewallRuleState::Allowed:
+        return QStringLiteral("Windows Firewall allows JamLink to receive musicians.");
+    case FirewallRuleState::NotEnforced:
+        return QStringLiteral("Windows Firewall is off for this network.");
+    case FirewallRuleState::Unknown:
+        break;
+    }
+    return QStringLiteral("Windows Firewall state could not be read.");
+}
+
+// PublicNetwork is deliberately not fixable from here. Widening a listening
+// rule onto a network the user marked Public is their decision, not something
+// to do quietly behind one button.
+bool AppController::firewallFixable() const noexcept {
+    return firewall_.state == FirewallRuleState::Missing
+        || firewall_.state == FirewallRuleState::StalePath;
+}
+
+void AppController::checkFirewall() {
+    if (visualFixture_) {
+        return;
+    }
+    firewall_ = queryFirewallAccess();
+    JAMLINK_LOG("firewall", "state " + std::to_string(static_cast<int>(firewall_.state))
+        + " on the " + firewall_.activeProfile.toStdString() + " profile, "
+        + std::to_string(firewall_.matchingRules) + " matching rules, "
+        + std::to_string(firewall_.staleRules) + " stale");
+    emit firewallChanged();
+}
+
+void AppController::fixFirewall() {
+    if (visualFixture_ || !firewallFixable()) {
+        return;
+    }
+    firewallBusy_ = true;
+    emit firewallChanged();
+    const bool requested = requestFirewallRule();
+    firewallBusy_ = false;
+    // Always re-read. The helper's return value says what it attempted, not
+    // what Windows now believes.
+    firewall_ = queryFirewallAccess();
+    if (firewall_.state == FirewallRuleState::Allowed) {
+        firewallActionMessage_ = QStringLiteral("JamLink can now receive musicians.");
+    } else if (!requested) {
+        firewallActionMessage_ = QStringLiteral(
+            "Permission was not granted, so incoming audio is still blocked.");
+    } else {
+        firewallActionMessage_ = QStringLiteral(
+            "The rule was changed but Windows still reports JamLink as blocked.");
+    }
+    emit firewallChanged();
+}
+
+QString AppController::firewallActionMessage() const { return firewallActionMessage_; }
+bool AppController::firewallBusy() const noexcept { return firewallBusy_; }
 
 bool AppController::recording() const noexcept {
     return visualRecordingFixture_ || recorderTelemetry_.recording;
