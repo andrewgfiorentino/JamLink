@@ -2651,6 +2651,30 @@ void AppController::restartAudio() {
         preferences_.voiceMonitorEnabled};
     static_cast<void>(audioService_->start(configuration));
     audioTelemetry_ = audioService_->telemetry();
+    {
+        // Monitoring delay is decided almost entirely by which backend is in
+        // use and how large the buffer is, so a complaint about it has to be
+        // answerable from the log rather than from memory.
+        const auto backendName = [](jamlink::audio::SoundcheckBackend backend) {
+            return backend == jamlink::audio::SoundcheckBackend::Asio
+                ? "ASIO" : "WASAPI shared";
+        };
+        const std::uint32_t rate = audioTelemetry_.outputSampleRate == 0U
+            ? 48'000U : audioTelemetry_.outputSampleRate;
+        const double monitorMilliseconds =
+            static_cast<double>(audioTelemetry_.outputBufferFrames) * 2'000.0
+            / static_cast<double>(rate);
+        JAMLINK_LOG("audio", std::string("instrument ")
+            + backendName(configuration.instrument.backend) + ", voice "
+            + backendName(configuration.voice.backend) + ", output "
+            + backendName(configuration.output.backend)
+            + "; requested buffer "
+            + std::to_string(bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)])
+            + ", running buffer " + std::to_string(audioTelemetry_.outputBufferFrames)
+            + " at " + std::to_string(rate)
+            + " Hz, about " + std::to_string(static_cast<int>(monitorMilliseconds + 0.5))
+            + " ms round trip through the local monitor");
+    }
     if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running) {
         const bool asio = configuration.output.backend == jamlink::audio::SoundcheckBackend::Asio;
         const bool hybrid = asio
