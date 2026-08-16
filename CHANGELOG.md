@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.8-test — 2026-08-15
+
+- Paced outgoing audio to the cadence it represents instead of releasing up to four packets back to back. The first successful two-home session ran over a 4 ms round trip yet reported a 135 ms receive buffer and harsh, bit-crushed audio: bursts of packets made the receiver measure its own sender as a jittery network, so the buffer grew to absorb variance the link never had while concealment ran almost continuously. Packets now leave on a media-clock schedule, with bounded catch-up after a late wake-up and a rebase if the capture side gets too far ahead.
+
 ## 0.3.7-test — 2026-08-15
 
 - Buffer size choices now read as, for example, `128 · 5.3 ms · lowest delay`, with a plain-language note saying how long it takes to hear yourself and what to do if the audio crackles. The figure is the round trip a player feels, one buffer in and one buffer out, computed against the rate actually in use.
