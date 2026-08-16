@@ -1759,9 +1759,25 @@ private:
                                 : std::string(" - packets are arriving but the handshake has"
                                     " not completed")));
                     } else {
+                        // Per stream, because a total that looks like exactly one
+                        // stream's worth is the difference between a lossy link
+                        // and a stream that never reaches the wire at all, and
+                        // the combined figure cannot tell those apart.
+                        const auto instrument =
+                            receivers_[streamIndex(AudioStreamId::Instrument)].telemetry();
+                        const auto voice =
+                            receivers_[streamIndex(AudioStreamId::Voice)].telemetry();
                         JAMLINK_LOG("session", "sent " + std::to_string(sent)
                             + ", received " + std::to_string(received)
-                            + ", rejected " + std::to_string(rejected));
+                            + ", rejected " + std::to_string(rejected)
+                            + "; instrument in " + std::to_string(instrument.packetsAccepted)
+                            + " concealed " + std::to_string(instrument.packetsConcealed)
+                            + " buffer " + std::to_string(instrument.currentDepthFrames / 48U)
+                            + "ms; voice in " + std::to_string(voice.packetsAccepted)
+                            + " concealed " + std::to_string(voice.packetsConcealed)
+                            + " buffer " + std::to_string(voice.currentDepthFrames / 48U)
+                            + "ms; out instrument " + std::to_string(sendSequence_[0])
+                            + " voice " + std::to_string(sendSequence_[1]));
                     }
                 }
                 if (connected && now - lastPing >= 500U) {

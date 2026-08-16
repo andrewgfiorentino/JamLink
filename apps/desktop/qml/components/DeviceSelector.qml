@@ -38,9 +38,16 @@ ComboBox {
     }
 
     popup: Popup {
+        id: devicePopup
+        // A machine with several interfaces and their ASIO drivers can offer
+        // twenty or more entries. Sized to its content the list ran past the
+        // bottom of the window, and because the view was exactly as tall as its
+        // content there was nothing to scroll: every device below the fold was
+        // simply unreachable. Bounding the height is what makes them scrollable.
+        readonly property int maximumHeight: 300
         y: control.height + 4
         width: control.width
-        implicitHeight: contentItem.implicitHeight + 8
+        implicitHeight: Math.min(contentItem.implicitHeight + 8, maximumHeight)
         padding: 4
         background: Rectangle {
             color: "#151c21"
@@ -52,7 +59,13 @@ ComboBox {
             implicitHeight: contentHeight
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
-            ScrollIndicator.vertical: ScrollIndicator {}
+            // Keep the current device in view when the list opens, rather than
+            // always starting at the top of a long list.
+            onVisibleChanged: if (visible && control.currentIndex >= 0) {
+                positionViewAtIndex(control.currentIndex, ListView.Contain)
+            }
+            // Interactive, unlike ScrollIndicator, so the list can be dragged.
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         }
     }
 
