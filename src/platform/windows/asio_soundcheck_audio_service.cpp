@@ -7,6 +7,7 @@
 
 #include "jamlink/audio/native_sample_conversion.hpp"
 #include "jamlink/audio/realtime_atomic.hpp"
+#include "jamlink/diagnostics/session_log.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 
 #include "asiosys.h"
@@ -187,9 +188,32 @@ private:
 
 [[nodiscard]] SoundcheckDeviceInventory enumerateAsioEndpoints() {
     SoundcheckDeviceInventory inventory;
-    for (const auto& driverName : installedAsioDrivers()) {
+    const auto installed = installedAsioDrivers();
+    // An ASIO driver that is installed but rejected here simply vanishes from
+    // the device list, which looks identical to it never having been installed.
+    // A musician cannot tell "you need the driver" from "the driver is busy",
+    // so every rejection says which driver and why.
+    {
+        std::string names;
+        for (const auto& driverName : installed) {
+            names += names.empty() ? driverName : ", " + driverName;
+        }
+        JAMLINK_LOG("asio", installed.empty()
+            ? std::string("no ASIO drivers are registered on this system")
+            : "ASIO drivers registered: " + names);
+    }
+    for (const auto& driverName : installed) {
         ScopedAsioDriver driver;
-        if (!driver.open(driverName) || ASIOCanSampleRate(asioSampleRate) != ASE_OK) {
+        if (!driver.open(driverName)) {
+            // Almost always another application holding the device, or a
+            // driver whose hardware is not currently connected.
+            JAMLINK_LOG("asio", driverName
+                + " could not be opened; it is usually in use by another"
+                  " application, or its hardware is not connected");
+            continue;
+        }
+        if (ASIOCanSampleRate(asioSampleRate) != ASE_OK) {
+            JAMLINK_LOG("asio", driverName + " does not offer 48 kHz, which JamLink requires");
             continue;
         }
         long inputs = 0L;
@@ -202,10 +226,12 @@ private:
             || ASIOGetBufferSize(&minimum, &maximum, &preferred, &granularity) != ASE_OK
             || inputs < 0L || outputs < 0L
             || inputs > maximumAsioChannels || outputs > maximumAsioChannels) {
+            JAMLINK_LOG("asio", driverName + " did not report usable channels or buffer sizes");
             continue;
         }
         const auto buffers = bufferOptions(minimum, maximum, preferred, granularity);
         if (buffers.empty()) {
+            JAMLINK_LOG("asio", driverName + " reported no usable buffer sizes");
             continue;
         }
         const std::string endpointId = "asio:" + driverName;
