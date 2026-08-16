@@ -18,6 +18,7 @@
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
+#include "jamlink/network/outgoing_audio_pacer.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 
 #include <bcrypt.h>
@@ -62,12 +63,10 @@ constexpr std::size_t noncePrefixBytes = 8U;
 // Two hours. Long enough for a jam, short enough that an abandoned mapping
 // does not sit on the router indefinitely.
 constexpr std::uint32_t portMappingLifetimeSeconds = 7'200U;
-// One packet of audio, which is the cadence packets are released at.
-constexpr std::uint64_t packetIntervalMicroseconds =
-    static_cast<std::uint64_t>(networkPacketFrames) * 1'000'000ULL / networkSampleRate;
-// Past this much accumulated lag the schedule is rebased instead of trying to
-// catch up, which would reintroduce the burst it exists to prevent.
-constexpr std::uint64_t maximumSendLagMicroseconds = 60'000ULL;
+// Two hundred milliseconds of capture waiting to go out. Past this the audio
+// is older than a live session can use, so holding it would only delay
+// everything behind it.
+constexpr std::size_t maximumOutgoingBacklogFrames = 9'600U;
 constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 constexpr std::uint8_t streamIndexMask = 0x7FU;
 constexpr std::uint8_t sourceClipFlag = 0x80U;
@@ -1164,7 +1163,6 @@ public:
             receivers_[index].reset();
             remotePeak_[index].store(0.0F);
             sendSequence_[index] = 0U;
-            nextSendMicroseconds_[index] = 0U;
         }
         state_.store(PeerConnectionState::Idle, std::memory_order_release);
     }
@@ -1312,7 +1310,7 @@ public:
             || sampleRate < 8'000U || sampleRate > 384'000U) {
             return;
         }
-        localSampleRate_.store(sampleRate, std::memory_order_relaxed);
+        localSampleRate_[index].store(sampleRate, std::memory_order_relaxed);
         static_cast<void>(localAudio_[index].write(monoSamples));
     }
 
@@ -1688,12 +1686,15 @@ private:
             }
             const auto encodedParticipant = std::span<const std::uint8_t>(
                 participantPayload.data(), participantBytes);
-            std::array<audio::AsyncMonoResampler, audioStreamCount> outgoingResamplers{
-                audio::AsyncMonoResampler(65'536U),
-                audio::AsyncMonoResampler(65'536U)};
-            std::uint32_t outgoingRate = networkSampleRate;
-            for (auto& resampler : outgoingResamplers) {
-                resampler.configure(outgoingRate, networkSampleRate);
+            std::array<OutgoingAudioPacer, audioStreamCount> outgoingPacers{
+                OutgoingAudioPacer(
+                    networkPacketFrames, networkSampleRate, maximumOutgoingBacklogFrames),
+                OutgoingAudioPacer(
+                    networkPacketFrames, networkSampleRate, maximumOutgoingBacklogFrames)};
+            std::array<std::uint32_t, audioStreamCount> outgoingRates{};
+            for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+                static_cast<void>(outgoingPacers[index].setSourceRate(networkSampleRate));
+                outgoingRates[index] = networkSampleRate;
             }
             std::array<float, 1'024U> localScratch{};
             std::array<float, networkPacketFrames> networkFloat{};
@@ -1789,7 +1790,7 @@ private:
                 }
 
                 drainOutgoingAudio(
-                    sendCipher, outgoingResamplers, outgoingRate,
+                    sendCipher, outgoingPacers, outgoingRates,
                     localScratch, networkFloat, networkPcm, connected);
                 servicePendingChat(sendCipher, connected, now);
 
@@ -1867,8 +1868,8 @@ private:
 
     void drainOutgoingAudio(
         AesGcmCipher& cipher,
-        std::array<audio::AsyncMonoResampler, audioStreamCount>& resamplers,
-        std::uint32_t& configuredRate,
+        std::array<OutgoingAudioPacer, audioStreamCount>& pacers,
+        std::array<std::uint32_t, audioStreamCount>& configuredRates,
         std::array<float, 1'024U>& localScratch,
         std::array<float, networkPacketFrames>& networkFloat,
         std::array<std::uint8_t, networkPacketFrames * 2U>& networkPcm,
@@ -1876,47 +1877,30 @@ private:
         if (!connected) {
             return;
         }
-        const std::uint32_t requestedRate = localSampleRate_.load(std::memory_order_relaxed);
-        if (requestedRate != configuredRate && requestedRate >= 8'000U
-            && requestedRate <= 384'000U) {
-            configuredRate = requestedRate;
-            for (auto& resampler : resamplers) {
-                resampler.configure(configuredRate, networkSampleRate);
-            }
-        }
-
+        const std::uint64_t nowMicros = nowMicroseconds();
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
-            auto& resampler = resamplers[index];
+            auto& pacer = pacers[index];
+            const std::uint32_t requestedRate =
+                localSampleRate_[index].load(std::memory_order_relaxed);
+            // A rate the converter cannot honour leaves the stream on the one it
+            // already had rather than stopping it.
+            if (requestedRate != configuredRates[index]
+                && pacer.setSourceRate(requestedRate)) {
+                configuredRates[index] = requestedRate;
+            }
             while (localAudio_[index].availableReadFrames() > 0U) {
                 const std::size_t frames = std::min(
                     localScratch.size(), localAudio_[index].availableReadFrames());
                 static_cast<void>(localAudio_[index].readAndZeroFill(
                     std::span<float>(localScratch.data(), frames)));
-                static_cast<void>(resampler.write(
-                    std::span<const float>(localScratch.data(), frames)));
+                pacer.accept(std::span<const float>(localScratch.data(), frames));
             }
-            // Packets leave on the cadence they represent, not as fast as the
-            // resampler can produce them. Emitting a backlog back to back makes
-            // the receiver see its own sender as a jittery network: arrivals
-            // clump, the measured jitter climbs, and the receive buffer grows to
-            // absorb a variance that the link never had. A first live session
-            // over a 4 ms round trip reported a 135 ms buffer for exactly this
-            // reason, with the concealer running almost continuously.
-            const std::uint64_t nowMicros = nowMicroseconds();
-            std::uint64_t& nextSend = nextSendMicroseconds_[index];
-            if (nextSend == 0U || nowMicros + packetIntervalMicroseconds < nextSend) {
-                // First packet, or the clock jumped backwards.
-                nextSend = nowMicros;
-            }
-            // Bounded catch-up: a late wake-up may release a few packets, but
-            // never the whole backlog at once.
-            for (std::size_t packet = 0U; packet < 4U; ++packet) {
-                if (nowMicros < nextSend) {
-                    break;
-                }
-                if (resampler.read(networkFloat) != networkFloat.size()) {
-                    break;
-                }
+            // The pacer holds the schedule: it releases on the cadence the audio
+            // itself represents, makes up lateness by sending sooner rather than
+            // by abandoning what was captured, and counts anything it does have
+            // to drop. The loop ends of its own accord when nothing is due.
+            while (pacer.release(
+                nowMicros, std::span<float>(networkFloat.data(), networkFloat.size()))) {
                 for (std::size_t frame = 0U; frame < networkFloat.size(); ++frame) {
                     const float bounded = std::clamp(networkFloat[frame], -0.98F, 0.98F);
                     const auto sample =
@@ -1929,15 +1913,6 @@ private:
                     cipher, PacketType::Audio, networkSampleRate,
                     static_cast<std::uint16_t>(networkPacketFrames), networkPcm,
                     static_cast<AudioStreamId>(index)));
-                // Advance by exactly one packet of audio so the schedule stays
-                // tied to the media clock rather than drifting with wake-ups.
-                nextSend += packetIntervalMicroseconds;
-            }
-            // A backlog larger than the catch-up window means the capture side
-            // is ahead of the send schedule; resynchronise rather than let the
-            // deficit grow without bound.
-            if (nowMicros > nextSend + maximumSendLagMicroseconds) {
-                nextSend = nowMicros;
             }
         }
     }
@@ -2163,8 +2138,6 @@ private:
     std::uint32_t nonceCounter_{0U};
     bool nonceExhausted_{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence_{};
-    // When each stream may release its next packet. Zero means unscheduled.
-    std::array<std::uint64_t, audioStreamCount> nextSendMicroseconds_{};
     mutable std::mutex controlMutex_;
     PeerParticipantInfo localParticipant_{
         "local-development", "", "Musician", "avatar:guitar-electric",
@@ -2184,7 +2157,10 @@ private:
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localStreamMuted_{};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSourceClipped_{};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteSourceClipped_{};
-    std::atomic<std::uint32_t> localSampleRate_{networkSampleRate};
+    // Each capture device has its own rate: an ASIO interface for the guitar
+    // and a USB microphone for the voice need not agree, and forcing one rate
+    // on both would resample whichever was wrong.
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
     std::atomic<std::uint64_t> packetsSent_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};
     std::atomic<std::uint64_t> packetsRejected_{0U};

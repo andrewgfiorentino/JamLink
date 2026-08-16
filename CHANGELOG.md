@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Outgoing audio is now taken from the capture callback at the capture device's own rate, instead of from the playback callback. Feeding the network from the playback side made what the other person hears a function of the local playback device: on Windows shared-mode audio the capture and render endpoints run on independent clocks with a converter between them, that converter zero-fills whatever it cannot supply, and its return value was discarded, so every underrun put a block of digital silence on the wire as though it were the guitar. ASIO was unaffected because capture and playback there share one clock in one callback, which is why the same session sounded acceptable in one direction and bit-crushed in the other.
+- Rewrote the send schedule as a portable, clock-injected `OutgoingAudioPacer` and gave it a deterministic test suite. The previous schedule capped catch-up at four packets per wake-up and then rebased forward if still behind, which abandoned the audio behind the deficit; the backlog grew on every late wake-up until the converter overran and discarded in chunks. Lateness is now made up by sending sooner, never by moving the deadline, and the only audio deliberately dropped is a backlog older than a live session can use, which is counted.
+- A read that cannot fill a whole packet is no longer attempted. The converter fills what it can, marks itself unprimed and loses the remainder, so with a wake-up coarser than one packet — which is what a five-millisecond timeout actually delivers on Windows — that was a steady, silent leak on every pass.
+- A router that refuses to open a port now recommends that the other person create the invite, rather than explaining port forwarding. Only the host needs to be reachable, so swapping roles is the fix that needs no configuration; forwarding is still offered as the alternative.
+- A router that rewrites the external port no longer reports "relay required" and withholds the invite with nothing further to offer. No relay exists in this build, and only the ability to host was ever lost: such a machine can still join a room the other person opens, and now says so.
+
 ## 0.3.9-test — 2026-08-15
 
 - Made every audio device reachable in the picker. The device list sized itself to its content with no upper bound and the view inside was exactly as tall as that content, so there was nothing to scroll and every device below the bottom of the window was unreachable. On a machine with several interfaces and their ASIO drivers that was most of them, including the Focusrite ASIO entry a tester had been unable to find. The list is now bounded and scrollable, carries a draggable scrollbar, and opens with the current device in view.

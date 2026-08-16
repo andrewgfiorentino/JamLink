@@ -19,8 +19,13 @@ ConnectionPreflightResult evaluateConnectionPreflight(
                 ConnectionPreflightAction::ChooseAnotherUdpPort, false};
     }
     if (checks.reachability == ReachabilityAssessment::RelayRequired) {
-        return {ConnectionPreflightOutcome::RelayRequired,
-                ConnectionPreflightAction::ConfigureRelay, false};
+        // A router that rewrites the external port cannot be reached by a
+        // direct invite, and no relay exists in this build to work around it.
+        // Saying "relay required" therefore left a musician with nothing to do,
+        // when in fact only the ability to host was lost: this machine can
+        // still join a room the other person opens.
+        return {ConnectionPreflightOutcome::JoinOnly,
+                ConnectionPreflightAction::AskFriendToHost, false};
     }
     if (checks.reachability == ReachabilityAssessment::LikelyBlocked) {
         return {ConnectionPreflightOutcome::DirectMayNeedHelp,
@@ -31,6 +36,16 @@ ConnectionPreflightResult evaluateConnectionPreflight(
         && checks.reachability == ReachabilityAssessment::LikelyReachable) {
         return {ConnectionPreflightOutcome::Ready,
                 ConnectionPreflightAction::None, true};
+    }
+    if (checks.portMapping == PortMappingState::Failed) {
+        // The router was asked for a port and refused. Port forwarding is a
+        // real remedy but not one most people can follow, and it is not needed:
+        // with a single invite code only the host must be reachable. A tester
+        // whose router granted a mapping one hour and refused it the next
+        // connected without trouble the moment the other person made the
+        // invite, so that is the instruction worth leading with.
+        return {ConnectionPreflightOutcome::DirectMayNeedHelp,
+                ConnectionPreflightAction::AskFriendToHost, true};
     }
     if (checks.portMapping != PortMappingState::Succeeded) {
         return {ConnectionPreflightOutcome::DirectMayNeedHelp,

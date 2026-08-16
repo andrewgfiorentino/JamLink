@@ -890,12 +890,15 @@ private:
                 case WAIT_OBJECT_0 + 1U:
                     keepRunning = processCapture(
                         instrument, instrumentCapture, instrumentBuffer, instrumentPeak_,
-                        instrumentInputHealth_, instrumentSourceClipped_, true);
+                        instrumentInputHealth_, instrumentSendHealth_,
+                        instrumentSourceClipped_,
+                        jamlink::network::AudioStreamId::Instrument, true);
                     break;
                 case WAIT_OBJECT_0 + 2U:
                     keepRunning = processCapture(
                         voice, voiceCapture, voiceBuffer, voicePeak_, voiceInputHealth_,
-                        voiceSourceClipped_, false);
+                        voiceSendHealth_, voiceSourceClipped_,
+                        jamlink::network::AudioStreamId::Voice, false);
                     break;
                 case WAIT_OBJECT_0 + 3U:
                     keepRunning = processRender(
@@ -944,7 +947,9 @@ private:
         AsyncMonoResampler& destination,
         RealtimeAtomicFloat& peakTarget,
         LevelMeter& inputHealth,
+        LevelMeter& sendHealth,
         std::atomic<std::uint32_t>& sourceClipped,
+        jamlink::network::AudioStreamId streamId,
         bool feedTuner) noexcept {
         UINT32 packetFrames = 0U;
         HRESULT result = stream.capture->GetNextPacketSize(&packetFrames);
@@ -985,6 +990,25 @@ private:
             }
             static_cast<void>(destination.write(
                 std::span<const float>(scratch.data(), frames)));
+            // What the other person hears is taken here, from captured audio at
+            // the capture device's own rate, and not from the render callback.
+            //
+            // Feeding the network from the render side made the outgoing stream
+            // a function of the playback device. On shared-mode Windows audio
+            // the capture and render endpoints run on independent clocks with a
+            // converter between them, and that converter zero-fills whatever it
+            // cannot supply. Its return value was discarded, so every underrun
+            // put a block of digital silence on the wire as though it were the
+            // guitar, and the send rate sat well under the one packet per five
+            // milliseconds the stream owed. A tester heard the result as
+            // bit-crushing and glitching on a link with a 4 ms round trip.
+            if (peerExchange_ != nullptr) {
+                sendHealth.process(std::span<const float>(scratch.data(), frames));
+                peerExchange_->pushLocalAudio(
+                    streamId,
+                    std::span<const float>(scratch.data(), frames),
+                    stream.format.sampleRate);
+            }
             result = stream.capture->ReleaseBuffer(frames);
             if (FAILED(result)) {
                 state_.store(stateForFailure(result), std::memory_order_release);
@@ -1032,9 +1056,6 @@ private:
             std::span<float>(instrumentScratch.data(), frames)));
         static_cast<void>(voiceBuffer.read(
             std::span<float>(voiceScratch.data(), frames)));
-        instrumentSendHealth_.process(
-            std::span<const float>(instrumentScratch.data(), frames));
-        voiceSendHealth_.process(std::span<const float>(voiceScratch.data(), frames));
         std::fill(remoteScratch.begin(), remoteScratch.begin() + frames, 0.0F);
 
         // Recording taps the sources, not the mix, so the take stays separable.
@@ -1064,17 +1085,9 @@ private:
                 voiceSourceClipped_.load(std::memory_order_acquire) != 0U);
             // Instrument and voice travel as independent streams, so each has
             // its own receive buffer and neither is summed before transmission.
-            // The old combined path attenuated both by 0.65 purely to leave
-            // headroom for the sum.
-            peerExchange_->pushLocalAudio(
-                jamlink::network::AudioStreamId::Instrument,
-                std::span<const float>(instrumentScratch.data(), frames),
-                output.format.sampleRate);
-            peerExchange_->pushLocalAudio(
-                jamlink::network::AudioStreamId::Voice,
-                std::span<const float>(voiceScratch.data(), frames),
-                output.format.sampleRate);
-
+            // They are handed to the transport from the capture callbacks, not
+            // from here, so that the outgoing audio is the audio that was
+            // played rather than whatever the playback device had room for.
             for (std::size_t index = 0U;
                  index < jamlink::network::audioStreamCount; ++index) {
                 const auto stream = static_cast<jamlink::network::AudioStreamId>(index);

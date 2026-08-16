@@ -1507,6 +1507,8 @@ QString AppController::connectionPreflightStatus() const {
         return QStringLiteral("Ready");
     case ConnectionPreflightOutcome::DirectMayNeedHelp:
         return QStringLiteral("Direct connection may need help");
+    case ConnectionPreflightOutcome::JoinOnly:
+        return QStringLiteral("You can join, but not host");
     case ConnectionPreflightOutcome::RelayRequired:
         return QStringLiteral("Relay required");
     case ConnectionPreflightOutcome::Blocked:
@@ -1558,6 +1560,14 @@ QString AppController::connectionPreflightDetail() const {
             .arg(publicCheck, mappingCheck)
             .arg(roomPort() > 0 ? roomPort() : preferences_.preferredUdpPort);
     }
+    case ConnectionPreflightAction::AskFriendToHost:
+        return QStringLiteral(
+            "Your router would not open a port for JamLink, so your friend is unlikely to "
+            "reach an invite you create. Only the person who makes the invite needs an open "
+            "port, so ask your friend to create it and paste it here instead. Forwarding UDP "
+            "port %1 on your router is the alternative. Internet reachability was not "
+            "measured.")
+            .arg(roomPort() > 0 ? roomPort() : preferences_.preferredUdpPort);
     case ConnectionPreflightAction::CheckFirewall:
         return QStringLiteral(
             "The direct path may be blocked. Allow JamLink through Windows Firewall and "
