@@ -174,20 +174,9 @@ Item {
                         SettingsHeading { text: "Format" }
 
                         SettingsRow {
-                            label: "Sample rate"
-                            DeviceSelector {
-                                width: 168
-                                model: root.controller.sampleRates
-                                currentIndex: root.controller.sampleRateIndex
-                                enabled: root.controller.devicesAvailable
-                                Accessible.name: "Sample rate"
-                                onActivated: index => root.controller.sampleRateIndex = index
-                            }
-                        }
-                        SettingsRow {
                             label: "Buffer size"
                             DeviceSelector {
-                                width: 168
+                                width: 210
                                 model: root.controller.bufferSizes
                                 currentIndex: root.controller.bufferSizeIndex
                                 enabled: root.controller.devicesAvailable
@@ -195,10 +184,30 @@ Item {
                                 onActivated: index => root.controller.bufferSizeIndex = index
                             }
                         }
+                        SettingsNote { text: root.controller.bufferSizeExplanation }
                         SettingsNote {
-                            text: "A smaller buffer lowers the delay you hear on your own "
-                                + "playing. Too small and the audio breaks up."
+                            text: "Smaller means you hear yourself sooner. Too small for "
+                                + "your computer and the sound breaks into crackles. Start "
+                                + "low, and go up one step if that happens."
                         }
+
+                        SettingsRow {
+                            label: "Sample rate"
+                            DeviceSelector {
+                                width: 210
+                                model: root.controller.sampleRates
+                                currentIndex: root.controller.sampleRateIndex
+                                enabled: root.controller.devicesAvailable
+                                    && root.controller.sampleRates.length > 1
+                                Accessible.name: "Sample rate"
+                                onActivated: index => root.controller.sampleRateIndex = index
+                            }
+                        }
+                        SettingsNote { text: root.controller.sampleRateExplanation }
+
+                        SettingsRule {}
+                        SettingsHeading { text: "Hearing yourself" }
+                        SettingsNote { text: root.controller.monitorPathSummary }
 
                         SettingsRule {}
                         Row {
