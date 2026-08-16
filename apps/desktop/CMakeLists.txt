@@ -148,6 +148,8 @@ if(BUILD_TESTING)
         app_controller.cpp
         app_controller.hpp
         controller_tests.cpp
+        firewall_access.cpp
+        firewall_access.hpp
         private_room_directory.cpp
         private_room_directory.hpp
         update_manager.cpp
