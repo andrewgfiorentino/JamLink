@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.7-test — 2026-08-15
+
+- Buffer size choices now read as, for example, `128 · 5.3 ms · lowest delay`, with a plain-language note saying how long it takes to hear yourself and what to do if the audio crackles. The figure is the round trip a player feels, one buffer in and one buffer out, computed against the rate actually in use.
+- Added a **Hearing yourself** line reporting the real monitor delay, and on Windows shared audio stating that Windows will not go lower and naming the two remedies: choose an ASIO device, or turn JamLink's monitor off and use the interface's own monitoring.
+- Left sample rate as a single value on purpose. JamLink records, sends, and plays at 48 kHz, so any other rate would add a conversion stage and increase delay rather than reduce it, and on Windows shared audio the rate is not JamLink's to choose. The setting now explains that instead of offering a control that cannot help.
+- Stopped printing a monitor delay of `0.0 ms` before the device has reported the buffer it settled on, which read as instant.
+
 ## 0.3.6-test — 2026-08-15
 
 - Added in-application Windows Firewall detection and repair. A router mapping only carries a packet as far as the PC; the firewall then decides whether JamLink receives it, and for an unsigned application run from a ZIP the answer is usually no while every other check still reports success. Home now states the problem and offers **Fix Firewall**, which requests elevation through the standard UAC prompt and creates the narrowest useful rule: this executable, inbound, UDP, allow, private and domain profiles.
