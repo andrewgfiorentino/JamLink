@@ -1072,13 +1072,124 @@ QStringList AppController::sampleRates() const {
     return result;
 }
 
+// A number of samples means nothing to most musicians. What they can act on is
+// the delay it causes and whether it is likely to hold up, so both are said
+// plainly and the raw number is kept for anyone who wants it.
+double AppController::bufferLatencyMilliseconds(std::uint32_t frames) const noexcept {
+    const std::uint32_t rate = currentSampleRate();
+    if (rate == 0U || frames == 0U) {
+        return 0.0;
+    }
+    // One buffer in and one buffer out: what a player actually hears.
+    return static_cast<double>(frames) * 2'000.0 / static_cast<double>(rate);
+}
+
+std::uint32_t AppController::currentSampleRate() const noexcept {
+    if (!sampleRateValues_.empty() && validIndex(sampleRateIndex_, sampleRateValues_.size())) {
+        return sampleRateValues_[static_cast<std::size_t>(sampleRateIndex_)];
+    }
+    return 48'000U;
+}
+
 QStringList AppController::bufferSizes() const {
     QStringList result;
     result.reserve(static_cast<qsizetype>(bufferSizeValues_.size()));
     for (const auto value : bufferSizeValues_) {
-        result.push_back(QString::number(value) + QStringLiteral(" samples"));
+        const double milliseconds = bufferLatencyMilliseconds(value);
+        QString verdict;
+        // Thresholds chosen from what playing together actually tolerates:
+        // under about 6 ms is indistinguishable from an amp in the room, and
+        // past roughly 25 ms a player starts fighting their own timing.
+        if (milliseconds <= 6.0) {
+            verdict = QStringLiteral("lowest delay");
+        } else if (milliseconds <= 12.0) {
+            verdict = QStringLiteral("low delay");
+        } else if (milliseconds <= 25.0) {
+            verdict = QStringLiteral("safe");
+        } else {
+            verdict = QStringLiteral("noticeable delay");
+        }
+        result.push_back(QStringLiteral("%1 · %2 ms · %3")
+            .arg(value)
+            .arg(milliseconds, 0, 'f', 1)
+            .arg(verdict));
     }
     return result;
+}
+
+QString AppController::bufferSizeExplanation() const {
+    if (!validIndex(bufferSizeIndex_, bufferSizeValues_.size())) {
+        return QStringLiteral("Choose a buffer size to see the delay it causes.");
+    }
+    const std::uint32_t frames = bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)];
+    const double milliseconds = bufferLatencyMilliseconds(frames);
+    const QString delay = QStringLiteral(
+        "About %1 ms between playing a note and hearing it back through JamLink.")
+        .arg(milliseconds, 0, 'f', 1);
+    const QString guidance = milliseconds <= 6.0
+        ? QStringLiteral(
+            " That is as close to playing through an amp in the room as this gets. "
+            "If you hear crackling, choose the next size up.")
+        : milliseconds <= 12.0
+            ? QStringLiteral(
+                " Comfortable for playing together. Go smaller if your computer copes.")
+            : milliseconds <= 25.0
+                ? QStringLiteral(
+                    " Reliable, but you may feel it. Go smaller if there is no crackling.")
+                : QStringLiteral(
+                    " Large enough to be distracting while playing. Choose a smaller "
+                    "size unless you need it to stop crackling.");
+    return delay + guidance;
+}
+
+QString AppController::sampleRateExplanation() const {
+    // Offering other rates would be a false choice: JamLink sends at 48 kHz, so
+    // anything else would add a conversion stage and increase delay rather than
+    // reduce it. Better to say why than to present a control that cannot help.
+    const bool shared = !asioActive();
+    return shared
+        ? QStringLiteral(
+            "Windows fixes this for shared audio. Change it in Windows sound "
+            "settings if you need to. JamLink sends at 48 kHz either way.")
+        : QStringLiteral(
+            "JamLink records, sends, and plays at 48 kHz. Staying here avoids a "
+            "conversion step, so it is both the cleanest and the fastest choice.");
+}
+
+bool AppController::asioActive() const noexcept {
+    if (!validIndex(outputIndex_, outputOptions_.size())) {
+        return false;
+    }
+    return outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption.backend
+        == jamlink::audio::SoundcheckBackend::Asio;
+}
+
+QString AppController::monitorPathSummary() const {
+    if (!audioActive()) {
+        return QStringLiteral("Audio is not running.");
+    }
+    if (audioTelemetry_.outputBufferFrames == 0U) {
+        // The device has not reported its running buffer, so there is no figure
+        // to give. Zero would read as instant, which is the opposite of true.
+        return QStringLiteral(
+            "Waiting for the audio device to report the buffer it settled on.");
+    }
+    const double milliseconds =
+        static_cast<double>(audioTelemetry_.outputBufferFrames) * 2'000.0
+        / static_cast<double>(currentSampleRate());
+    if (asioActive()) {
+        return QStringLiteral(
+            "ASIO · about %1 ms to hear yourself. Your guitar goes straight from "
+            "the input to your headphones in one step.")
+            .arg(milliseconds, 0, 'f', 1);
+    }
+    // Shared mode has a floor Windows imposes and a conversion JamLink cannot
+    // avoid, so the honest advice is to change backend or use the interface.
+    return QStringLiteral(
+        "Windows shared audio · about %1 ms to hear yourself. Windows will not go "
+        "lower than this. For less delay, choose an ASIO device above, or turn "
+        "JamLink's monitor off and use your interface's own monitoring.")
+        .arg(milliseconds, 0, 'f', 1);
 }
 
 int AppController::sampleRateIndex() const noexcept { return sampleRateIndex_; }

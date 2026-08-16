@@ -142,6 +142,11 @@ class AppController final : public QObject {
     Q_PROPERTY(QVariantList chatMessages READ chatMessages NOTIFY chatChanged)
     Q_PROPERTY(int unreadChatCount READ unreadChatCount NOTIFY chatChanged)
 
+    Q_PROPERTY(QString bufferSizeExplanation READ bufferSizeExplanation NOTIFY setupChanged)
+    Q_PROPERTY(QString sampleRateExplanation READ sampleRateExplanation NOTIFY setupChanged)
+    Q_PROPERTY(QString monitorPathSummary READ monitorPathSummary NOTIFY setupChanged)
+    Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
+
     Q_PROPERTY(bool firewallNeedsAttention READ firewallNeedsAttention NOTIFY firewallChanged)
     Q_PROPERTY(bool firewallFixable READ firewallFixable NOTIFY firewallChanged)
     Q_PROPERTY(bool firewallBusy READ firewallBusy NOTIFY firewallChanged)
@@ -316,6 +321,11 @@ public:
     [[nodiscard]] QVariantList chatMessages() const;
     [[nodiscard]] int unreadChatCount() const noexcept;
 
+    [[nodiscard]] QString bufferSizeExplanation() const;
+    [[nodiscard]] QString sampleRateExplanation() const;
+    [[nodiscard]] QString monitorPathSummary() const;
+    [[nodiscard]] bool asioActive() const noexcept;
+
     [[nodiscard]] bool firewallNeedsAttention() const noexcept;
     [[nodiscard]] bool firewallFixable() const noexcept;
     [[nodiscard]] bool firewallBusy() const noexcept;
@@ -442,6 +452,8 @@ private:
         float& stored,
         double gain);
     void applyTunerMute();
+    [[nodiscard]] double bufferLatencyMilliseconds(std::uint32_t frames) const noexcept;
+    [[nodiscard]] std::uint32_t currentSampleRate() const noexcept;
     void updateQualityWindow();
 
     // Rolling view of the friend's instrument stream, so the connection grade
