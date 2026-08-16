@@ -1177,19 +1177,30 @@ QString AppController::monitorPathSummary() const {
     const double milliseconds =
         static_cast<double>(audioTelemetry_.outputBufferFrames) * 2'000.0
         / static_cast<double>(currentSampleRate());
+    // A device that is dropping blocks is the one thing that matters more than
+    // the figure above, because it is audible and the remedy is a setting on
+    // this screen.
+    const QString dropouts = audioTelemetry_.underruns + audioTelemetry_.overruns > 0U
+        ? QStringLiteral(
+              " Your device has dropped %1 block(s) of audio, which is heard as "
+              "clicks or crackle. Choose a larger buffer size.")
+              .arg(audioTelemetry_.underruns + audioTelemetry_.overruns)
+        : QString();
     if (asioActive()) {
         return QStringLiteral(
             "ASIO · about %1 ms to hear yourself. Your guitar goes straight from "
-            "the input to your headphones in one step.")
-            .arg(milliseconds, 0, 'f', 1);
+            "the input to your headphones in one step.%2")
+            .arg(milliseconds, 0, 'f', 1)
+            .arg(dropouts);
     }
     // Shared mode has a floor Windows imposes and a conversion JamLink cannot
     // avoid, so the honest advice is to change backend or use the interface.
     return QStringLiteral(
         "Windows shared audio · about %1 ms to hear yourself. Windows will not go "
         "lower than this. For less delay, choose an ASIO device above, or turn "
-        "JamLink's monitor off and use your interface's own monitoring.")
-        .arg(milliseconds, 0, 'f', 1);
+        "JamLink's monitor off and use your interface's own monitoring.%2")
+        .arg(milliseconds, 0, 'f', 1)
+        .arg(dropouts);
 }
 
 int AppController::sampleRateIndex() const noexcept { return sampleRateIndex_; }
@@ -1507,6 +1518,8 @@ QString AppController::connectionPreflightStatus() const {
         return QStringLiteral("Ready");
     case ConnectionPreflightOutcome::DirectMayNeedHelp:
         return QStringLiteral("Direct connection may need help");
+    case ConnectionPreflightOutcome::JoinOnly:
+        return QStringLiteral("You can join, but not host");
     case ConnectionPreflightOutcome::RelayRequired:
         return QStringLiteral("Relay required");
     case ConnectionPreflightOutcome::Blocked:
@@ -1558,6 +1571,14 @@ QString AppController::connectionPreflightDetail() const {
             .arg(publicCheck, mappingCheck)
             .arg(roomPort() > 0 ? roomPort() : preferences_.preferredUdpPort);
     }
+    case ConnectionPreflightAction::AskFriendToHost:
+        return QStringLiteral(
+            "Your router would not open a port for JamLink, so your friend is unlikely to "
+            "reach an invite you create. Only the person who makes the invite needs an open "
+            "port, so ask your friend to create it and paste it here instead. Forwarding UDP "
+            "port %1 on your router is the alternative. Internet reachability was not "
+            "measured.")
+            .arg(roomPort() > 0 ? roomPort() : preferences_.preferredUdpPort);
     case ConnectionPreflightAction::CheckFirewall:
         return QStringLiteral(
             "The direct path may be blocked. Allow JamLink through Windows Firewall and "
@@ -2802,6 +2823,38 @@ void AppController::restartAudio() {
     emit setupChanged();
 }
 
+void AppController::reportAudioDeviceDropouts() {
+    // The counters existed from the beginning and were shown nowhere, so
+    // "which buffer size should I use" had no answer but guesswork, and a
+    // device that was quietly dropping blocks looked identical to a bad
+    // network. A drop-out here is local: it is this machine failing to hand
+    // over audio in time, not anything the connection did.
+    const std::uint64_t dropouts =
+        audioTelemetry_.underruns + audioTelemetry_.overruns;
+    if (dropouts <= reportedAudioDropouts_) {
+        return;
+    }
+    // Rate limited so a struggling device cannot fill the log at the telemetry
+    // poll rate, and so the figure quoted is a rate rather than a running
+    // total the reader has to differentiate by hand.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (audioDropoutReportMilliseconds_ != 0
+        && now - audioDropoutReportMilliseconds_ < 5'000) {
+        return;
+    }
+    const std::uint64_t since = dropouts - reportedAudioDropouts_;
+    const qint64 elapsed = audioDropoutReportMilliseconds_ == 0
+        ? 0 : now - audioDropoutReportMilliseconds_;
+    reportedAudioDropouts_ = dropouts;
+    audioDropoutReportMilliseconds_ = now;
+    JAMLINK_LOG("audio", "device dropped " + std::to_string(since)
+        + " block(s)" + (elapsed > 0
+            ? " in " + std::to_string(elapsed / 1'000) + " s" : "")
+        + "; running buffer " + std::to_string(audioTelemetry_.outputBufferFrames)
+        + " frames. The buffer is too small for this machine, or another"
+        + " program is competing for the device.");
+}
+
 void AppController::pollAudioTelemetry() {
     if (!audioService_) {
         return;
@@ -2825,6 +2878,7 @@ void AppController::pollAudioTelemetry() {
             : QStringLiteral(
                 "USB microphone disconnected; ASIO guitar/output remain active while it reconnects");
     }
+    reportAudioDeviceDropouts();
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
         updateQualityWindow();

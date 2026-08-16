@@ -31,6 +31,11 @@ enum class ConnectionPreflightOutcome : std::uint8_t {
     NotRun,
     Ready,
     DirectMayNeedHelp,
+    // This machine cannot be reached by a direct invite, but nothing stops it
+    // joining one. With a single invite code only the host has to be
+    // reachable, so a router that will not cooperate ends the ability to host,
+    // not the ability to play.
+    JoinOnly,
     RelayRequired,
     Blocked
 };
@@ -41,6 +46,7 @@ enum class ConnectionPreflightAction : std::uint8_t {
     UseCurrentBuild,
     ChooseAnotherUdpPort,
     EnableMappingOrForwardPort,
+    AskFriendToHost,
     CheckFirewall,
     ConfigureRelay
 };

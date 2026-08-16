@@ -439,6 +439,7 @@ private:
     void scheduleSave();
     void scheduleAudioRestart();
     void restartAudio();
+    void reportAudioDeviceDropouts();
     void pollAudioTelemetry();
     [[nodiscard]] static QString audioStateText(
         jamlink::audio::SoundcheckAudioState state);
@@ -494,6 +495,10 @@ private:
     jamlink::control::ReadinessTracker readiness_;
     QTimer saveTimer_;
     QTimer audioRestartTimer_;
+    // Local audio drop-outs already reported, so the log records a rate rather
+    // than repeating a running total at the telemetry poll rate.
+    std::uint64_t reportedAudioDropouts_{0U};
+    qint64 audioDropoutReportMilliseconds_{0};
     QTimer telemetryTimer_;
     QString currentPage_;
     QString tunerReturnPage_{QStringLiteral("home")};

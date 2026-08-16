@@ -29,6 +29,17 @@ add_test(NAME jamlink_network_tests COMMAND jamlink_network_tests)
 set_tests_properties(jamlink_network_tests PROPERTIES
     TIMEOUT 180 LABELS "network;impairment")
 
+add_executable(jamlink_outgoing_audio_pacer_tests outgoing_audio_pacer_tests.cpp)
+target_link_libraries(jamlink_outgoing_audio_pacer_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_outgoing_audio_pacer_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_outgoing_audio_pacer_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_outgoing_audio_pacer_tests)
+
+add_test(NAME jamlink_outgoing_audio_pacer_tests
+    COMMAND jamlink_outgoing_audio_pacer_tests)
+set_tests_properties(jamlink_outgoing_audio_pacer_tests PROPERTIES
+    TIMEOUT 60 LABELS "network;audio;send")
+
 add_executable(jamlink_tuner_tests jamlink_tuner_tests.cpp)
 target_link_libraries(jamlink_tuner_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_tuner_tests PRIVATE cxx_std_20)

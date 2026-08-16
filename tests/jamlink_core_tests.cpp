@@ -198,9 +198,25 @@ JAMLINK_TEST(connection_preflight_classifies_deterministic_fake_outcomes) {
     EXPECT_TRUE(result.action == ConnectionPreflightAction::ChooseAnotherUdpPort);
     EXPECT_TRUE(!result.directInviteAllowed);
 
+    // A router that was asked for a port and refused it. Port forwarding is a
+    // real remedy but not one most musicians can follow, and with a single
+    // invite code only the host has to be reachable, so the instruction that
+    // actually resolves the session is to let the other person host.
     simulated = ready;
     simulated.publicAddress = PublicAddressDiscoveryState::Failed;
     simulated.portMapping = PortMappingState::Failed;
+    simulated.reachability = ReachabilityAssessment::Unknown;
+    result = evaluateConnectionPreflight(simulated);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::DirectMayNeedHelp);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::AskFriendToHost);
+    // The invite is still offered: a mapping refusal is not proof of
+    // unreachability, and the port may already be forwarded by hand.
+    EXPECT_TRUE(result.directInviteAllowed);
+
+    // Automatic mapping switched off is a different situation from a refusal,
+    // and the useful instruction is to turn it back on.
+    simulated = ready;
+    simulated.portMapping = PortMappingState::NotRequested;
     simulated.reachability = ReachabilityAssessment::Unknown;
     result = evaluateConnectionPreflight(simulated);
     EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::DirectMayNeedHelp);
@@ -215,11 +231,15 @@ JAMLINK_TEST(connection_preflight_classifies_deterministic_fake_outcomes) {
     EXPECT_TRUE(result.action == ConnectionPreflightAction::CheckFirewall);
     EXPECT_TRUE(result.directInviteAllowed);
 
+    // A router that rewrites the external port cannot be reached directly and
+    // this build has no relay, so reporting "relay required" left a musician
+    // with nothing they could do. Only hosting is lost; joining still works.
     simulated = ready;
     simulated.reachability = ReachabilityAssessment::RelayRequired;
     result = evaluateConnectionPreflight(simulated);
-    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::RelayRequired);
-    EXPECT_TRUE(result.action == ConnectionPreflightAction::ConfigureRelay);
+    EXPECT_TRUE(result.outcome == ConnectionPreflightOutcome::JoinOnly);
+    EXPECT_TRUE(result.action == ConnectionPreflightAction::AskFriendToHost);
+    // An invite from this machine genuinely cannot work, so it is not offered.
     EXPECT_TRUE(!result.directInviteAllowed);
 }
 
