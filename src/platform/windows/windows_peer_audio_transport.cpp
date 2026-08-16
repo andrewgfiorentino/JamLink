@@ -62,6 +62,12 @@ constexpr std::size_t noncePrefixBytes = 8U;
 // Two hours. Long enough for a jam, short enough that an abandoned mapping
 // does not sit on the router indefinitely.
 constexpr std::uint32_t portMappingLifetimeSeconds = 7'200U;
+// One packet of audio, which is the cadence packets are released at.
+constexpr std::uint64_t packetIntervalMicroseconds =
+    static_cast<std::uint64_t>(networkPacketFrames) * 1'000'000ULL / networkSampleRate;
+// Past this much accumulated lag the schedule is rebased instead of trying to
+// catch up, which would reintroduce the burst it exists to prevent.
+constexpr std::uint64_t maximumSendLagMicroseconds = 60'000ULL;
 constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 constexpr std::uint8_t streamIndexMask = 0x7FU;
 constexpr std::uint8_t sourceClipFlag = 0x80U;
@@ -1158,6 +1164,7 @@ public:
             receivers_[index].reset();
             remotePeak_[index].store(0.0F);
             sendSequence_[index] = 0U;
+            nextSendMicroseconds_[index] = 0U;
         }
         state_.store(PeerConnectionState::Idle, std::memory_order_release);
     }
@@ -1872,7 +1879,25 @@ private:
                 static_cast<void>(resampler.write(
                     std::span<const float>(localScratch.data(), frames)));
             }
+            // Packets leave on the cadence they represent, not as fast as the
+            // resampler can produce them. Emitting a backlog back to back makes
+            // the receiver see its own sender as a jittery network: arrivals
+            // clump, the measured jitter climbs, and the receive buffer grows to
+            // absorb a variance that the link never had. A first live session
+            // over a 4 ms round trip reported a 135 ms buffer for exactly this
+            // reason, with the concealer running almost continuously.
+            const std::uint64_t nowMicros = nowMicroseconds();
+            std::uint64_t& nextSend = nextSendMicroseconds_[index];
+            if (nextSend == 0U || nowMicros + packetIntervalMicroseconds < nextSend) {
+                // First packet, or the clock jumped backwards.
+                nextSend = nowMicros;
+            }
+            // Bounded catch-up: a late wake-up may release a few packets, but
+            // never the whole backlog at once.
             for (std::size_t packet = 0U; packet < 4U; ++packet) {
+                if (nowMicros < nextSend) {
+                    break;
+                }
                 if (resampler.read(networkFloat) != networkFloat.size()) {
                     break;
                 }
@@ -1888,6 +1913,15 @@ private:
                     cipher, PacketType::Audio, networkSampleRate,
                     static_cast<std::uint16_t>(networkPacketFrames), networkPcm,
                     static_cast<AudioStreamId>(index)));
+                // Advance by exactly one packet of audio so the schedule stays
+                // tied to the media clock rather than drifting with wake-ups.
+                nextSend += packetIntervalMicroseconds;
+            }
+            // A backlog larger than the catch-up window means the capture side
+            // is ahead of the send schedule; resynchronise rather than let the
+            // deficit grow without bound.
+            if (nowMicros > nextSend + maximumSendLagMicroseconds) {
+                nextSend = nowMicros;
             }
         }
     }
@@ -2113,6 +2147,8 @@ private:
     std::uint32_t nonceCounter_{0U};
     bool nonceExhausted_{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence_{};
+    // When each stream may release its next packet. Zero means unscheduled.
+    std::array<std::uint64_t, audioStreamCount> nextSendMicroseconds_{};
     mutable std::mutex controlMutex_;
     PeerParticipantInfo localParticipant_{
         "local-development", "", "Musician", "avatar:guitar-electric",
