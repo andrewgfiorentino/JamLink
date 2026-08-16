@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.9-test — 2026-08-15
+
+- Made every audio device reachable in the picker. The device list sized itself to its content with no upper bound and the view inside was exactly as tall as that content, so there was nothing to scroll and every device below the bottom of the window was unreachable. On a machine with several interfaces and their ASIO drivers that was most of them, including the Focusrite ASIO entry a tester had been unable to find. The list is now bounded and scrollable, carries a draggable scrollbar, and opens with the current device in view.
+- Recorded why an ASIO driver was skipped during enumeration. A driver that is installed but held by another application, or that does not offer 48 kHz, previously vanished from the list exactly as if it had never been installed, which gives a musician no way to tell "install the driver" from "close the other application".
+- Added per-stream packet counters to the session summary, so a total that happens to equal one stream's worth can no longer be mistaken for a lossy link.
+
 ## 0.3.8-test — 2026-08-15
 
 - Paced outgoing audio to the cadence it represents instead of releasing up to four packets back to back. The first successful two-home session ran over a 4 ms round trip yet reported a 135 ms receive buffer and harsh, bit-crushed audio: bursts of packets made the receiver measure its own sender as a jittery network, so the buffer grew to absorb variance the link never had while concealment ran almost continuously. Packets now leave on a media-clock schedule, with bounded catch-up after a late wake-up and a rebase if the capture side gets too far ahead.
