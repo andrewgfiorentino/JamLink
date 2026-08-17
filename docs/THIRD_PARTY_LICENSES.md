@@ -55,3 +55,15 @@ The friend-test ZIP does redistribute the exact Microsoft Visual C++ 2022 x64 ru
 ## Runtime service
 
 Cloudflare's public STUN endpoint is queried for public IPv4 address discovery when hosting. It is an external network service, not bundled software. No JamLink audio or invite secret is sent to it.
+
+## Opus (libopus) 1.4
+
+- Upstream: <https://github.com/xiph/opus>, tag `v1.4`, commit `82ac57d9f1aaf575800cf17373348e45b7ce6c0d`
+- Vendored at `third_party/opus`, unmodified upstream sources
+- Licence: BSD-3-Clause, in `../third_party/opus/COPYING`
+- Patent position: royalty-free grants recorded in `../third_party/opus/LICENSE_PLEASE_READ.txt`
+- Provenance and the reasoning for vendoring rather than fetching:
+  `../third_party/opus/README.jamlink.md`
+
+Statically linked into the JamLink executable, so its source forms part of the
+Corresponding Source and is present in the packaged source archive.
