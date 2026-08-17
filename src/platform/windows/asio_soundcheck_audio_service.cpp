@@ -764,6 +764,15 @@ private:
                 std::span<const float>(instrumentScratch_.data(), frames));
             recorder_.write(jamlink::record::RecordTrack::LocalVoice,
                 std::span<const float>(voiceScratch_.data(), frames));
+            // The local originals. On ASIO capture and playback already share
+            // one clock, so these carry the same samples as the live tracks
+            // above -- but they are written as originals deliberately, so a
+            // take has the same shape whichever backend recorded it and the
+            // later stem exchange does not have to care which was used.
+            recorder_.write(jamlink::record::RecordTrack::LocalInstrumentOriginal,
+                std::span<const float>(instrumentScratch_.data(), frames));
+            recorder_.write(jamlink::record::RecordTrack::LocalVoiceOriginal,
+                std::span<const float>(voiceScratch_.data(), frames));
         }
         std::fill(remoteScratch_.begin(), remoteScratch_.end(), 0.0F);
         if (peerExchange_ != nullptr) {

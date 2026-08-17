@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.2-test — 2026-08-17
+
+- Recording now keeps pristine local originals of your own guitar and voice, taken in the capture callback at the capture device's own rate, before the monitor converter and before anything the network could do to them. The four aligned tracks remain what was heard; the originals are what was played, and a dropout cannot touch them. Each original keeps its capture device's own sample rate rather than being resampled to the timeline, because a resampled original is no longer an original.
 
 - Recordings are now durable takes rather than a folder of WAV files. A playable WAV proves samples reached a disk; it does not prove the recording finished, and an interrupted take leaves files that open perfectly while missing their last ten seconds. A manifest written alongside the audio records what the files are, whose they are, whether each was captured here or arrived over the network, and whether the take actually completed.
 - An interrupted recording is never presented as clean. Only a finalisation that succeeds reaches Ready; anything found mid-recording at startup is kept exactly as it is, marked as needing review, and given a reason. Nothing is ever deleted. Complete and flawless stay separate claims, so a take that finished can still admit the frames it is missing.

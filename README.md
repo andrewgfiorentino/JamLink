@@ -5,7 +5,7 @@ open-source Windows application for private two-person sessions: guitar and
 voice travel as separate encrypted streams over a direct connection, with no
 server in the middle and no account to create.
 
-> Status: **0.4.1-test**. Under active development and validated in two-home
+> Status: **0.4.2-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -29,8 +29,13 @@ imposes.
   extrapolates the instrument's own waveform rather than inserting silence.
 - **A chromatic tuner** that mutes your guitar to the room while you use it,
   and can stay open beside the session once you turn that off.
-- **Four-track recording.** Your instrument, your voice, and each of your
-  friend's streams, written as separate WAV files aligned to one timeline.
+- **Recording that keeps a pristine copy.** Your instrument and your voice, each
+  of your friend's streams, and — separately — local originals of your own
+  sources taken before the monitor converter and before the network could touch
+  them. The live tracks are what was heard; the originals are what was played.
+- **Recordings that admit what they are.** A take carries a manifest saying what
+  the files are, whose they are, and whether it actually finished. An
+  interrupted take is never presented as clean.
 - **Private text chat** over the same authenticated connection.
 - **Opus, tuned for playing rather than listening.** Restricted low-delay mode
   adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the
@@ -86,8 +91,11 @@ detection, the tuner, recording, and what your friend hears all continue.
 - **Around 320 kbit/s upstream** for two streams. Lower than it was, but still
   a real requirement on a thin uplink; there is no automatic bitrate adaptation
   yet.
-- **Recording captures what arrived**, concealment included. Capturing pristine
-  local originals and exchanging them after a take is not implemented.
+- **Exchanging originals is not implemented yet.** Each side keeps pristine
+  local originals of its own sources, but they are not yet sent to the other
+  person, so your copy of your friend's audio is still whatever arrived.
+- **Recording is all or nothing.** Individual channels cannot yet be excluded
+  from a take, so talkback is recorded along with everything else.
 - **Both people must run the same version.** The wire protocol is
   version-checked, and it changed in 0.4.1.
 
