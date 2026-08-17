@@ -452,7 +452,7 @@ private:
         jamlink::network::AudioStreamId stream,
         float& stored,
         double gain);
-    void applyTunerMute();
+    void applyLocalSendMutes();
     [[nodiscard]] double bufferLatencyMilliseconds(std::uint32_t frames) const noexcept;
     [[nodiscard]] std::uint32_t currentSampleRate() const noexcept;
     void updateQualityWindow();
@@ -524,6 +524,11 @@ private:
     jamlink::network::ConnectionPreflightResult connectionPreflight_;
     QString inviteCode_;
     bool sendMuted_{false};
+    // What this machine stops transmitting, per stream. Deliberately not
+    // persisted: like the room-wide mute these reset on entering and leaving a
+    // room, so nobody arrives silently muted without knowing it.
+    bool instrumentSendMuted_{false};
+    bool voiceSendMuted_{false};
     bool remoteInstrumentMuted_{false};
     bool remoteVoiceMuted_{false};
     jamlink::audio::TunerReading tunerReading_;

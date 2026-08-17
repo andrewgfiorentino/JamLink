@@ -271,10 +271,15 @@ Item {
                                 muted: participantCard.modelData.instrumentMuted
                                 accent: participantCard.modelData.accent
                                 enabled: participantCard.modelData.controlsEnabled
-                                interactiveMute: !participantCard.modelData.local
-                                    && participantCard.modelData.controlsEnabled
+                                interactiveMute: participantCard.modelData.canMute
+                                meterFollowsMute: !participantCard.modelData.local
                                 accessibleLabel: participantCard.modelData.displayName
                                     + " " + participantCard.modelData.instrument
+                                muteLabel: participantCard.modelData.local
+                                    ? "Send my " + participantCard.modelData.instrument
+                                        + " to my friend"
+                                    : "Hear " + participantCard.modelData.displayName
+                                        + "'s " + participantCard.modelData.instrument
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "instrument", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -289,10 +294,14 @@ Item {
                                 muted: participantCard.modelData.voiceMuted
                                 accent: participantCard.modelData.accent
                                 enabled: participantCard.modelData.controlsEnabled
-                                interactiveMute: !participantCard.modelData.local
-                                    && participantCard.modelData.controlsEnabled
+                                interactiveMute: participantCard.modelData.canMute
+                                meterFollowsMute: !participantCard.modelData.local
                                 accessibleLabel: participantCard.modelData.displayName
                                     + " microphone"
+                                muteLabel: participantCard.modelData.local
+                                    ? "Send my microphone to my friend"
+                                    : "Hear " + participantCard.modelData.displayName
+                                        + "'s microphone"
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "voice", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -931,7 +940,13 @@ Item {
         property bool muted: false
         property color accent: Theme.accent
         property bool interactiveMute: false
+        // A remote stream that is muted genuinely stopped arriving, so zeroing
+        // its meter is the truth. Your own muted stream is still being
+        // captured, and hiding its level would take away the very thing you
+        // mute in order to check: whether the input is still too hot.
+        property bool meterFollowsMute: true
         property string accessibleLabel: title
+        property string muteLabel: accessibleLabel
         signal gainMoved(real value)
         signal muteToggled(bool muted)
         height: 88
@@ -969,7 +984,7 @@ Item {
                 width: parent.width
                 height: 9
                 segmentCount: 24
-                level: stream.muted ? 0 : stream.level
+                level: stream.muted && stream.meterFollowsMute ? 0 : stream.level
             }
             Row {
                 width: parent.width
@@ -987,8 +1002,16 @@ Item {
                     visible: stream.interactiveMute
                     anchors.verticalCenter: parent.verticalCenter
                     checked: !stream.muted
-                    Accessible.name: stream.accessibleLabel + " enabled"
-                    onToggled: stream.muteToggled(!checked)
+                    Accessible.name: stream.muteLabel
+                    onToggled: {
+                        stream.muteToggled(!checked)
+                        // Clicking a Switch replaces the binding above with a
+                        // plain value. Restoring it keeps the control showing
+                        // what is actually true rather than the last thing that
+                        // was clicked, so a refused or later-reset mute cannot
+                        // leave the switch lying about the state.
+                        checked = Qt.binding(function() { return !stream.muted })
+                    }
                 }
             }
         }

@@ -284,7 +284,7 @@ void AppController::setTunerActive(bool active) {
     if (audioService_) {
         audioService_->setTunerEnabled(active);
     }
-    applyTunerMute();
+    applyLocalSendMutes();
     if (!active) {
         tunerReading_ = {};
     }
@@ -300,21 +300,29 @@ void AppController::setTunerMutesInstrument(bool muted) {
         return;
     }
     preferences_.tunerMutesInstrument = muted;
-    applyTunerMute();
+    applyLocalSendMutes();
     scheduleSave();
     emit tunerChanged();
 }
 
-// "Give me a second to tune" — the instrument stops reaching the room while
-// voice keeps flowing, which is only possible because they are separate
-// streams on the wire.
-void AppController::applyTunerMute() {
+// The single writer of the per-stream outgoing mutes.
+//
+// Two separate intents land on the same flag: "give me a second to tune",
+// which stops the instrument reaching the room while voice keeps flowing, and
+// the musician's own channel mutes. Each has to be OR-ed in here rather than
+// written directly, because whichever wrote last would otherwise silently undo
+// the other -- closing the tuner would have un-muted a guitar the player had
+// deliberately muted, with nothing on screen changing to say so.
+void AppController::applyLocalSendMutes() {
     if (!peerTransport_) {
         return;
     }
     peerTransport_->setLocalStreamMuted(
         jamlink::network::AudioStreamId::Instrument,
-        tunerActive_ && preferences_.tunerMutesInstrument);
+        instrumentSendMuted_
+            || (tunerActive_ && preferences_.tunerMutesInstrument));
+    peerTransport_->setLocalStreamMuted(
+        jamlink::network::AudioStreamId::Voice, voiceSendMuted_);
 }
 
 QString AppController::recordingDirectory() const {
@@ -609,17 +617,24 @@ QVariantList AppController::roomParticipants() const {
     local.insert(QStringLiteral("instrument"), profilePrimaryInstrument());
     local.insert(QStringLiteral("local"), true);
     local.insert(QStringLiteral("present"), roomActive());
-    local.insert(QStringLiteral("stateLabel"), sendMuted_ ? QStringLiteral("MUTED")
-                                                          : QStringLiteral("LIVE"));
+    const bool localInstrumentMuted = sendMuted_ || instrumentSendMuted_
+        || (tunerActive_ && preferences_.tunerMutesInstrument);
+    const bool localVoiceMuted = sendMuted_ || voiceSendMuted_;
+    local.insert(QStringLiteral("stateLabel"),
+        localInstrumentMuted && localVoiceMuted ? QStringLiteral("MUTED")
+                                                : QStringLiteral("LIVE"));
     local.insert(QStringLiteral("accent"), QStringLiteral("#2ac59a"));
     local.insert(QStringLiteral("surface"), QStringLiteral("#0e1819"));
     local.insert(QStringLiteral("instrumentLevel"), instrumentLevel());
     local.insert(QStringLiteral("voiceLevel"), voiceLevel());
     local.insert(QStringLiteral("instrumentGain"), instrumentMonitorGain());
     local.insert(QStringLiteral("voiceGain"), voiceMonitorGain());
-    local.insert(QStringLiteral("instrumentMuted"), sendMuted_);
-    local.insert(QStringLiteral("voiceMuted"), sendMuted_);
+    local.insert(QStringLiteral("instrumentMuted"), localInstrumentMuted);
+    local.insert(QStringLiteral("voiceMuted"), localVoiceMuted);
     local.insert(QStringLiteral("controlsEnabled"), true);
+    // A send mute needs a transport to act on, so the switch is only offered
+    // once there is one rather than sitting there doing nothing.
+    local.insert(QStringLiteral("canMute"), peerTransport_ != nullptr);
     participants.push_back(local);
 
     QVariantMap remote;
@@ -647,6 +662,7 @@ QVariantList AppController::roomParticipants() const {
     remote.insert(QStringLiteral("instrumentMuted"), remoteInstrumentMuted_);
     remote.insert(QStringLiteral("voiceMuted"), remoteVoiceMuted_);
     remote.insert(QStringLiteral("controlsEnabled"), peerConnected());
+    remote.insert(QStringLiteral("canMute"), peerConnected());
     participants.push_back(remote);
 
     if (!visualRoomFixture_ && remoteParticipants_.size() > 1U) {
@@ -677,6 +693,7 @@ QVariantList AppController::roomParticipants() const {
             additional.insert(QStringLiteral("instrumentMuted"), false);
             additional.insert(QStringLiteral("voiceMuted"), false);
             additional.insert(QStringLiteral("controlsEnabled"), false);
+            additional.insert(QStringLiteral("canMute"), false);
             participants.push_back(additional);
         }
     }
@@ -719,6 +736,7 @@ QVariantList AppController::roomParticipants() const {
             // not expose working controls until a corresponding transport
             // session exists.
             fixture.insert(QStringLiteral("controlsEnabled"), false);
+            fixture.insert(QStringLiteral("canMute"), false);
             participants.push_back(fixture);
         }
     }
@@ -2036,9 +2054,11 @@ void AppController::hostSession() {
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
-    applyTunerMute();
+    applyLocalSendMutes();
     inviteCode_ = QString::fromStdString(invite);
     sendMuted_ = false;
+    instrumentSendMuted_ = false;
+    voiceSendMuted_ = false;
     restartAudio();
     setCurrentPage(QStringLiteral("room"));
     emit roomChanged();
@@ -2144,9 +2164,11 @@ void AppController::joinDirectSession(const QString& inviteCode) {
     transport->setRemoteStreamMuted(
         jamlink::network::AudioStreamId::Voice, remoteVoiceMuted_);
     peerTransport_ = std::move(transport);
-    applyTunerMute();
+    applyLocalSendMutes();
     inviteCode_.clear();
     sendMuted_ = false;
+    instrumentSendMuted_ = false;
+    voiceSendMuted_ = false;
     restartAudio();
     setCurrentPage(QStringLiteral("room"));
     emit roomChanged();
@@ -2179,6 +2201,8 @@ void AppController::leaveSession() {
     remoteParticipants_.clear();
     inviteCode_.clear();
     sendMuted_ = false;
+    instrumentSendMuted_ = false;
+    voiceSendMuted_ = false;
     if (audioService_ && devicesAvailable_) {
         restartAudio();
     }
@@ -2276,13 +2300,36 @@ void AppController::setRoomParticipantStreamGain(
 
 void AppController::setRoomParticipantStreamMuted(
     const QString& participantId, const QString& stream, bool muted) {
-    if (remoteParticipant_.profileId.empty()
-        || participantId != QString::fromStdString(remoteParticipant_.profileId)) {
+    const bool instrument = stream == QStringLiteral("instrument");
+    if (!instrument && stream != QStringLiteral("voice")) {
         return;
     }
-    if (stream == QStringLiteral("instrument")) {
+    if (participantId == profileId()) {
+        // The musician's own channel. This stops the stream reaching the other
+        // person while capture, meters, peak hold, clip latching, the tuner tap
+        // and recording all continue, because every one of those sits upstream
+        // of the transport. It is a different control from the monitor
+        // switches, which only decide whether you hear yourself.
+        if (instrument) {
+            instrumentSendMuted_ = muted;
+        } else {
+            voiceSendMuted_ = muted;
+        }
+        applyLocalSendMutes();
+        emit roomChanged();
+        return;
+    }
+    // Anything that is not this machine is the friend, and muting them is a
+    // local playback decision that needs no agreement from anyone.
+    //
+    // This used to require the identifier to equal the one the peer announced.
+    // A session that drops clears remoteParticipant_ and only a fresh join
+    // event restores it, so after any blip the control stayed enabled and did
+    // nothing at all: the switch moved, the guard rejected it, and the next
+    // model refresh snapped it back.
+    if (instrument) {
         setRemoteInstrumentMuted(muted);
-    } else if (stream == QStringLiteral("voice")) {
+    } else {
         setRemoteVoiceMuted(muted);
     }
 }
