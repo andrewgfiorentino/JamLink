@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Andrew Fiorentino
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 find_package(Qt6 6.10.3 REQUIRED COMPONENTS Core Gui Network Qml Quick)

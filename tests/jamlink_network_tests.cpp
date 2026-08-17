@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Andrew Fiorentino
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "jamlink/network/audio_stream_receiver.hpp"

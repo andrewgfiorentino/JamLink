@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Andrew Fiorentino
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 cmake_minimum_required(VERSION 3.25)
@@ -167,6 +168,17 @@ jamlink_set_warnings(jamlink_platform_audio)
 if(JAMLINK_BUILD_TESTS)
     include(CTest)
     enable_testing()
+    # Keeps the dual-licensed Steinberg SDK reachable from one file, so which
+    # licence JamLink ships under stays a licensing decision and never becomes
+    # an architectural one.
+    add_test(
+        NAME jamlink_asio_isolation_tests
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJAMLINK_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckAsioIsolation.cmake"
+    )
+    set_tests_properties(jamlink_asio_isolation_tests PROPERTIES
+        TIMEOUT 60 LABELS "licensing")
     add_subdirectory(tests)
     find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
