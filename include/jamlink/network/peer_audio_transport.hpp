@@ -28,7 +28,9 @@ enum class PeerConnectionState : std::uint8_t {
     ConnectionLost
 };
 
-inline constexpr std::uint16_t currentMediaProtocolVersion = 2U;
+// 3 frames every audio payload with the codec that produced it, so a
+// packet is read by what it says it is rather than by prior agreement.
+inline constexpr std::uint16_t currentMediaProtocolVersion = 3U;
 // 2 adds the sender's per-stream mute state to the periodic control packet.
 inline constexpr std::uint16_t currentControlProtocolVersion = 2U;
 inline constexpr std::size_t maximumChatMessageBytes = 512U;
@@ -142,6 +144,21 @@ struct PeerTransportTelemetry final {
     PortMappingState portMapping{PortMappingState::NotRequested};
     ReachabilityAssessment reachability{ReachabilityAssessment::Unknown};
     std::array<RemoteStreamTelemetry, audioStreamCount> streams{};
+
+    // Codec health. Diagnostics only: the musician is told whether the
+    // connection is coping, not which codec is carrying it.
+    //
+    // Counted rather than inferred from a negotiated setting, because a packet
+    // names its own format and an encoder that could not be created falls back
+    // silently by design. These say what actually crossed the wire.
+    std::uint64_t opusPacketsDecoded{0U};
+    std::uint64_t pcmPacketsDecoded{0U};
+    // Packets whose codec tag this build could not use. Never guessed at.
+    std::uint64_t undecodablePackets{0U};
+    // Frames the encoder refused, which fall back to uncompressed rather than
+    // becoming silence.
+    std::uint64_t encodeFailures{0U};
+    std::uint32_t audioBitsPerSecond{0U};
 };
 
 // Realtime side of the transport. These calls only touch bounded lock-free
