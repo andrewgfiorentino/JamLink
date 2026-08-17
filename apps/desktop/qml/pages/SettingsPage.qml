@@ -480,6 +480,39 @@ Item {
                         width: parent.width
                         spacing: 12
 
+                        SettingsHeading { text: "Support" }
+                        Text {
+                            width: pane.width
+                            text: "If something goes wrong, this gathers what JamLink "
+                                + "knows into one file and copies it to your clipboard. "
+                                + "It contains no room secrets, keys, invites or chat."
+                            wrapMode: Text.WordWrap
+                            color: "#8c959b"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 10
+                        }
+                        JamButton {
+                            width: 190
+                            height: 30
+                            text: "Export Support Bundle"
+                            onClicked: {
+                                const written = root.controller.exportSupportBundle()
+                                supportResult.text = written === ""
+                                    ? "Could not write the bundle."
+                                    : "Saved to " + written + " and copied."
+                            }
+                        }
+                        Text {
+                            id: supportResult
+                            width: pane.width
+                            text: ""
+                            visible: text !== ""
+                            wrapMode: Text.WordWrap
+                            color: "#a8b3ba"
+                            font.family: "Segoe UI"
+                            font.pixelSize: 10
+                        }
+
                         SettingsHeading { text: "JamLink" }
                         Repeater {
                             model: [

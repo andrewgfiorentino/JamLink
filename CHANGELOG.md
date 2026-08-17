@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added **Export Support Bundle** in Settings → About. It gathers what JamLink knows into one file and copies it to the clipboard: the codec actually carrying the audio, the backend and buffer in use, what the router and firewall answered, measured round trip and buffering, concealment, drop-outs, and the session's lifecycle. A report about bad audio should be answerable without another round trip.
+- The bundle is an allowlist rather than a filter. Everything it can contain is a typed field, so a secret cannot leak by sitting somewhere nobody thought to strip — there is nowhere to put it. Free text appears in one place, and tests seed room keys and invites into it and require that none survive. The preview and the written file are rendered from the same snapshot, so they cannot disagree about what happened.
+
 - A dropped connection no longer empties the room of someone who is about to come back. The transport reports a deliberate departure and five seconds of silence identically, so forgetting the other musician on one meant forgetting them on a two-second blip: their name reverted to "Friend", their avatar to the default, their instrument to "Instrument". Their identity is now kept, the room reads them as away rather than as never having arrived, and returning is announced as being back rather than as joining again.
 
 ## 0.4.1-test — 2026-08-17

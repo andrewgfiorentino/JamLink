@@ -106,6 +106,7 @@ add_library(jamlink_core STATIC
     src/control/session_conductor.cpp
     src/control/room_authority.cpp
     src/diagnostics/session_log.cpp
+    src/diagnostics/support_bundle.cpp
     src/network/audio_stream_receiver.cpp
     src/network/connection_preflight.cpp
     src/network/peer_audio_codec.cpp

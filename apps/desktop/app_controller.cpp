@@ -15,6 +15,7 @@
 #include <QImageReader>
 #include <QRandomGenerator>
 #include <QSaveFile>
+#include <QDir>
 #include <QStandardPaths>
 #include <QUuid>
 #include <QUrl>
@@ -1277,6 +1278,106 @@ void AppController::refreshSessionGuidance() {
 
     guidance_ = conductor_.update(
         evidence, static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch()));
+}
+
+// Gathers only declared, typed facts. The bundle is an allowlist, so anything
+// not named here has nowhere to appear -- which is a stronger guarantee than
+// filtering a larger dump would be.
+jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
+    jamlink::diagnostics::SupportSnapshot snapshot;
+    snapshot.applicationVersion = JAMLINK_VERSION_STRING;
+    snapshot.buildIdentity = JAMLINK_BUILD_IDENTITY_STRING;
+    snapshot.releaseChannel = JAMLINK_RELEASE_CHANNEL_STRING;
+    snapshot.mediaProtocolVersion = jamlink::network::currentMediaProtocolVersion;
+    snapshot.controlProtocolVersion = jamlink::network::currentControlProtocolVersion;
+
+    snapshot.audioCodec = peerTelemetry_.opusPacketsDecoded > 0U ? "opus" : "pcm16";
+    snapshot.codecBitsPerSecond = peerTelemetry_.audioBitsPerSecond;
+    snapshot.codecFrameMilliseconds = 5U;
+    snapshot.opusPacketsDecoded = peerTelemetry_.opusPacketsDecoded;
+    snapshot.pcmPacketsDecoded = peerTelemetry_.pcmPacketsDecoded;
+    snapshot.undecodablePackets = peerTelemetry_.undecodablePackets;
+    snapshot.encodeFailures = peerTelemetry_.encodeFailures;
+
+    snapshot.audioBackend = asioActive() ? "ASIO" : "WASAPI shared";
+    // Device names, never the paths or identifiers they were resolved from.
+    const auto deviceName = [](const std::vector<DeviceOption>& options, int index) {
+        return validIndex(index, options.size())
+            ? options[static_cast<std::size_t>(index)].displayName.toStdString() : std::string();
+    };
+    snapshot.instrumentDevice = deviceName(instrumentOptions_, instrumentIndex_);
+    snapshot.voiceDevice = deviceName(voiceOptions_, voiceIndex_);
+    snapshot.outputDevice = deviceName(outputOptions_, outputIndex_);
+    snapshot.sampleRate = audioTelemetry_.outputSampleRate;
+    snapshot.requestedBufferFrames = effectiveBufferFrames();
+    snapshot.runningBufferFrames = audioTelemetry_.outputBufferFrames;
+    snapshot.automaticBufferSize = automaticBufferSize();
+    snapshot.soundCheckVerified = allReady();
+    snapshot.underruns = audioTelemetry_.underruns;
+    snapshot.overruns = audioTelemetry_.overruns;
+
+    snapshot.preflightOutcome = connectionPreflightStatus().toStdString();
+    snapshot.portMappingProtocol = peerTelemetry_.portMappingProtocol;
+    snapshot.portMappingResult =
+        peerTelemetry_.portMapping == jamlink::network::PortMappingState::Succeeded
+            ? "granted"
+            : (peerTelemetry_.portMapping == jamlink::network::PortMappingState::Failed
+                   ? "refused" : "not requested");
+    snapshot.publicAddressDiscovery = peerTelemetry_.publicAddressDiscovery
+            == jamlink::network::PublicAddressDiscoveryState::Succeeded
+        ? "found" : "not found";
+    snapshot.firewallState = firewallMessage().toStdString();
+    snapshot.udpBound = peerTelemetry_.udpBound;
+    snapshot.localUdpPort = static_cast<std::uint16_t>(roomPort());
+
+    snapshot.roundTripMeasured = peerTelemetry_.roundTripMeasured;
+    snapshot.roundTripMilliseconds = static_cast<std::uint32_t>(roundTripMilliseconds());
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    snapshot.receiveBufferMilliseconds =
+        static_cast<std::uint32_t>(instrument.bufferedFrames / 48U);
+    snapshot.jitterMicroseconds = instrument.jitterMicroseconds;
+    snapshot.packetsSent = peerTelemetry_.packetsSent;
+    snapshot.packetsReceived = peerTelemetry_.packetsReceived;
+    snapshot.packetsConcealed = instrument.packetsConcealed;
+    snapshot.packetsLate = instrument.packetsLate;
+
+    snapshot.recording = recording();
+
+    // Phase to phase and nothing else: no invite, no key, no endpoint, no chat.
+    for (std::size_t index = 0U; index < conductor_.transitionCount(); ++index) {
+        const auto transition = conductor_.transitionAt(index);
+        snapshot.lifecycleTransitions.push_back(
+            std::string(jamlink::control::phaseName(transition.from)) + " -> "
+            + std::string(jamlink::control::phaseName(transition.to)));
+    }
+    return snapshot;
+}
+
+QString AppController::supportBundlePreview() {
+    return QString::fromStdString(
+        jamlink::diagnostics::renderSupportBundle(supportSnapshot()));
+}
+
+QString AppController::exportSupportBundle() {
+    const auto snapshot = supportSnapshot();
+    const QString directory =
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    const QString name = QStringLiteral("JamLink-support-%1.txt")
+        .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
+    const QString path = QDir(directory.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+        : directory).filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return QString();
+    }
+    file.write(jamlink::diagnostics::renderSupportBundle(snapshot).c_str());
+    file.close();
+    // Both renderings come from the one snapshot above, so the file a musician
+    // sends cannot disagree with the preview they were shown.
+    QGuiApplication::clipboard()->setText(
+        QString::fromStdString(jamlink::diagnostics::renderSupportBundle(snapshot)));
+    return path;
 }
 
 QString AppController::sessionHeadline() const {

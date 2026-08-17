@@ -8,6 +8,7 @@
 #include "jamlink/audio/soundcheck_audio_service.hpp"
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/control/session_conductor.hpp"
+#include "jamlink/diagnostics/support_bundle.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
 #include "private_room_directory.hpp"
@@ -343,6 +344,10 @@ public:
     // Invokes whatever the guidance is currently offering, so the interface
     // does not need to know which action it is.
     Q_INVOKABLE void takeSessionAction();
+    // Diagnostics a musician can actually send. Built from one allowlisted
+    // snapshot so the preview and the written file cannot disagree.
+    Q_INVOKABLE QString supportBundlePreview();
+    Q_INVOKABLE QString exportSupportBundle();
     [[nodiscard]] QString monitorPathSummary() const;
     [[nodiscard]] QString settingsSessionNotice() const;
     [[nodiscard]] bool asioActive() const noexcept;
@@ -562,6 +567,7 @@ private:
     bool buildIncompatible_{false};
     std::uint64_t conductorDropoutBaseline_{0U};
     void refreshSessionGuidance();
+    [[nodiscard]] jamlink::diagnostics::SupportSnapshot supportSnapshot() const;
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService_;
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;

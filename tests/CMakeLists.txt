@@ -61,6 +61,16 @@ add_test(NAME jamlink_session_conductor_tests COMMAND jamlink_session_conductor_
 set_tests_properties(jamlink_session_conductor_tests PROPERTIES
     TIMEOUT 30 LABELS "control;session")
 
+add_executable(jamlink_support_bundle_tests support_bundle_tests.cpp)
+target_link_libraries(jamlink_support_bundle_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_support_bundle_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_support_bundle_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_support_bundle_tests)
+
+add_test(NAME jamlink_support_bundle_tests COMMAND jamlink_support_bundle_tests)
+set_tests_properties(jamlink_support_bundle_tests PROPERTIES
+    TIMEOUT 30 LABELS "diagnostics;privacy")
+
 add_executable(jamlink_tuner_tests jamlink_tuner_tests.cpp)
 target_link_libraries(jamlink_tuner_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_tuner_tests PRIVATE cxx_std_20)
