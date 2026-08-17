@@ -558,6 +558,94 @@ int main(int argc, char* argv[]) {
                     "scaled room keeps stable local-first participant ordering") && passed;
     qunsetenv("JAMLINK_VISUAL_ROOM_SIZE");
 
+    // The room's mute controls. A tester found the friend's channel switches
+    // would not toggle during a live session and that there were no switches at
+    // all for their own channels, so they could not stop a vocal microphone
+    // sending guitar bleed.
+    {
+        jamlink::desktop::AppController mutes(
+            directory / "room-mutes.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        const auto localCard = [&mutes]() {
+            return mutes.roomParticipants().at(0).toMap();
+        };
+
+        passed = expect(localCard().value(QStringLiteral("canMute")).isValid()
+                            && mutes.roomParticipants().at(1).toMap()
+                                   .value(QStringLiteral("canMute")).isValid(),
+                        "every participant card states whether its mute can act")
+            && passed;
+
+        // Muting the friend must not depend on their profile identifier having
+        // arrived. It used to, so any dropped-and-restored session left the
+        // switch enabled and inert for the rest of the room.
+        mutes.setRoomParticipantStreamMuted(
+            QStringLiteral("room:waiting-friend"), QStringLiteral("instrument"), true);
+        passed = expect(mutes.remoteInstrumentMuted() && !mutes.remoteVoiceMuted(),
+                        "muting the friend's guitar works without a known profile id")
+            && passed;
+
+        // The musician's own channels mute independently of each other.
+        mutes.setRoomParticipantStreamMuted(
+            mutes.profileId(), QStringLiteral("voice"), true);
+        passed = expect(localCard().value(QStringLiteral("voiceMuted")).toBool()
+                            && !localCard().value(QStringLiteral("instrumentMuted")).toBool(),
+                        "muting my microphone leaves my guitar reaching the room")
+            && passed;
+
+        // The tuner and the musician both write the instrument's outgoing mute.
+        // Whichever wrote last used to win outright, so closing the tuner would
+        // have put a deliberately muted guitar back on the wire with nothing on
+        // screen changing to say so.
+        mutes.setRoomParticipantStreamMuted(
+            mutes.profileId(), QStringLiteral("instrument"), true);
+        mutes.setTunerMutesInstrument(true);
+        mutes.setTunerActive(true);
+        mutes.setTunerActive(false);
+        passed = expect(localCard().value(QStringLiteral("instrumentMuted")).toBool(),
+                        "closing the tuner does not clear a mute the musician set")
+            && passed;
+
+        // And the tuner's own mute still shows on the card while it is open.
+        jamlink::desktop::AppController tunerOnly(
+            directory / "room-tuner-mute.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        tunerOnly.setTunerMutesInstrument(true);
+        tunerOnly.setTunerActive(true);
+        passed = expect(tunerOnly.roomParticipants().at(0).toMap()
+                            .value(QStringLiteral("instrumentMuted")).toBool(),
+                        "tuning shows the guitar as muted to the room") && passed;
+    }
+
+    // Settings has to be reachable from inside a room and return there. The
+    // audio device is the setting most likely to need changing once you can
+    // hear the result, and leaving the session was previously the only way to
+    // reach it.
+    {
+        jamlink::desktop::AppController inRoom(
+            directory / "settings-in-room.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        passed = expect(!inRoom.settingsSessionNotice().isEmpty()
+                            && inRoom.settingsSessionNotice().contains(
+                                QStringLiteral("stays connected")),
+                        "settings states that changing a device keeps the session")
+            && passed;
+        inRoom.openSettings();
+        passed = expect(inRoom.currentPage() == QStringLiteral("settings"),
+                        "the room can open settings") && passed;
+        inRoom.closeSettings();
+        passed = expect(inRoom.currentPage() == QStringLiteral("room"),
+                        "closing settings returns to the room it was opened from")
+            && passed;
+
+        jamlink::desktop::AppController fromHome(
+            directory / "settings-from-home.jlpf", true, QStringLiteral("home"), 0U, 0U);
+        passed = expect(fromHome.settingsSessionNotice().isEmpty(),
+                        "the in-room notice stays out of the way outside a room")
+            && passed;
+        fromHome.openSettings();
+        fromHome.closeSettings();
+        passed = expect(fromHome.currentPage() == QStringLiteral("home"),
+                        "settings opened from home still returns home") && passed;
+    }
+
     qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host-drawer"));
     jamlink::desktop::AppController preflightFixture(
         directory / "preflight.jlpf", true,

@@ -133,7 +133,12 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: [StandardKey.Preferences, "Ctrl+,"]
-        onActivated: window.controller.navigate("settings")
+        onActivated: {
+            if (window.controller.currentPage === "settings")
+                window.controller.closeSettings()
+            else
+                window.controller.openSettings()
+        }
     }
     Shortcut {
         sequences: ["Esc"]
@@ -141,6 +146,8 @@ ApplicationWindow {
         onActivated: {
             if (window.controller.currentPage === "tuner")
                 window.controller.closeTuner()
+            else if (window.controller.currentPage === "settings")
+                window.controller.closeSettings()
             else
                 window.controller.navigate("home")
         }

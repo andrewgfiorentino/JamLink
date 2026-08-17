@@ -145,6 +145,7 @@ class AppController final : public QObject {
     Q_PROPERTY(QString bufferSizeExplanation READ bufferSizeExplanation NOTIFY setupChanged)
     Q_PROPERTY(QString sampleRateExplanation READ sampleRateExplanation NOTIFY setupChanged)
     Q_PROPERTY(QString monitorPathSummary READ monitorPathSummary NOTIFY setupChanged)
+    Q_PROPERTY(QString settingsSessionNotice READ settingsSessionNotice NOTIFY roomChanged)
     Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
 
     Q_PROPERTY(bool firewallNeedsAttention READ firewallNeedsAttention NOTIFY firewallChanged)
@@ -324,6 +325,7 @@ public:
     [[nodiscard]] QString bufferSizeExplanation() const;
     [[nodiscard]] QString sampleRateExplanation() const;
     [[nodiscard]] QString monitorPathSummary() const;
+    [[nodiscard]] QString settingsSessionNotice() const;
     [[nodiscard]] bool asioActive() const noexcept;
 
     [[nodiscard]] bool firewallNeedsAttention() const noexcept;
@@ -356,6 +358,10 @@ public:
 
     Q_INVOKABLE void navigate(const QString& page);
     Q_INVOKABLE void closeTuner();
+    // Settings is reachable from inside a room, so it has to remember where it
+    // was opened from rather than always dropping the musician back to Home.
+    Q_INVOKABLE void openSettings();
+    Q_INVOKABLE void closeSettings();
     Q_INVOKABLE void saveSoundcheck();
     Q_INVOKABLE void testOutput();
     Q_INVOKABLE void retryAudio();
@@ -452,7 +458,7 @@ private:
         jamlink::network::AudioStreamId stream,
         float& stored,
         double gain);
-    void applyTunerMute();
+    void applyLocalSendMutes();
     [[nodiscard]] double bufferLatencyMilliseconds(std::uint32_t frames) const noexcept;
     [[nodiscard]] std::uint32_t currentSampleRate() const noexcept;
     void updateQualityWindow();
@@ -502,6 +508,7 @@ private:
     QTimer telemetryTimer_;
     QString currentPage_;
     QString tunerReturnPage_{QStringLiteral("home")};
+    QString settingsReturnPage_{QStringLiteral("home")};
     QString setupMessage_;
     QString saveMessage_;
     bool visualFixture_{false};
@@ -524,6 +531,11 @@ private:
     jamlink::network::ConnectionPreflightResult connectionPreflight_;
     QString inviteCode_;
     bool sendMuted_{false};
+    // What this machine stops transmitting, per stream. Deliberately not
+    // persisted: like the room-wide mute these reset on entering and leaving a
+    // room, so nobody arrives silently muted without knowing it.
+    bool instrumentSendMuted_{false};
+    bool voiceSendMuted_{false};
     bool remoteInstrumentMuted_{false};
     bool remoteVoiceMuted_{false};
     jamlink::audio::TunerReading tunerReading_;

@@ -44,7 +44,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             iconSource: Qt.resolvedUrl("../../assets/close.svg")
             Accessible.name: "Close settings"
-            onClicked: root.controller.navigate("home")
+            onClicked: root.controller.closeSettings()
         }
         Rectangle {
             anchors.left: parent.left
@@ -126,6 +126,34 @@ Item {
                     id: pane
                     width: parent.width
                     spacing: 14
+
+                    // Settings is reachable from inside a room, so it has to
+                    // say which changes are free and which cost a short
+                    // silence. Swapping the audio device does not end the
+                    // session, and a musician who does not know that will not
+                    // risk it while a friend is waiting.
+                    Rectangle {
+                        visible: root.controller.settingsSessionNotice !== ""
+                        width: pane.width
+                        height: visible ? sessionNotice.implicitHeight + 20 : 0
+                        radius: 9
+                        color: "#161f26"
+                        border.color: "#2c3a44"
+                        Text {
+                            id: sessionNotice
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 11
+                            anchors.rightMargin: 11
+                            text: root.controller.settingsSessionNotice
+                            color: "#a8b3ba"
+                            wrapMode: Text.WordWrap
+                            font.family: "Segoe UI"
+                            font.pixelSize: 10
+                            lineHeight: 1.25
+                        }
+                    }
 
                     // ---------------------------------------------- Audio
                     Column {
