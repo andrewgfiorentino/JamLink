@@ -1,3 +1,4 @@
+# Copyright (c) 2026 Andrew Fiorentino
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 add_executable(jamlink_core_tests jamlink_core_tests.cpp)

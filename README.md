@@ -41,4 +41,4 @@ powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 
 ## License
 
-JamLink-owned code is [GPL-3.0-or-later](LICENSE). The Windows executable selects Qt and the Steinberg ASIO SDK under GPL version 3. Required notices and corresponding-source details are in [NOTICE](NOTICE), [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and [SOURCE_AND_LICENSES.md](SOURCE_AND_LICENSES.md).
+JamLink-owned code is [GPL-3.0-or-later](LICENSE), and has a single copyright holder. Contributions therefore require a signed agreement before they can be merged — see [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md), and [docs/licensing-options.md](docs/licensing-options.md) for what the current dependencies do and do not allow. The Windows executable selects Qt and the Steinberg ASIO SDK under GPL version 3. Required notices and corresponding-source details are in [NOTICE](NOTICE), [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and [SOURCE_AND_LICENSES.md](SOURCE_AND_LICENSES.md).

@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Andrew Fiorentino
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Reports what this network actually allows, so a failed jam can be diagnosed
