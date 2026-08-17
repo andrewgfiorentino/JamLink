@@ -28,7 +28,8 @@ enum class PeerConnectionState : std::uint8_t {
 };
 
 inline constexpr std::uint16_t currentMediaProtocolVersion = 2U;
-inline constexpr std::uint16_t currentControlProtocolVersion = 1U;
+// 2 adds the sender's per-stream mute state to the periodic control packet.
+inline constexpr std::uint16_t currentControlProtocolVersion = 2U;
 inline constexpr std::size_t maximumChatMessageBytes = 512U;
 
 // Identity and compatibility information exchanged inside the authenticated
@@ -96,6 +97,12 @@ struct RemoteStreamTelemetry final {
     // is not inferred from received PCM and therefore does not overclaim which
     // physical stage clipped on the remote machine.
     bool sourceClipped{false};
+    // The sender says it is deliberately not transmitting this stream. A muted
+    // stream produces no packets at all, so without being told, the receiver
+    // can only report that nothing is arriving -- which reads as a fault. This
+    // arrives on the periodic control packet precisely because it must keep
+    // working when no audio is being sent.
+    bool mutedByPeer{false};
     // Audio packets accepted for this stream alone. A loss rate has to be
     // measured against the stream it belongs to; dividing by every datagram the
     // transport ever received folds in the other stream and the control

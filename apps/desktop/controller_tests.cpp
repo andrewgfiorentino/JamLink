@@ -646,6 +646,34 @@ int main(int argc, char* argv[]) {
                         "settings opened from home still returns home") && passed;
     }
 
+    // The automatic buffer size. "Which buffer should I use" previously had no
+    // answer but guesswork, and guessing high is what makes playing together
+    // feel late.
+    {
+        jamlink::desktop::AppController automatic(
+            directory / "auto-buffer.jlpf", true, QStringLiteral("settings"), 0U, 0U);
+        const QStringList sizes = automatic.bufferSizes();
+        passed = expect(!sizes.isEmpty() && sizes.first().startsWith(QStringLiteral("Auto")),
+                        "automatic heads the buffer size list") && passed;
+        automatic.setBufferSizeIndex(0);
+        const QString explanation = automatic.bufferSizeExplanation();
+        // The setting's name is not a substitute for the number a player needs.
+        passed = expect(explanation.contains(QStringLiteral("Currently"))
+                            && explanation.contains(QStringLiteral("ms"))
+                            && explanation.contains(QStringLiteral("64")),
+                        "automatic reports the size actually in use, not just its name")
+            && passed;
+        passed = expect(explanation.contains(QStringLiteral("smallest")),
+                        "automatic explains that it starts low and only climbs")
+            && passed;
+
+        automatic.setBufferSizeIndex(2);
+        passed = expect(!automatic.bufferSizeExplanation().contains(
+                            QStringLiteral("Currently")),
+                        "choosing a size by hand replaces the automatic wording")
+            && passed;
+    }
+
     qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host-drawer"));
     jamlink::desktop::AppController preflightFixture(
         directory / "preflight.jlpf", true,

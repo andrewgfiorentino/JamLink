@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A muted stream is now reported as muted rather than as silence. Muting sends no packets at all, so the receiving side could only say that nothing was arriving, which reads as a fault and sends both musicians hunting a connection problem that does not exist. The sender's per-stream mute state now travels on the periodic control packet — not on the audio packets that carry the clip flag, because those are exactly what a muted stream stops sending. Your friend's card names which of their channels they muted, and the connection line says so instead of "No audio from your friend".
+- Added an automatic buffer size, and made it the default for new installations. JamLink opens the device at the smallest size it offers and moves up only when that device reports that it dropped audio, so nobody has to guess — and guessing high is what makes playing together feel late. It never steps back down within a session, because a quiet stretch is not evidence the smaller size would have held. Settings reports the size actually in use, not just the word "Auto".
+
 - Settings is now reachable from inside a room, and returns to the room rather than dropping you at Home. Which device you are on is the setting most likely to need changing once you can hear the result, and leaving the session was previously the only way to reach it.
 - Settings states what a change costs while two people are playing: levels, monitoring and mute take effect as you change them, while choosing a different input, output or buffer size restarts the audio device for a short silence. The session stays connected through it and no new invite is needed — the transport is untouched by an audio restart, and the backend re-applies the peer connection, tuner state and monitor controls every time it starts, so even moving from shared Windows audio to ASIO keeps your friend hearing you.
 

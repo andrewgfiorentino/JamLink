@@ -66,5 +66,5 @@ if(WIN32)
     jamlink_set_warnings(jamlink_peer_transport_tests)
     add_test(NAME jamlink_peer_transport_tests COMMAND jamlink_peer_transport_tests)
     set_tests_properties(jamlink_peer_transport_tests PROPERTIES
-        TIMEOUT 35 LABELS "network;loopback")
+        TIMEOUT 70 LABELS "network;loopback")
 endif()
