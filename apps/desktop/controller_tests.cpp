@@ -647,6 +647,66 @@ int main(int argc, char* argv[]) {
                         "settings opened from home still returns home") && passed;
     }
 
+    // A dropped connection must not empty the room of someone who is about to
+    // come back. The transport reports a deliberate departure and five seconds
+    // of silence identically, so forgetting them on either was forgetting them
+    // on a blip.
+    {
+        qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host"));
+        jamlink::desktop::AppController dropped(
+            directory / "reconnect-identity.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        const QVariantMap friendCard = dropped.roomParticipants().at(1).toMap();
+        // The fixture peer is known but not connected, which is exactly the
+        // state a drop leaves behind.
+        passed = expect(!dropped.peerConnected(), "the fixture peer is not connected")
+            && passed;
+        passed = expect(
+            friendCard.value(QStringLiteral("displayName")).toString()
+                != QStringLiteral("Friend"),
+            "a known friend keeps their name while the connection is down")
+            && passed;
+        passed = expect(
+            friendCard.value(QStringLiteral("stateLabel")).toString()
+                == QStringLiteral("AWAY"),
+            "a known friend reads as away rather than as never having arrived")
+            && passed;
+        qunsetenv("JAMLINK_VISUAL_PRIVATE_ROOM");
+    }
+
+    // The support bundle, as a musician would actually produce one. A privacy
+    // failure here is a serious defect: these files are pasted into chat
+    // windows and attached to public issues by people asking for help, not
+    // auditing what they are sending.
+    {
+        jamlink::desktop::AppController supported(
+            directory / "support-bundle.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        const QString preview = supported.supportBundlePreview();
+        passed = expect(preview.contains(QStringLiteral("JamLink support bundle"))
+                            && preview.contains(QStringLiteral("no room secrets")),
+                        "the bundle says what it is and what it withholds") && passed;
+        // The facts a bad-audio report turns on.
+        passed = expect(preview.contains(QStringLiteral("codec"))
+                            && preview.contains(QStringLiteral("backend"))
+                            && preview.contains(QStringLiteral("Session lifecycle")),
+                        "the bundle carries the facts worth having") && passed;
+        // Nothing that looks like a room secret or an invite may appear.
+        passed = expect(!preview.contains(QStringLiteral("JL1|")),
+                        "no invite reaches the bundle") && passed;
+        // The build identity is a git commit: forty hex characters, shaped
+        // exactly like a key and deliberately included, because a report is
+        // hard to act on without knowing which build produced it. It is a
+        // declared field rather than free text, so it is excluded here and
+        // everything else is held to the rule.
+        QString withoutBuild = preview;
+        withoutBuild.remove(QRegularExpression(
+            QStringLiteral("  build: [0-9a-fA-F-]+")));
+        static const QRegularExpression secretShaped(QStringLiteral("[0-9a-fA-F]{32}"));
+        passed = expect(!secretShaped.match(withoutBuild).hasMatch(),
+                        "nothing else shaped like a key reaches the bundle") && passed;
+        passed = expect(preview.contains(QStringLiteral("build:")),
+                        "the build that produced the report is named") && passed;
+    }
+
     // The session conductor, as the interface actually sees it. The point of
     // the layer is that one property answers what a dozen states used to.
     {
