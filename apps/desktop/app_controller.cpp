@@ -166,6 +166,10 @@ AppController::AppController(
     audioRestartTimer_.setSingleShot(true);
     audioRestartTimer_.setInterval(180);
     connect(&audioRestartTimer_, &QTimer::timeout, this, &AppController::retryAudio);
+    // Primed here so the interface is never handed an empty answer before the
+    // first telemetry tick, which on a machine with no audio device may never
+    // arrive at all.
+    refreshSessionGuidance();
     telemetryTimer_.setInterval(33);
     connect(&telemetryTimer_, &QTimer::timeout, this, &AppController::pollAudioTelemetry);
     loadPreferences(widthOverride, heightOverride);
@@ -1213,6 +1217,122 @@ bool AppController::asioActive() const noexcept {
         == jamlink::audio::SoundcheckBackend::Asio;
 }
 
+// Gathers what each subsystem already knows and lets the conductor decide what
+// it means. Nothing is judged here; this is only collection.
+void AppController::refreshSessionGuidance() {
+    jamlink::control::SessionEvidence evidence;
+
+    evidence.sessionRequested = roomActive();
+    evidence.joiningRatherThanHosting = !inviteCode_.isEmpty() && !privateRoomWaiting();
+
+    evidence.audioDevicesPresent = devicesAvailable_;
+    evidence.audioRunning = audioActive();
+    evidence.soundCheckVerified = allReady();
+    // A device that was working and vanished, which is recoverable and must not
+    // read the same as never having had one.
+    evidence.audioDeviceLost = devicesAvailable_
+        && (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::DeviceInvalidated
+            || audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::DeviceUnavailable);
+    evidence.inputClipping = instrumentInputClipped() || voiceInputClipped();
+    const std::uint64_t dropouts = audioTelemetry_.underruns + audioTelemetry_.overruns;
+    evidence.recentAudioDropouts = dropouts > conductorDropoutBaseline_
+        ? dropouts - conductorDropoutBaseline_ : 0U;
+
+    evidence.udpBound = peerTelemetry_.udpBound;
+    evidence.firewallBlocking = firewall_.state == FirewallRuleState::Missing
+        || firewall_.state == FirewallRuleState::StalePath;
+    evidence.portMappingRefused =
+        peerTelemetry_.portMapping == jamlink::network::PortMappingState::Failed;
+    evidence.publicAddressKnown = peerTelemetry_.publicAddressDiscovery
+        == jamlink::network::PublicAddressDiscoveryState::Succeeded;
+    evidence.canJoinButNotHost = connectionPreflight_.outcome
+        == jamlink::network::ConnectionPreflightOutcome::JoinOnly;
+
+    evidence.peerAuthenticated = peerConnected();
+    if (evidence.peerAuthenticated) {
+        peerHasConnected_ = true;
+    }
+    evidence.peerWasConnected = peerHasConnected_;
+    evidence.buildCompatible = !buildIncompatible_;
+    evidence.transportFailed =
+        peerTelemetry_.state == jamlink::network::PeerConnectionState::SocketFailed;
+
+    // The distinction a socket cannot make: audio is actually moving.
+    evidence.mediaProgressing = peerConnected() && !qualityWindow_.stalled;
+    evidence.concealedPerThousand =
+        static_cast<std::uint32_t>(qualityWindow_.concealRatio * 1'000.0);
+    const auto& instrument = peerTelemetry_.streams[instrumentStream];
+    evidence.receiveBufferMilliseconds =
+        static_cast<std::uint32_t>(instrument.bufferedFrames / 48U);
+    evidence.roundTripMeasured = peerTelemetry_.roundTripMeasured;
+    evidence.roundTripMilliseconds =
+        static_cast<std::uint32_t>(roundTripMilliseconds());
+
+    evidence.recording = recording();
+
+    guidance_ = conductor_.update(
+        evidence, static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch()));
+}
+
+QString AppController::sessionHeadline() const {
+    return QString::fromUtf8(
+        guidance_.headline.data(), static_cast<qsizetype>(guidance_.headline.size()));
+}
+
+QString AppController::sessionExplanation() const {
+    return QString::fromUtf8(
+        guidance_.explanation.data(), static_cast<qsizetype>(guidance_.explanation.size()));
+}
+
+QString AppController::sessionActionLabel() const {
+    return QString::fromUtf8(
+        guidance_.actionLabel.data(), static_cast<qsizetype>(guidance_.actionLabel.size()));
+}
+
+bool AppController::sessionActionEnabled() const noexcept { return guidance_.actionEnabled; }
+bool AppController::sessionPlayable() const noexcept { return guidance_.playable; }
+
+QString AppController::sessionPhase() const {
+    const auto name = jamlink::control::phaseName(guidance_.phase);
+    return QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()));
+}
+
+// The interface offers one button and does not need to know what it does.
+void AppController::takeSessionAction() {
+    using jamlink::control::GuidanceAction;
+    switch (guidance_.action) {
+    case GuidanceAction::FinishSoundCheck:
+        navigate(QStringLiteral("soundcheck"));
+        break;
+    case GuidanceAction::ReconnectAudioDevice:
+        retryAudio();
+        break;
+    case GuidanceAction::LowerInputGain:
+    case GuidanceAction::ChooseLargerBuffer:
+        openSettings();
+        break;
+    case GuidanceAction::FixFirewall:
+        fixFirewall();
+        break;
+    case GuidanceAction::SendInvite:
+    case GuidanceAction::WaitForFriend:
+    case GuidanceAction::AskFriendToHost:
+        copyInvite();
+        break;
+    case GuidanceAction::Retry:
+        restartAudio();
+        break;
+    case GuidanceAction::ReviewRecording:
+        navigate(QStringLiteral("home"));
+        break;
+    case GuidanceAction::LeaveRoom:
+        leaveSession();
+        break;
+    case GuidanceAction::None:
+        break;
+    }
+}
+
 QString AppController::monitorPathSummary() const {
     if (!audioActive()) {
         return QStringLiteral("Audio is not running.");
@@ -2134,6 +2254,9 @@ void AppController::hostSession() {
     sendMuted_ = false;
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
+    peerHasConnected_ = false;
+    buildIncompatible_ = false;
+    conductor_.reset();
     restartAudio();
     setCurrentPage(QStringLiteral("room"));
     emit roomChanged();
@@ -2244,6 +2367,9 @@ void AppController::joinDirectSession(const QString& inviteCode) {
     sendMuted_ = false;
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
+    peerHasConnected_ = false;
+    buildIncompatible_ = false;
+    conductor_.reset();
     restartAudio();
     setCurrentPage(QStringLiteral("room"));
     emit roomChanged();
@@ -2278,6 +2404,9 @@ void AppController::leaveSession() {
     sendMuted_ = false;
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
+    peerHasConnected_ = false;
+    buildIncompatible_ = false;
+    conductor_.reset();
     if (audioService_ && devicesAvailable_) {
         restartAudio();
     }
@@ -3062,6 +3191,7 @@ void AppController::pollAudioTelemetry() {
                 "USB microphone disconnected; ASIO guitar/output remain active while it reconnects");
     }
     reportAudioDeviceDropouts();
+    refreshSessionGuidance();
     if (peerTransport_) {
         peerTelemetry_ = peerTransport_->telemetry();
         updateQualityWindow();

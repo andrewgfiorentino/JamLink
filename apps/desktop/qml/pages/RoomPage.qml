@@ -44,15 +44,59 @@ Item {
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
             }
+            // One coherent answer, from the session conductor. The interface
+            // does not reason across audio, network, transport and recording
+            // states itself; it shows what they add up to.
             Text {
                 width: parent.width
-                text: root.controller.peerConnected
-                    ? "Encrypted room session" : root.controller.roomStatus
+                text: root.controller.sessionHeadline
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                color: root.controller.peerConnected ? Theme.connected : Theme.textMuted
+                color: root.controller.sessionPlayable ? Theme.connected : Theme.textMuted
                 font.family: Theme.fontFamily
                 font.pixelSize: 9
+            }
+        }
+
+        // Shown only when there is genuinely one thing worth doing. Guidance
+        // offers a single action, never a list, so this is one button.
+        Rectangle {
+            id: guidanceBanner
+            visible: root.controller.sessionActionEnabled
+                && root.controller.sessionActionLabel !== ""
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.bottom
+            anchors.leftMargin: 15
+            anchors.rightMargin: 15
+            anchors.topMargin: 8
+            height: visible ? Math.max(40, guidanceText.implicitHeight + 16) : 0
+            radius: 9
+            color: "#1a1626"
+            border.color: "#3a2f52"
+            z: 2
+            Text {
+                id: guidanceText
+                anchors.left: parent.left
+                anchors.right: guidanceButton.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 11
+                anchors.rightMargin: 9
+                text: root.controller.sessionExplanation
+                wrapMode: Text.WordWrap
+                color: Theme.textMuted
+                font.family: Theme.fontFamily
+                font.pixelSize: 9
+            }
+            JamButton {
+                id: guidanceButton
+                anchors.right: parent.right
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(150, parent.width / 2)
+                height: 26
+                text: root.controller.sessionActionLabel
+                onClicked: root.controller.takeSessionAction()
             }
         }
 
