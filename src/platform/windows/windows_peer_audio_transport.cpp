@@ -2141,9 +2141,14 @@ private:
                 | (static_cast<std::uint16_t>(plaintext[frame * 2U + 1U]) << 8U));
             networkFloat[frame] = static_cast<float>(sample) / 32'768.0F;
         }
+        // The receiver stores packets as they arrive and decodes at playout.
+        // This build still carries uncompressed samples, so the payload it is
+        // given is those samples.
         receivers_[stream].submit(
             sequence,
-            std::span<const float>(networkFloat.data(), frameCount),
+            std::span<const std::uint8_t>(
+                reinterpret_cast<const std::uint8_t*>(networkFloat.data()),
+                frameCount * sizeof(float)),
             nowMicroseconds());
         return true;
     }

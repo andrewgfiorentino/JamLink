@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <numbers>
 #include <stdexcept>
 
@@ -61,6 +62,12 @@ constexpr std::size_t stallLimitPackets = 4U;
 } // namespace
 
 AudioStreamReceiver::AudioStreamReceiver(const AudioStreamReceiverSettings& settings)
+    : AudioStreamReceiver(
+          settings, std::make_unique<PcmPassThroughDecoder>(settings.packetFrames)) {}
+
+AudioStreamReceiver::AudioStreamReceiver(
+    const AudioStreamReceiverSettings& settings,
+    std::unique_ptr<IAudioPacketDecoder> decoder)
     : sampleRate_(settings.sampleRate),
       packetFrames_(settings.packetFrames),
       slotCount_(validateSettings(settings)),
@@ -72,9 +79,14 @@ AudioStreamReceiver::AudioStreamReceiver(const AudioStreamReceiverSettings& sett
       packetDurationMicroseconds_(
           static_cast<double>(settings.packetFrames) * 1'000'000.0
           / static_cast<double>(settings.sampleRate)),
-      storage_(slotCount_ * packetFrames_, 0.0F),
+      maximumPacketBytes_(
+          decoder ? decoder->maximumPacketBytes() : settings.packetFrames * sizeof(float)),
+      storage_(slotCount_ * maximumPacketBytes_, 0U),
       slots_(slotCount_),
+      slotLengths_(slotCount_),
+      decoder_(std::move(decoder)),
       currentPacket_(packetFrames_, 0.0F),
+      recoveryScratchPacket_(packetFrames_, 0.0F),
       recoveryScratch_(crossFadeFrames, 0.0F),
       rawHead_(crossFadeFrames, 0.0F),
       history_(historyFrames, 0.0F),
@@ -92,9 +104,12 @@ AudioStreamReceiver::AudioStreamReceiver(const AudioStreamReceiverSettings& sett
 
 void AudioStreamReceiver::submit(
     std::uint32_t sequence,
-    std::span<const float> frames,
+    std::span<const std::uint8_t> payload,
     std::uint64_t arrivalMicroseconds) noexcept {
-    if (frames.size() != packetFrames_) {
+    // Stored as it arrived and decoded at playout. Decoding here would put a
+    // predictive codec's state in arrival order rather than sequence order, so
+    // any reordering would corrupt it.
+    if (payload.empty() || payload.size() > maximumPacketBytes_) {
         packetsDropped_.fetch_add(1U, std::memory_order_relaxed);
         return;
     }
@@ -187,7 +202,11 @@ void AudioStreamReceiver::submit(
         }
     }
 
-    std::memcpy(slotSamples(slotIndex), frames.data(), packetFrames_ * sizeof(float));
+    std::memcpy(slotBytes(slotIndex), payload.data(), payload.size());
+    slotLengths_[slotIndex].store(
+        static_cast<std::uint32_t>(payload.size()), std::memory_order_relaxed);
+    // The stamp publishes the slot: its release orders the bytes and the length
+    // written above ahead of any consumer that acquires it.
     slot.stamp.store(static_cast<std::uint64_t>(sequence) + 1U, std::memory_order_release);
     packetsAccepted_.fetch_add(1U, std::memory_order_relaxed);
     if (playing && sequenceBefore(sequence, highestSequence_.load(std::memory_order_relaxed))) {
@@ -281,6 +300,9 @@ bool AudioStreamReceiver::beginPacket() noexcept {
         Slot& stale = slots_[staleIndex];
         if (stale.stamp.load(std::memory_order_acquire)
             == static_cast<std::uint64_t>(playout) + 1U) {
+            // Decoded and thrown away rather than simply skipped, so a
+            // predictive codec does not fall a frame behind the encoder.
+            discardDecoded(staleIndex);
             stale.stamp.store(0U, std::memory_order_release);
         }
         ++playout;
@@ -293,7 +315,9 @@ bool AudioStreamReceiver::beginPacket() noexcept {
     Slot& slot = slots_[slotIndex];
     if (slot.stamp.load(std::memory_order_acquire)
         == static_cast<std::uint64_t>(playout) + 1U) {
-        takeRealPacket(slotIndex);
+        if (!takeRealPacket(slotIndex)) {
+            concealPacket(true, true);
+        }
     } else {
         concealPacket(true, true);
     }
@@ -318,9 +342,20 @@ bool AudioStreamReceiver::tryPrime() noexcept {
     return true;
 }
 
-void AudioStreamReceiver::takeRealPacket(std::size_t slotIndex) noexcept {
-    std::memcpy(
-        currentPacket_.data(), slotSamples(slotIndex), packetFrames_ * sizeof(float));
+bool AudioStreamReceiver::takeRealPacket(std::size_t slotIndex) noexcept {
+    const std::size_t length = static_cast<std::size_t>(
+        slotLengths_[slotIndex].load(std::memory_order_relaxed));
+    const std::size_t produced = decoder_->decode(
+        std::span<const std::uint8_t>(slotBytes(slotIndex), length),
+        std::span<float>(currentPacket_));
+    if (produced != packetFrames_) {
+        // An undecodable packet is indistinguishable from a lost one at this
+        // point, so release the slot and let the caller conceal. Playout is not
+        // advanced here; concealPacket does that.
+        slots_[slotIndex].stamp.store(0U, std::memory_order_release);
+        packetsDropped_.fetch_add(1U, std::memory_order_relaxed);
+        return false;
+    }
 
     const std::uint32_t playout = playoutSequence_.load(std::memory_order_relaxed);
     // Publish the advance before releasing the slot so a duplicate arriving in
@@ -341,12 +376,49 @@ void AudioStreamReceiver::takeRealPacket(std::size_t slotIndex) noexcept {
         appendHistory(std::span<const float>(rawHead_.data(), fade));
         appendHistory(std::span<const float>(
             currentPacket_.data() + fade, packetFrames_ - fade));
-        return;
+        return true;
     }
     appendHistory(currentPacket_);
+    return true;
+}
+
+// Trimming latency throws a packet away. A predictive codec still has to see it
+// or its state falls behind the encoder by exactly that frame, and every packet
+// after it decodes from the wrong history.
+void AudioStreamReceiver::discardDecoded(std::size_t slotIndex) noexcept {
+    const std::size_t length = static_cast<std::size_t>(
+        slotLengths_[slotIndex].load(std::memory_order_relaxed));
+    static_cast<void>(decoder_->decode(
+        std::span<const std::uint8_t>(slotBytes(slotIndex), length),
+        std::span<float>(recoveryScratchPacket_)));
 }
 
 void AudioStreamReceiver::concealPacket(bool advancePlayout, bool decay) noexcept {
+    // A stretch is not a loss. Playout is being held back to rebuild the
+    // buffer, and no packet went missing, so the decoder must not be told one
+    // did: advancing its state past the encoder would corrupt every frame
+    // after it. Only a real gap is reported.
+    if (advancePlayout && decoder_->conceal(std::span<float>(currentPacket_)) == packetFrames_) {
+        // The codec synthesised the gap from its own state, which is both
+        // better informed than anything this class can do for its signal and
+        // required to keep the two ends in step. Its decay is its own, so the
+        // loss decay below is deliberately not applied on top.
+        //
+        // Synthesised audio still never enters the history: the period
+        // estimator must not lock onto an insertion instead of the instrument.
+        realRunLength_ = 0U;
+        const std::uint32_t playoutNow = playoutSequence_.load(std::memory_order_relaxed);
+        playoutSequence_.store(playoutNow + 1U, std::memory_order_release);
+        packetsConcealed_.fetch_add(1U, std::memory_order_relaxed);
+        if (decay) {
+            ++lossBurst_;
+        }
+        ++concealBurst_;
+        recoveryPending_ = true;
+        concealedFrames_.fetch_add(packetFrames_, std::memory_order_relaxed);
+        return;
+    }
+
     const bool enteringBurst = concealBurst_ == 0U;
     if (enteringBurst) {
         concealPeriod_ = refreshPeriod();
@@ -572,10 +644,14 @@ void AudioStreamReceiver::configureDepth(
 }
 
 void AudioStreamReceiver::reset() noexcept {
+    decoder_->reset();
+    for (auto& length : slotLengths_) {
+        length.store(0U, std::memory_order_relaxed);
+    }
     for (Slot& slot : slots_) {
         slot.stamp.store(0U, std::memory_order_relaxed);
     }
-    std::fill(storage_.begin(), storage_.end(), 0.0F);
+    std::fill(storage_.begin(), storage_.end(), std::uint8_t{0});
     std::fill(currentPacket_.begin(), currentPacket_.end(), 0.0F);
     std::fill(history_.begin(), history_.end(), 0.0F);
     std::fill(recoveryScratch_.begin(), recoveryScratch_.end(), 0.0F);
