@@ -22,13 +22,29 @@ namespace jamlink::record {
 // Isolated tracks, because a take is worth far more when the parts are
 // separable afterwards. The user still only ever presses one button.
 enum class RecordTrack : std::uint8_t {
+    // The live take: four tracks sharing one timeline, so they line up with
+    // each other and with what the musicians actually heard.
     LocalInstrument = 0U,
     LocalVoice = 1U,
     RemoteInstrument = 2U,
-    RemoteVoice = 3U
+    RemoteVoice = 3U,
+    // Local originals, taken in the capture callback at the capture device's
+    // own rate, before the monitor converter and before anything the network
+    // could do to them.
+    //
+    // The live tracks above are what was heard; these are what was played. A
+    // dropout damages the first and cannot touch the second, which is what
+    // makes a take repairable after the fact.
+    LocalInstrumentOriginal = 4U,
+    LocalVoiceOriginal = 5U
 };
 
-inline constexpr std::size_t recordTrackCount = 4U;
+inline constexpr std::size_t recordTrackCount = 6U;
+
+[[nodiscard]] constexpr bool isLocalOriginal(RecordTrack track) noexcept {
+    return track == RecordTrack::LocalInstrumentOriginal
+        || track == RecordTrack::LocalVoiceOriginal;
+}
 
 [[nodiscard]] constexpr std::size_t trackIndex(RecordTrack track) noexcept {
     return static_cast<std::size_t>(track);
@@ -69,6 +85,17 @@ public:
         const std::string& sessionName,
         std::uint32_t sampleRate);
 
+    // The local originals keep their capture device's own rate rather than
+    // being resampled to the timeline's, because a resampled original is no
+    // longer an original. Zero means "the same as the timeline", which is the
+    // common case where everything already runs at 48 kHz.
+    [[nodiscard]] bool start(
+        const std::filesystem::path& directory,
+        const std::string& sessionName,
+        std::uint32_t sampleRate,
+        std::uint32_t localInstrumentRate,
+        std::uint32_t localVoiceRate);
+
     // Control thread. Drains what is queued and finalises every header.
     void stop() noexcept;
 
@@ -89,6 +116,7 @@ private:
         std::unique_ptr<audio::SpscAudioRing> ring;
         std::ofstream file;
         std::uint64_t frames{0U};
+        std::uint32_t sampleRate{0U};
     };
 
     void run() noexcept;

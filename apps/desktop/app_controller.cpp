@@ -1429,6 +1429,12 @@ void AppController::beginTake(
     addSource("voice", "local-capture", localId,
         jamlink::record::SessionRecorder::trackFileName(
             jamlink::record::RecordTrack::LocalVoice));
+    addSource("instrument", "local-original", localId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::LocalInstrumentOriginal));
+    addSource("voice", "local-original", localId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::LocalVoiceOriginal));
     addSource("instrument", "network-received", remoteId,
         jamlink::record::SessionRecorder::trackFileName(
             jamlink::record::RecordTrack::RemoteInstrument));

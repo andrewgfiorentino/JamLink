@@ -193,6 +193,8 @@ JAMLINK_TEST(recorder_writes_one_readable_wav_per_track) {
     recorder.write(RecordTrack::LocalVoice, voice);
     recorder.write(RecordTrack::RemoteInstrument, instrument);
     recorder.write(RecordTrack::RemoteVoice, voice);
+    recorder.write(RecordTrack::LocalInstrumentOriginal, instrument);
+    recorder.write(RecordTrack::LocalVoiceOriginal, voice);
     waitForFrames(recorder, frames);
     recorder.stop();
     EXPECT_TRUE(!recorder.recording());
@@ -357,6 +359,44 @@ JAMLINK_TEST(recorder_rejects_bad_configuration_and_double_start) {
 }
 
 } // namespace
+
+JAMLINK_TEST(local_originals_keep_their_own_capture_rate) {
+    // An original resampled to the timeline's rate is no longer an original.
+    // Capture devices need not agree with the output device or with each
+    // other, so each original keeps the rate it was actually captured at and
+    // says so in its own header -- otherwise it would play back at the wrong
+    // pitch, which is a subtle enough failure to survive a listening test.
+    const auto root = scratchRoot();
+    SessionRecorder recorder;
+    EXPECT_TRUE(recorder.start(root, "rates", 48'000U, 44'100U, 96'000U));
+
+    constexpr std::size_t frames = 2'400U;
+    const auto block = ramp(frames, 0.0001F);
+    for (std::size_t index = 0U; index < jamlink::record::recordTrackCount; ++index) {
+        recorder.write(static_cast<RecordTrack>(index), block);
+    }
+    waitForFrames(recorder, frames);
+    recorder.stop();
+
+    const auto session = root / "rates";
+    const auto timeline = readWav(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalInstrument));
+    const auto guitarOriginal = readWav(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalInstrumentOriginal));
+    const auto voiceOriginal = readWav(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalVoiceOriginal));
+
+    EXPECT_TRUE(timeline.valid && guitarOriginal.valid && voiceOriginal.valid);
+    EXPECT_TRUE(timeline.sampleRate == 48'000U);
+    EXPECT_TRUE(guitarOriginal.sampleRate == 44'100U);
+    EXPECT_TRUE(voiceOriginal.sampleRate == 96'000U);
+    // And the samples are still exact: an original is lossless or it is not an
+    // original.
+    EXPECT_TRUE(guitarOriginal.samples.size() == frames);
+    for (std::size_t index = 0U; index < frames; ++index) {
+        EXPECT_TRUE(guitarOriginal.samples[index] == block[index]);
+    }
+}
 
 int main() {
     std::size_t failures = 0U;

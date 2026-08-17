@@ -654,7 +654,12 @@ public:
         }
         recordingInstrumentHealth_.clearClipLatch();
         recordingVoiceHealth_.clearClipLatch();
-        return recorder_.start(directory, sessionName, rate);
+        // The originals keep their capture device's rate. Resampling them to
+        // the timeline would make them no longer originals.
+        return recorder_.start(
+            directory, sessionName, rate,
+            instrumentCaptureRate_.load(std::memory_order_relaxed),
+            voiceCaptureRate_.load(std::memory_order_relaxed));
     }
 
     void stopRecording() noexcept override { recorder_.stop(); }
@@ -847,6 +852,9 @@ private:
                 std::max<UINT32>(output.bufferFrames * 2U, 1'024U), 0.0F);
 
             outputSampleRate_.store(output.format.sampleRate, std::memory_order_relaxed);
+            instrumentCaptureRate_.store(
+                instrument.format.sampleRate, std::memory_order_relaxed);
+            voiceCaptureRate_.store(voice.format.sampleRate, std::memory_order_relaxed);
             outputBufferFrames_.store(output.bufferFrames, std::memory_order_relaxed);
 
             HRESULT result = instrument.client->Start();
@@ -991,6 +999,17 @@ private:
             }
             static_cast<void>(destination.write(
                 std::span<const float>(scratch.data(), frames)));
+            // The local original: what was played, captured before the monitor
+            // converter and before anything the network could do to it. The
+            // aligned live tracks in processRender are what was heard; a
+            // dropout damages those and cannot touch this.
+            if (recorder_.recording()) {
+                recorder_.write(
+                    streamId == jamlink::network::AudioStreamId::Instrument
+                        ? jamlink::record::RecordTrack::LocalInstrumentOriginal
+                        : jamlink::record::RecordTrack::LocalVoiceOriginal,
+                    std::span<const float>(scratch.data(), frames));
+            }
             // What the other person hears is taken here, from captured audio at
             // the capture device's own rate, and not from the render callback.
             //
@@ -1233,6 +1252,10 @@ private:
     LevelMeter recordingInstrumentHealth_;
     LevelMeter recordingVoiceHealth_;
     std::atomic<std::uint32_t> outputSampleRate_{0U};
+    // Capture rates, which a local original is written at rather than being
+    // converted to the timeline's.
+    std::atomic<std::uint32_t> instrumentCaptureRate_{0U};
+    std::atomic<std::uint32_t> voiceCaptureRate_{0U};
     std::atomic<std::uint32_t> outputBufferFrames_{0U};
     std::atomic<std::uint64_t> underruns_{0U};
     std::atomic<std::uint64_t> overruns_{0U};

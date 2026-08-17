@@ -105,6 +105,12 @@ std::string SessionRecorder::trackFileName(RecordTrack track) {
         return "friend-instrument.wav";
     case RecordTrack::RemoteVoice:
         return "friend-voice.wav";
+    // Named so a musician opening the folder can tell at a glance which file
+    // is the one that never crossed a network.
+    case RecordTrack::LocalInstrumentOriginal:
+        return "instrument-original.wav";
+    case RecordTrack::LocalVoiceOriginal:
+        return "voice-original.wav";
     }
     return "track.wav";
 }
@@ -113,6 +119,15 @@ bool SessionRecorder::start(
     const std::filesystem::path& directory,
     const std::string& sessionName,
     std::uint32_t sampleRate) {
+    return start(directory, sessionName, sampleRate, 0U, 0U);
+}
+
+bool SessionRecorder::start(
+    const std::filesystem::path& directory,
+    const std::string& sessionName,
+    std::uint32_t sampleRate,
+    std::uint32_t localInstrumentRate,
+    std::uint32_t localVoiceRate) {
     if (recording_.load(std::memory_order_acquire)) {
         return false;
     }
@@ -130,9 +145,23 @@ bool SessionRecorder::start(
 
     sampleRate_ = sampleRate;
     sessionDirectory_ = session;
-    const auto header = makeHeader(sampleRate);
+    const auto rateFor = [&](std::size_t index) {
+        const auto track = static_cast<RecordTrack>(index);
+        if (track == RecordTrack::LocalInstrumentOriginal && localInstrumentRate != 0U) {
+            return localInstrumentRate;
+        }
+        if (track == RecordTrack::LocalVoiceOriginal && localVoiceRate != 0U) {
+            return localVoiceRate;
+        }
+        return sampleRate;
+    };
     for (std::size_t index = 0U; index < recordTrackCount; ++index) {
         Track& track = tracks_[index];
+        track.sampleRate = rateFor(index);
+        // Each track carries its own header, so an original recorded at a
+        // different rate is still a correct file rather than one that plays
+        // back at the wrong pitch.
+        const auto header = makeHeader(track.sampleRate);
         track.ring->clear();
         track.frames = 0U;
         track.file.clear();
