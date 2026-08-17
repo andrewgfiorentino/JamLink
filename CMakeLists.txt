@@ -112,6 +112,7 @@ add_library(jamlink_core STATIC
     src/network/peer_audio_codec.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp
+    src/record/take_manifest.cpp
 )
 
 add_library(JamLink::Core ALIAS jamlink_core)

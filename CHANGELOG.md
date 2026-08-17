@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recordings are now durable takes rather than a folder of WAV files. A playable WAV proves samples reached a disk; it does not prove the recording finished, and an interrupted take leaves files that open perfectly while missing their last ten seconds. A manifest written alongside the audio records what the files are, whose they are, whether each was captured here or arrived over the network, and whether the take actually completed.
+- An interrupted recording is never presented as clean. Only a finalisation that succeeds reaches Ready; anything found mid-recording at startup is kept exactly as it is, marked as needing review, and given a reason. Nothing is ever deleted. Complete and flawless stay separate claims, so a take that finished can still admit the frames it is missing.
+- The manifest is replaced atomically, so a process killed mid-write leaves either the previous manifest or the new one rather than a half-written file that would make a real recording unreadable. A state written by a newer JamLink that this build does not understand parses as needing review rather than as finished.
+
 - Added **Export Support Bundle** in Settings → About. It gathers what JamLink knows into one file and copies it to the clipboard: the codec actually carrying the audio, the backend and buffer in use, what the router and firewall answered, measured round trip and buffering, concealment, drop-outs, and the session's lifecycle. A report about bad audio should be answerable without another round trip.
 - The bundle is an allowlist rather than a filter. Everything it can contain is a typed field, so a secret cannot leak by sitting somewhere nobody thought to strip — there is nowhere to put it. Free text appears in one place, and tests seed room keys and invites into it and require that none survive. The preview and the written file are rendered from the same snapshot, so they cannot disagree about what happened.
 

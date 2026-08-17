@@ -71,6 +71,16 @@ add_test(NAME jamlink_support_bundle_tests COMMAND jamlink_support_bundle_tests)
 set_tests_properties(jamlink_support_bundle_tests PROPERTIES
     TIMEOUT 30 LABELS "diagnostics;privacy")
 
+add_executable(jamlink_take_manifest_tests take_manifest_tests.cpp)
+target_link_libraries(jamlink_take_manifest_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_take_manifest_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_take_manifest_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_take_manifest_tests)
+
+add_test(NAME jamlink_take_manifest_tests COMMAND jamlink_take_manifest_tests)
+set_tests_properties(jamlink_take_manifest_tests PROPERTIES
+    TIMEOUT 60 LABELS "record;durability")
+
 add_executable(jamlink_tuner_tests jamlink_tuner_tests.cpp)
 target_link_libraries(jamlink_tuner_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_tuner_tests PRIVATE cxx_std_20)

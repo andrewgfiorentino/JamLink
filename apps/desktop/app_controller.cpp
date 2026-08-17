@@ -170,6 +170,9 @@ AppController::AppController(
     // Primed here so the interface is never handed an empty answer before the
     // first telemetry tick, which on a machine with no audio device may never
     // arrive at all.
+    if (!visualFixture_) {
+        recoverInterruptedTakes();
+    }
     refreshSessionGuidance();
     telemetryTimer_.setInterval(33);
     connect(&telemetryTimer_, &QTimer::timeout, this, &AppController::pollAudioTelemetry);
@@ -953,6 +956,10 @@ void AppController::toggleRecording() {
     if (recorderTelemetry_.recording) {
         audioService_->stopRecording();
         recorderTelemetry_ = audioService_->recorderTelemetry();
+        // Only a finalisation that succeeds promotes the take to Ready. If it
+        // fails, the manifest still says the take was in progress and startup
+        // will find it, which is the honest outcome.
+        finaliseTake();
         emit recordingChanged();
         return;
     }
@@ -973,6 +980,7 @@ void AppController::toggleRecording() {
     }
     recordingLocation_ = QString::fromStdWString((directory / name.toStdWString()).wstring());
     recorderTelemetry_ = audioService_->recorderTelemetry();
+    beginTake(directory / name.toStdWString(), name);
     emit recordingChanged();
 }
 
@@ -1275,6 +1283,7 @@ void AppController::refreshSessionGuidance() {
         static_cast<std::uint32_t>(roundTripMilliseconds());
 
     evidence.recording = recording();
+    evidence.recordingNeedsReview = recoveredTakeCount_ != 0U;
 
     guidance_ = conductor_.update(
         evidence, static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch()));
@@ -1378,6 +1387,85 @@ QString AppController::exportSupportBundle() {
     QGuiApplication::clipboard()->setText(
         QString::fromStdString(jamlink::diagnostics::renderSupportBundle(snapshot)));
     return path;
+}
+
+// A take is written alongside the audio, not in place of it. The recorder keeps
+// its existing realtime handoff untouched; this records what the resulting
+// files are, whose they are, and whether the take actually finished.
+void AppController::beginTake(
+    const std::filesystem::path& takeDirectory, const QString& name) {
+    activeTake_ = {};
+    activeTakeDirectory_ = takeDirectory;
+    activeTake_.takeId = name.toStdString();
+    activeTake_.sessionId = preferences_.profile.profileId;
+    activeTake_.startedAtMillisecond =
+        static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    activeTake_.sampleRate = audioTelemetry_.outputSampleRate;
+    activeTake_.applicationVersion = JAMLINK_VERSION_STRING;
+    activeTake_.mediaFormat = peerTelemetry_.opusPacketsDecoded > 0U
+        ? "opus" : "pcm16";
+    activeTake_.state = jamlink::record::TakeState::Recording;
+
+    // Identity rich enough to survive being exchanged later: whose audio it is,
+    // which instrument, and whether it was captured here or arrived over the
+    // network. The same musician's guitar has both forms, and a take has to be
+    // able to tell them apart.
+    const std::string localId = preferences_.profile.profileId;
+    const std::string remoteId = remoteParticipant_.profileId;
+    const auto addSource = [this](
+        std::string_view role, std::string_view origin,
+        const std::string& participant, std::string_view file) {
+        jamlink::record::TakeSource source;
+        source.sourceId = std::string(origin) + ":" + std::string(role);
+        source.participantId = participant;
+        source.role = role;
+        source.origin = origin;
+        source.fileName = file;
+        activeTake_.sources.push_back(source);
+    };
+    addSource("instrument", "local-capture", localId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::LocalInstrument));
+    addSource("voice", "local-capture", localId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::LocalVoice));
+    addSource("instrument", "network-received", remoteId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::RemoteInstrument));
+    addSource("voice", "network-received", remoteId,
+        jamlink::record::SessionRecorder::trackFileName(
+            jamlink::record::RecordTrack::RemoteVoice));
+
+    static_cast<void>(jamlink::record::TakeJournal::begin(activeTakeDirectory_, activeTake_));
+}
+
+void AppController::finaliseTake() {
+    if (activeTakeDirectory_.empty()) {
+        return;
+    }
+    activeTake_.endedAtMillisecond =
+        static_cast<std::uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    // Complete and flawless are different claims. A take that finished may
+    // still be missing frames the writer could not keep up with, and the
+    // manifest says so rather than presenting it as clean.
+    activeTake_.droppedFrames = recorderTelemetry_.droppedFrames;
+    for (auto& source : activeTake_.sources) {
+        source.frames = recorderTelemetry_.framesWritten;
+    }
+    static_cast<void>(
+        jamlink::record::TakeJournal::finalise(activeTakeDirectory_, activeTake_));
+    activeTakeDirectory_.clear();
+}
+
+// Anything left mid-recording by a crash is found, kept, and marked as needing
+// review. Never deleted, and never quietly promoted to a finished take.
+void AppController::recoverInterruptedTakes() {
+    const std::filesystem::path root(recordingDirectory().toStdWString());
+    const auto interrupted = jamlink::record::TakeJournal::findInterrupted(root);
+    recoveredTakeCount_ = interrupted.size();
+    for (const auto& directory : interrupted) {
+        static_cast<void>(jamlink::record::TakeJournal::recover(directory));
+    }
 }
 
 QString AppController::sessionHeadline() const {

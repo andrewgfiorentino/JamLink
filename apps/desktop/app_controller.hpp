@@ -9,6 +9,7 @@
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/control/session_conductor.hpp"
 #include "jamlink/diagnostics/support_bundle.hpp"
+#include "jamlink/record/take_manifest.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
 #include "private_room_directory.hpp"
@@ -564,10 +565,16 @@ private:
     // Their identity outlives a drop, so a blip does not empty the room of
     // someone who is about to come back.
     bool peerReconnecting_{false};
+    jamlink::record::TakeManifest activeTake_{};
+    std::filesystem::path activeTakeDirectory_;
+    std::size_t recoveredTakeCount_{0U};
     bool buildIncompatible_{false};
     std::uint64_t conductorDropoutBaseline_{0U};
     void refreshSessionGuidance();
     [[nodiscard]] jamlink::diagnostics::SupportSnapshot supportSnapshot() const;
+    void beginTake(const std::filesystem::path& takeDirectory, const QString& name);
+    void finaliseTake();
+    void recoverInterruptedTakes();
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService_;
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;
