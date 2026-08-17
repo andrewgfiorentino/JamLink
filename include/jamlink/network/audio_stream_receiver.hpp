@@ -3,9 +3,12 @@
 
 #pragma once
 
+#include "jamlink/network/audio_packet_decoder.hpp"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -55,15 +58,21 @@ struct AudioStreamReceiverSettings final {
 // caller, which keeps behaviour exactly reproducible under virtual time.
 class AudioStreamReceiver final {
 public:
+    // Uses uncompressed float packets.
     explicit AudioStreamReceiver(const AudioStreamReceiverSettings& settings);
+    // Takes ownership of the decoder, which is called only from pull().
+    AudioStreamReceiver(
+        const AudioStreamReceiverSettings& settings,
+        std::unique_ptr<IAudioPacketDecoder> decoder);
 
     AudioStreamReceiver(const AudioStreamReceiver&) = delete;
     AudioStreamReceiver& operator=(const AudioStreamReceiver&) = delete;
 
-    // Network-worker side. Frames must hold exactly packetFrames() samples.
+    // Network-worker side. The payload is stored exactly as it arrived and
+    // decoded later, at playout, in sequence order.
     void submit(
         std::uint32_t sequence,
-        std::span<const float> frames,
+        std::span<const std::uint8_t> payload,
         std::uint64_t arrivalMicroseconds) noexcept;
 
     // Audio-callback side. Always fills the destination completely: with real
@@ -101,14 +110,22 @@ private:
         return static_cast<std::int32_t>(left - right) < 0;
     }
 
-    [[nodiscard]] float* slotSamples(std::size_t index) noexcept {
-        return storage_.data() + index * packetFrames_;
+    [[nodiscard]] std::uint8_t* slotBytes(std::size_t index) noexcept {
+        return storage_.data() + index * maximumPacketBytes_;
+    }
+    [[nodiscard]] const std::uint8_t* slotBytes(std::size_t index) const noexcept {
+        return storage_.data() + index * maximumPacketBytes_;
     }
 
     // Consumer helpers.
     [[nodiscard]] bool beginPacket() noexcept;
     [[nodiscard]] bool tryPrime() noexcept;
-    void takeRealPacket(std::size_t slotIndex) noexcept;
+    // Decodes the slot into currentPacket_. Returns false when the payload
+    // could not be decoded, which the caller covers with concealment.
+    [[nodiscard]] bool takeRealPacket(std::size_t slotIndex) noexcept;
+    // Runs the decoder over a packet that will not be played, so a predictive
+    // codec's state still advances past it. Used when trimming latency.
+    void discardDecoded(std::size_t slotIndex) noexcept;
     // advancePlayout distinguishes covering a real gap from deliberately
     // stretching playout to rebuild the target backlog. decay says whether the
     // audio is genuinely missing, which is what fades the output out; a stretch
@@ -133,11 +150,18 @@ private:
     const std::uint32_t shrinkHoldPackets_;
     const double packetDurationMicroseconds_;
 
-    std::vector<float> storage_;
+    const std::size_t maximumPacketBytes_;
+    std::vector<std::uint8_t> storage_;
     std::vector<Slot> slots_;
+    // Published before the stamp, so the stamp's release makes it visible.
+    std::vector<std::atomic<std::uint32_t>> slotLengths_;
+    std::unique_ptr<IAudioPacketDecoder> decoder_;
 
     // Consumer-owned playback state.
     std::vector<float> currentPacket_;
+    // Somewhere for the output of a packet that is decoded only to keep a
+    // predictive codec's state moving, and then thrown away.
+    std::vector<float> recoveryScratchPacket_;
     std::vector<float> recoveryScratch_;
     // Untouched copy of a recovered packet's head, kept so the cross-fade never
     // contaminates the concealment history.

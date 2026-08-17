@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.4.0
+    VERSION 0.4.1
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
@@ -103,10 +103,12 @@ add_library(jamlink_core STATIC
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
+    src/control/session_conductor.cpp
     src/control/room_authority.cpp
     src/diagnostics/session_log.cpp
     src/network/audio_stream_receiver.cpp
     src/network/connection_preflight.cpp
+    src/network/peer_audio_codec.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp
 )

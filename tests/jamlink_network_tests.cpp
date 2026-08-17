@@ -13,6 +13,7 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <new>
 #include <numbers>
 #include <span>
@@ -91,6 +92,15 @@ struct RegisterTest final {
     do { if (!(expression)) { fail(#expression, __FILE__, __LINE__); } } while (false)
 
 using jamlink::network::AudioStreamReceiver;
+
+// The receiver takes packets as bytes now, and decodes them at playout. With
+// the pass-through decoder those bytes are the samples themselves, so every
+// measurement here stays directly comparable with the ones taken before a
+// codec existed.
+[[nodiscard]] std::span<const std::uint8_t> asPayload(std::span<const float> frames) noexcept {
+    return std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(frames.data()), frames.size() * sizeof(float));
+}
 using jamlink::network::AudioStreamReceiverSettings;
 
 constexpr std::size_t packetFrames = 240U;
@@ -206,7 +216,7 @@ struct PacketRun final {
         if (!lost) {
             receiver.submit(
                 static_cast<std::uint32_t>(packet),
-                source.subspan(packet * packetFrames, packetFrames),
+                asPayload(source.subspan(packet * packetFrames, packetFrames)),
                 now);
         }
         now += packetPeriodMicroseconds;
@@ -269,6 +279,177 @@ JAMLINK_TEST(receiver_delivers_clean_stream_bit_exactly) {
 // epoch, because the resync unprimes it. With a full ring that rejected every
 // new packet permanently: the stream would come back on the wire and never
 // come back in the room.
+
+// Records what the receiver asks of a decoder. The rules below are the ones a
+// predictive codec depends on, and none of them are visible in the audio until
+// a session sounds wrong, so they are asserted directly.
+class SpyDecoder final : public jamlink::network::IAudioPacketDecoder {
+public:
+    explicit SpyDecoder(std::size_t frameSamples, bool concealsItself) noexcept
+        : frameSamples_(frameSamples), concealsItself_(concealsItself) {}
+
+    [[nodiscard]] std::size_t decode(
+        std::span<const std::uint8_t> packet, std::span<float> frame) noexcept override {
+        ++decodeCalls;
+        if (frame.size() != frameSamples_ || packet.size() != frameSamples_ * sizeof(float)) {
+            return 0U;
+        }
+        std::memcpy(frame.data(), packet.data(), packet.size());
+        return frameSamples_;
+    }
+
+    [[nodiscard]] std::size_t conceal(std::span<float> frame) noexcept override {
+        ++concealCalls;
+        if (!concealsItself_) {
+            return 0U;
+        }
+        std::fill(frame.begin(), frame.end(), 0.25F);
+        return frameSamples_;
+    }
+
+    void reset() noexcept override { ++resetCalls; }
+
+    [[nodiscard]] std::size_t maximumPacketBytes() const noexcept override {
+        return frameSamples_ * sizeof(float);
+    }
+
+    std::size_t decodeCalls{0U};
+    std::size_t concealCalls{0U};
+    std::size_t resetCalls{0U};
+
+private:
+    std::size_t frameSamples_;
+    bool concealsItself_;
+};
+
+
+JAMLINK_TEST(a_stretch_is_never_reported_to_the_decoder_as_a_loss) {
+    // The rule the whole design turns on. Stretching inserts a packet without
+    // losing one, so telling the decoder a packet was lost would advance its
+    // state past the encoder and corrupt every frame after it -- a fault that
+    // would sound like a bad connection rather than like a bug here.
+    auto settings = defaultSettings();
+    auto owned = std::make_unique<SpyDecoder>(packetFrames, true);
+    SpyDecoder& spy = *owned;
+    AudioStreamReceiver receiver(settings, std::move(owned));
+
+    const auto source = makeSource(packetFrames * 4U);
+    const auto block = std::span<const float>(source.data(), packetFrames);
+    std::vector<float> output(packetFrames, 0.0F);
+
+    // Settle on a perfectly regular stream, so playout primes at the minimum
+    // depth and nothing is ever late.
+    std::uint64_t now = 0U;
+    std::uint32_t packet = 0U;
+    for (; packet < 100U; ++packet) {
+        receiver.submit(packet, asPayload(block), now);
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(std::span<float>(output)));
+    }
+    EXPECT_TRUE(receiver.telemetry().playing);
+
+    // Raise the floor the buffer is willing to hold. The target jumps above the
+    // current depth, so playout stretches to rebuild it, while the stream
+    // itself stays flawless: every packet still arrives, and on time.
+    receiver.configureDepth(8U, 32U, 2.5);
+    for (; packet < 400U; ++packet) {
+        receiver.submit(packet, asPayload(block), now);
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(std::span<float>(output)));
+    }
+
+    const auto telemetry = receiver.telemetry();
+    EXPECT_TRUE(telemetry.bufferStretches > 0U);
+    EXPECT_TRUE(telemetry.packetsConcealed == 0U);
+    EXPECT_TRUE(spy.concealCalls == 0U);
+}
+
+JAMLINK_TEST(a_lost_packet_is_reported_to_the_decoder) {
+    auto settings = defaultSettings();
+    auto owned = std::make_unique<SpyDecoder>(packetFrames, true);
+    SpyDecoder& spy = *owned;
+    AudioStreamReceiver receiver(settings, std::move(owned));
+
+    const auto source = makeSource(packetFrames * 4U);
+    const auto block = std::span<const float>(source.data(), packetFrames);
+    std::vector<float> output(packetFrames, 0.0F);
+
+    std::uint64_t now = 0U;
+    for (std::uint32_t packet = 0U; packet < 200U; ++packet) {
+        // A handful of packets never arrive.
+        if (packet != 90U && packet != 91U && packet != 140U) {
+            receiver.submit(packet, asPayload(block), now);
+        }
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(std::span<float>(output)));
+    }
+
+    EXPECT_TRUE(receiver.telemetry().packetsConcealed > 0U);
+    EXPECT_TRUE(spy.concealCalls >= receiver.telemetry().packetsConcealed);
+}
+
+JAMLINK_TEST(a_decoder_that_conceals_for_itself_is_allowed_to) {
+    // When the codec synthesises the gap, that is what should be heard: it
+    // knows its own signal better than this class can, and it has to run
+    // anyway to keep its state in step.
+    auto settings = defaultSettings();
+    AudioStreamReceiver receiver(
+        settings, std::make_unique<SpyDecoder>(packetFrames, true));
+
+    const std::vector<float> block(packetFrames, 0.8F);
+    std::vector<float> output(packetFrames, 0.0F);
+    std::uint64_t now = 0U;
+    bool sawDecoderConcealment = false;
+    for (std::uint32_t packet = 0U; packet < 200U; ++packet) {
+        if (packet != 120U) {
+            receiver.submit(packet, asPayload(std::span<const float>(block)), now);
+        }
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(std::span<float>(output)));
+        // The spy fills concealed packets with a value that appears nowhere in
+        // the real signal, so its output is unmistakable.
+        for (const float sample : output) {
+            if (std::abs(sample - 0.25F) < 1.0e-6F) {
+                sawDecoderConcealment = true;
+            }
+        }
+    }
+    EXPECT_TRUE(sawDecoderConcealment);
+}
+
+JAMLINK_TEST(a_trimmed_packet_is_decoded_rather_than_skipped) {
+    // Trimming throws a packet away to recover latency. A predictive codec
+    // still has to see it, or its state falls behind the encoder by exactly
+    // that frame and everything after decodes from the wrong history.
+    auto settings = defaultSettings();
+    auto owned = std::make_unique<SpyDecoder>(packetFrames, false);
+    SpyDecoder& spy = *owned;
+    AudioStreamReceiver receiver(settings, std::move(owned));
+
+    const auto source = makeSource(packetFrames * 4U);
+    const auto block = std::span<const float>(source.data(), packetFrames);
+    std::vector<float> output(packetFrames, 0.0F);
+
+    // Deliver far faster than playout consumes, so depth climbs past the
+    // target and the buffer trims.
+    std::uint64_t now = 0U;
+    std::uint32_t packet = 0U;
+    for (std::uint32_t round = 0U; round < 300U; ++round) {
+        for (std::uint32_t burst = 0U; burst < 2U; ++burst) {
+            receiver.submit(packet, asPayload(block), now);
+            ++packet;
+        }
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(std::span<float>(output)));
+    }
+
+    const auto telemetry = receiver.telemetry();
+    EXPECT_TRUE(telemetry.latencyTrims > 0U);
+    // Every accepted packet reached the decoder: the ones that were played, and
+    // the ones that were trimmed.
+    EXPECT_TRUE(spy.decodeCalls >= telemetry.latencyTrims);
+}
+
 JAMLINK_TEST(a_peer_that_restarts_its_numbering_recovers) {
     AudioStreamReceiver receiver(defaultSettings());
     const auto source = makeSource(packetFrames * 4U);
@@ -279,7 +460,7 @@ JAMLINK_TEST(a_peer_that_restarts_its_numbering_recovers) {
         for (std::uint32_t index = 0U; index < count; ++index) {
             receiver.submit(
                 begin + index,
-                std::span<const float>(source.data(), packetFrames),
+                asPayload(std::span<const float>(source.data(), packetFrames)),
                 arrival);
             arrival += 5'000U;
             // A short lead so the buffer primes before playout starts.
@@ -325,7 +506,7 @@ JAMLINK_TEST(a_consumer_that_stalls_and_resumes_drains_back_to_its_target) {
 
     const auto submitOne = [&]() {
         receiver.submit(
-            sequence, std::span<const float>(source.data(), packetFrames), arrival);
+            sequence, asPayload(std::span<const float>(source.data(), packetFrames)), arrival);
         ++sequence;
         arrival += 5'000U;
     };
@@ -496,7 +677,7 @@ JAMLINK_TEST(receiver_recovers_reordered_packets_instead_of_dropping_them) {
         const std::uint32_t sequence = order[step];
         receiver.submit(
             sequence,
-            std::span<const float>(source.data() + sequence * packetFrames, packetFrames),
+            asPayload(std::span<const float>(source.data() + sequence * packetFrames, packetFrames)),
             now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(
@@ -534,8 +715,8 @@ JAMLINK_TEST(receiver_rejects_duplicates_and_late_arrivals) {
     for (std::uint32_t packet = 0U; packet < 8U; ++packet) {
         const auto block = std::span<const float>(
             source.data() + packet * packetFrames, packetFrames);
-        receiver.submit(packet, block, now);
-        receiver.submit(packet, block, now);
+        receiver.submit(packet, asPayload(block), now);
+        receiver.submit(packet, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -549,7 +730,7 @@ JAMLINK_TEST(receiver_rejects_duplicates_and_late_arrivals) {
 
     // A packet from far in the past must be rejected, never played.
     const auto stale = std::span<const float>(source.data(), packetFrames);
-    receiver.submit(0U, stale, now);
+    receiver.submit(0U, asPayload(stale), now);
     EXPECT_TRUE(receiver.telemetry().packetsLate > telemetry.packetsLate);
 }
 
@@ -564,7 +745,7 @@ JAMLINK_TEST(receive_depth_adapts_to_jitter_and_stays_bounded) {
     // Steady cadence first: the target must sit at the configured minimum.
     std::uint64_t now = 0U;
     for (std::uint32_t packet = 0U; packet < 200U; ++packet) {
-        receiver.submit(packet, block, now);
+        receiver.submit(packet, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -577,7 +758,7 @@ JAMLINK_TEST(receive_depth_adapts_to_jitter_and_stays_bounded) {
     for (std::uint32_t packet = 200U; packet < 1'200U; ++packet) {
         jitterSource.offer(packet, now, packetPeriodMicroseconds);
         for (const auto& arrival : jitterSource.drainUntil(now)) {
-            receiver.submit(arrival.sequence, block, arrival.arrivalMicroseconds);
+            receiver.submit(arrival.sequence, asPayload(block), arrival.arrivalMicroseconds);
         }
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
@@ -594,7 +775,7 @@ JAMLINK_TEST(receive_depth_adapts_to_jitter_and_stays_bounded) {
 
     // Returning to a calm network must shrink the buffer back down.
     for (std::uint32_t packet = 1'200U; packet < 2'400U; ++packet) {
-        receiver.submit(packet, block, now);
+        receiver.submit(packet, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -628,7 +809,7 @@ JAMLINK_TEST(receiver_holds_up_under_combined_impairment) {
         channel.offer(packet, now, packetPeriodMicroseconds);
         now += packetPeriodMicroseconds;
         for (const auto& arrival : channel.drainUntil(now)) {
-            receiver.submit(arrival.sequence, block, arrival.arrivalMicroseconds);
+            receiver.submit(arrival.sequence, asPayload(block), arrival.arrivalMicroseconds);
         }
         static_cast<void>(receiver.pull(output));
         EXPECT_TRUE(allFinite(output));
@@ -675,7 +856,7 @@ JAMLINK_TEST(receiver_resynchronises_after_a_stream_restart) {
 
     std::uint64_t now = 0U;
     for (std::uint32_t packet = 0U; packet < 50U; ++packet) {
-        receiver.submit(packet, block, now);
+        receiver.submit(packet, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -683,7 +864,7 @@ JAMLINK_TEST(receiver_resynchronises_after_a_stream_restart) {
 
     // The peer restarts and its sequence numbering jumps far away.
     for (std::uint32_t packet = 900'000U; packet < 900'050U; ++packet) {
-        receiver.submit(packet, block, now);
+        receiver.submit(packet, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -705,7 +886,7 @@ JAMLINK_TEST(receiver_handles_sequence_number_wraparound) {
     std::uint64_t now = 0U;
     const std::uint32_t start = 0xFFFFFFF0U;
     for (std::uint32_t step = 0U; step < 64U; ++step) {
-        receiver.submit(start + step, block, now);
+        receiver.submit(start + step, asPayload(block), now);
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
     }
@@ -730,7 +911,7 @@ JAMLINK_TEST(submit_and_pull_allocate_nothing_after_construction) {
     std::uint64_t now = 0U;
     for (std::uint32_t packet = 0U; packet < 40U; ++packet) {
         if (packet != 12U && packet != 13U) {
-            receiver.submit(packet, block, now);
+            receiver.submit(packet, asPayload(block), now);
         }
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
@@ -741,13 +922,13 @@ JAMLINK_TEST(submit_and_pull_allocate_nothing_after_construction) {
     for (std::uint32_t packet = 40U; packet < 400U; ++packet) {
         // Exercise loss, duplication, reorder, and partial reads together.
         if (packet % 17U != 0U) {
-            receiver.submit(packet, block, now);
+            receiver.submit(packet, asPayload(block), now);
         }
         if (packet % 31U == 0U) {
-            receiver.submit(packet, block, now);
+            receiver.submit(packet, asPayload(block), now);
         }
         if (packet % 23U == 0U && packet > 41U) {
-            receiver.submit(packet - 1U, block, now);
+            receiver.submit(packet - 1U, asPayload(block), now);
         }
         now += packetPeriodMicroseconds;
         static_cast<void>(receiver.pull(output));
@@ -783,7 +964,7 @@ JAMLINK_TEST(receiver_is_stable_across_a_long_virtual_session) {
         channel.offer(packet, now, packetPeriodMicroseconds);
         now += packetPeriodMicroseconds;
         for (const auto& arrival : channel.drainUntil(now)) {
-            receiver.submit(arrival.sequence, block, arrival.arrivalMicroseconds);
+            receiver.submit(arrival.sequence, asPayload(block), arrival.arrivalMicroseconds);
         }
         static_cast<void>(receiver.pull(output));
         peakDepthFrames = std::max(peakDepthFrames, receiver.telemetry().currentDepthFrames);

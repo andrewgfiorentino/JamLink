@@ -647,6 +647,31 @@ int main(int argc, char* argv[]) {
                         "settings opened from home still returns home") && passed;
     }
 
+    // The session conductor, as the interface actually sees it. The point of
+    // the layer is that one property answers what a dozen states used to.
+    {
+        jamlink::desktop::AppController guided(
+            directory / "session-guidance.jlpf", true, QStringLiteral("home"), 0U, 0U);
+        passed = expect(!guided.sessionHeadline().isEmpty()
+                            && !guided.sessionExplanation().isEmpty(),
+                        "the interface always has something coherent to show")
+            && passed;
+        passed = expect(!guided.sessionPhase().isEmpty()
+                            && guided.sessionPhase() != QStringLiteral("Unknown"),
+                        "the lifecycle phase is named for diagnostics") && passed;
+        // An enabled action must carry a label, or the interface would offer a
+        // button with nothing written on it.
+        if (guided.sessionActionEnabled()) {
+            passed = expect(!guided.sessionActionLabel().isEmpty(),
+                            "an offered action is always labelled") && passed;
+        }
+        // Invoking whatever is currently offered must never crash, whatever it
+        // happens to be.
+        guided.takeSessionAction();
+        passed = expect(!guided.sessionHeadline().isEmpty(),
+                        "guidance survives its own action being taken") && passed;
+    }
+
     // The automatic buffer size. "Which buffer should I use" previously had no
     // answer but guesswork, and guessing high is what makes playing together
     // feel late.

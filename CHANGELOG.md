@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.4.1-test — 2026-08-17
 
-- Added an Opus encoder and decoder, measured rather than assumed. At 96 kbit/s a 5 ms packet leaves the encoder as 60 bytes where uncompressed PCM takes 480, and the codec adds exactly 2.5 ms of delay: it runs in restricted low-delay mode, which disables the SILK layer and halves the delay the default mode would cost. Waveform correlation against the source is 0.9998, and 0.9997 measured after a burst of lost packets. Nothing is on the wire yet — this is the codec and its tests, ahead of the protocol change.
+- The room now shows one coherent answer about what is happening, rather than leaving the interface to reason across audio, network, transport and recording states itself. A session conductor gathers what each subsystem already knows and decides what it adds up to; the rule it enforces is that anything claiming a musician can play is gated on evidence that audio is actually moving, never on a socket existing. An authenticated peer proves two programs agree with each other, not that two people can hear each other.
+- When something needs doing, JamLink now offers exactly one action rather than a wall of warnings, and separates what the musician must do from what JamLink is already handling. A clipping input matters, but not while the session cannot start at all, so it speaks only once nothing more important is wrong.
+
+- Audio now travels Opus-encoded. Two streams drop from roughly 1.6 Mbit/s upstream to about 320 kbit/s including packet overhead: a 5 ms packet is 60 bytes where uncompressed PCM was 480. A loopback test over real sockets confirms Opus actually crosses the wire rather than the encoder having failed and the stream having fallen back silently.
+- Every audio payload names the codec that produced it in its first byte, rather than both ends agreeing once and remembering. There is no state to disagree about, no window during which they can, and a peer changing codec mid-session is read correctly. Uncompressed remains a first-class path: it is what the impairment tests measure against, and what a machine falls back to if an encoder cannot be created, so a failure there costs bandwidth rather than silence.
+- Added an Opus encoder and decoder, measured rather than assumed. At 96 kbit/s a 5 ms packet leaves the encoder as 60 bytes where uncompressed PCM takes 480, and the codec adds exactly 2.5 ms of delay: it runs in restricted low-delay mode, which disables the SILK layer and halves the delay the default mode would cost. Waveform correlation against the source is 0.9998, and 0.9997 measured after a burst of lost packets.
 - Vendored libopus 1.4 rather than fetching it. The packaged corresponding-source archive is built with `git archive HEAD`, and libopus is statically linked, so fetching at configure time would leave that archive incomplete. 1.4 rather than 1.5 because 1.5's neural deep-PLC and DRED account for roughly 11 MB of tree that restricted low-delay mode can never reach. BSD-3-Clause with royalty-free patent grants, so unlike the ASIO SDK it also suits a future proprietary edition.
 
 ## 0.4.0-test — 2026-08-17

@@ -20,6 +20,7 @@
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
+#include "jamlink/network/peer_audio_codec.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 
 #include <bcrypt.h>
@@ -57,7 +58,8 @@ constexpr std::size_t tagBytes = 16U;
 constexpr std::size_t maximumPlaintextBytes = 960U;
 constexpr std::size_t maximumDatagramBytes = headerBytes + maximumPlaintextBytes + tagBytes;
 constexpr std::uint32_t protocolMagic = 0x4A4C4B31U; // JLK1
-constexpr std::uint8_t protocolVersion = 2U;
+// 3 frames every audio payload with the codec that produced it.
+constexpr std::uint8_t protocolVersion = 3U;
 constexpr std::uint32_t networkSampleRate = 48'000U;
 constexpr std::size_t networkPacketFrames = 240U;
 constexpr std::size_t noncePrefixBytes = 8U;
@@ -68,6 +70,11 @@ constexpr std::uint32_t portMappingLifetimeSeconds = 7'200U;
 // is older than a live session can use, so holding it would only delay
 // everything behind it.
 constexpr std::size_t maximumOutgoingBacklogFrames = 9'600U;
+// Enough for either wire format, since a packet names its own.
+constexpr std::size_t maximumAudioPayloadBytes = codecTagBytes + 1'275U;
+// Chosen for an instrument rather than for speech. Uncompressed is 768 kbit/s
+// per stream, so this is a little over an eighth of it.
+constexpr std::uint32_t outgoingBitsPerSecond = 96'000U;
 constexpr std::uint32_t maximumNonceCounter = 0xFFFFFF00U;
 constexpr std::uint8_t streamIndexMask = 0x7FU;
 constexpr std::uint8_t sourceClipFlag = 0x80U;
@@ -960,6 +967,17 @@ struct StunEndpoint final {
     return value > 0 ? static_cast<std::uint64_t>(value) : 0U;
 }
 
+// Hands the receiver ownership while keeping an observer for telemetry. The
+// receiver never replaces its decoder, so the pointer stays valid for as long
+// as the receiver does.
+[[nodiscard]] std::unique_ptr<IAudioPacketDecoder> makeStreamDecoder(
+    JamLinkStreamDecoder*& observer) {
+    auto decoder = std::make_unique<JamLinkStreamDecoder>(
+        networkSampleRate, networkPacketFrames);
+    observer = decoder.get();
+    return decoder;
+}
+
 [[nodiscard]] AudioStreamReceiverSettings receiverSettings() noexcept {
     AudioStreamReceiverSettings settings;
     settings.sampleRate = networkSampleRate;
@@ -980,8 +998,10 @@ public:
               audio::SpscAudioRing(32'768U, 1U),
               audio::SpscAudioRing(32'768U, 1U)},
           receivers_{
-              AudioStreamReceiver(receiverSettings()),
-              AudioStreamReceiver(receiverSettings())} {}
+              AudioStreamReceiver(
+                  receiverSettings(), makeStreamDecoder(streamDecoders_[0])),
+              AudioStreamReceiver(
+                  receiverSettings(), makeStreamDecoder(streamDecoders_[1]))} {}
     ~WindowsPeerAudioTransport() override { stop(); }
 
     [[nodiscard]] std::string host(
@@ -1279,6 +1299,16 @@ public:
             publicAddressDiscovery_.load(std::memory_order_acquire);
         snapshot.portMapping = portMapping_.load(std::memory_order_acquire);
         snapshot.reachability = reachability_.load(std::memory_order_acquire);
+        snapshot.encodeFailures = encodeFailures_.load(std::memory_order_relaxed);
+        snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
+        for (const auto* decoder : streamDecoders_) {
+            if (decoder == nullptr) {
+                continue;
+            }
+            snapshot.opusPacketsDecoded += decoder->opusPacketsDecoded();
+            snapshot.pcmPacketsDecoded += decoder->pcmPacketsDecoded();
+            snapshot.undecodablePackets += decoder->unusablePackets();
+        }
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
             snapshot.localAudioDrops += localAudio_[index].overrunCount();
             const auto receiver = receivers_[index].telemetry();
@@ -1692,6 +1722,18 @@ private:
             }
             const auto encodedParticipant = std::span<const std::uint8_t>(
                 participantPayload.data(), participantBytes);
+            std::array<JamLinkStreamEncoder, audioStreamCount> outgoingEncoders{
+                JamLinkStreamEncoder(
+                    networkSampleRate, networkPacketFrames, outgoingBitsPerSecond,
+                    audio::OpusStreamEncoder::Content::Music),
+                JamLinkStreamEncoder(
+                    networkSampleRate, networkPacketFrames, outgoingBitsPerSecond,
+                    audio::OpusStreamEncoder::Content::Voice)};
+            for (auto& encoder : outgoingEncoders) {
+                encoder.setCodec(
+                    static_cast<PeerAudioCodec>(
+                        preferredCodec_.load(std::memory_order_acquire)));
+            }
             std::array<OutgoingAudioPacer, audioStreamCount> outgoingPacers{
                 OutgoingAudioPacer(
                     networkPacketFrames, networkSampleRate, maximumOutgoingBacklogFrames),
@@ -1704,7 +1746,7 @@ private:
             }
             std::array<float, 1'024U> localScratch{};
             std::array<float, networkPacketFrames> networkFloat{};
-            std::array<std::uint8_t, networkPacketFrames * 2U> networkPcm{};
+            std::array<std::uint8_t, maximumAudioPayloadBytes> networkPcm{};
             std::array<std::uint8_t, maximumDatagramBytes> receivedPacket{};
             std::array<std::uint8_t, maximumPlaintextBytes> decrypted{};
             // Eight bytes of timestamp for the round trip, then one byte of
@@ -1808,7 +1850,7 @@ private:
                 }
 
                 drainOutgoingAudio(
-                    sendCipher, outgoingPacers, outgoingRates,
+                    sendCipher, outgoingPacers, outgoingEncoders, outgoingRates,
                     localScratch, networkFloat, networkPcm, connected);
                 servicePendingChat(sendCipher, connected, now);
 
@@ -1857,8 +1899,7 @@ private:
                                 std::span<const std::uint8_t>(receivedPacket.data(),
                                     static_cast<std::size_t>(bytes)),
                                 decrypted, source, localParticipant, encodedParticipant,
-                                connected, lastReceive,
-                                networkFloat)) {
+                                connected, lastReceive)) {
                             packetsReceived_.fetch_add(1U, std::memory_order_relaxed);
                         } else {
                             packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
@@ -1887,10 +1928,11 @@ private:
     void drainOutgoingAudio(
         AesGcmCipher& cipher,
         std::array<OutgoingAudioPacer, audioStreamCount>& pacers,
+        std::array<JamLinkStreamEncoder, audioStreamCount>& encoders,
         std::array<std::uint32_t, audioStreamCount>& configuredRates,
         std::array<float, 1'024U>& localScratch,
         std::array<float, networkPacketFrames>& networkFloat,
-        std::array<std::uint8_t, networkPacketFrames * 2U>& networkPcm,
+        std::array<std::uint8_t, maximumAudioPayloadBytes>& networkPcm,
         bool connected) noexcept {
         if (!connected) {
             return;
@@ -1919,17 +1961,19 @@ private:
             // to drop. The loop ends of its own accord when nothing is due.
             while (pacer.release(
                 nowMicros, std::span<float>(networkFloat.data(), networkFloat.size()))) {
-                for (std::size_t frame = 0U; frame < networkFloat.size(); ++frame) {
-                    const float bounded = std::clamp(networkFloat[frame], -0.98F, 0.98F);
-                    const auto sample =
-                        static_cast<std::int16_t>(std::lrint(bounded * 32'767.0F));
-                    networkPcm[frame * 2U] = static_cast<std::uint8_t>(sample & 0xFF);
-                    networkPcm[frame * 2U + 1U] =
-                        static_cast<std::uint8_t>((sample >> 8) & 0xFF);
+                const std::size_t written = encoders[index].encode(
+                    std::span<const float>(networkFloat.data(), networkFloat.size()),
+                    std::span<std::uint8_t>(networkPcm));
+                if (written == 0U) {
+                    // Nothing usable came out. Counted where the pacer's own
+                    // accounting can see it rather than dropped silently.
+                    encodeFailures_.fetch_add(1U, std::memory_order_relaxed);
+                    continue;
                 }
                 static_cast<void>(sendPacket(
                     cipher, PacketType::Audio, networkSampleRate,
-                    static_cast<std::uint16_t>(networkPacketFrames), networkPcm,
+                    static_cast<std::uint16_t>(networkPacketFrames),
+                    std::span<const std::uint8_t>(networkPcm.data(), written),
                     static_cast<AudioStreamId>(index)));
             }
         }
@@ -1944,8 +1988,7 @@ private:
         const PeerParticipantInfo& localParticipant,
         std::span<const std::uint8_t> encodedLocalParticipant,
         bool& connected,
-        ULONGLONG& lastReceive,
-        std::array<float, networkPacketFrames>& networkFloat) noexcept {
+        ULONGLONG& lastReceive) noexcept {
         if (packet.size() < headerBytes + tagBytes
             || readU32(packet.data()) != protocolMagic
             || packet[4U] != protocolVersion
@@ -2127,23 +2170,25 @@ private:
         const std::uint32_t sampleRate = readU32(packet.data() + 12U);
         const std::size_t frameCount = readU16(packet.data() + 16U);
         const std::uint8_t stream = packet[19U] & streamIndexMask;
+        // The payload length now depends on the codec each packet names, so it
+        // is bounded rather than fixed. The tag itself is validated by the
+        // decoder, which counts anything it does not recognise instead of
+        // guessing at it.
         if (sampleRate != networkSampleRate || frameCount != networkPacketFrames
-            || payloadBytes != frameCount * 2U
+            || payloadBytes <= codecTagBytes
+            || payloadBytes > JamLinkStreamEncoder::maximumPacketBytes(networkPacketFrames)
             || stream >= audioStreamCount) {
             return false;
         }
         remoteSourceClipped_[stream].store(
             (packet[19U] & sourceClipFlag) != 0U ? 1U : 0U,
             std::memory_order_release);
-        for (std::size_t frame = 0U; frame < frameCount; ++frame) {
-            const auto sample = static_cast<std::int16_t>(
-                static_cast<std::uint16_t>(plaintext[frame * 2U])
-                | (static_cast<std::uint16_t>(plaintext[frame * 2U + 1U]) << 8U));
-            networkFloat[frame] = static_cast<float>(sample) / 32'768.0F;
-        }
+        // Handed over exactly as it arrived, codec tag included, and decoded
+        // at playout in sequence order. Decoding here would order a predictive
+        // codec's state by arrival instead, which reordering would corrupt.
         receivers_[stream].submit(
             sequence,
-            std::span<const float>(networkFloat.data(), frameCount),
+            std::span<const std::uint8_t>(plaintext.data(), payloadBytes),
             nowMicroseconds());
         return true;
     }
@@ -2152,6 +2197,9 @@ private:
     SocketHandle socket_;
     std::thread worker_;
     std::array<audio::SpscAudioRing, audioStreamCount> localAudio_;
+    // Declared before receivers_ so it is initialised first; the receivers'
+    // constructor fills it in.
+    std::array<JamLinkStreamDecoder*, audioStreamCount> streamDecoders_{};
     std::array<AudioStreamReceiver, audioStreamCount> receivers_;
     std::array<audio::GainStage, audioStreamCount> remoteGain_{
         audio::GainStage(1.0F), audio::GainStage(1.0F)};
@@ -2168,6 +2216,9 @@ private:
     std::uint32_t nonceCounter_{0U};
     bool nonceExhausted_{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence_{};
+    std::atomic<std::uint32_t> preferredCodec_{
+        static_cast<std::uint32_t>(PeerAudioCodec::Opus)};
+    std::atomic<std::uint64_t> encodeFailures_{0U};
     mutable std::mutex controlMutex_;
     PeerParticipantInfo localParticipant_{
         "local-development", "", "Musician", "avatar:guitar-electric",

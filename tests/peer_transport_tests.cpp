@@ -643,6 +643,44 @@ void reportsADeliberateMuteAsAMuteRatherThanSilence() {
     guest->stop();
 }
 
+// Proves Opus actually crosses the wire, rather than the encoder having failed
+// to initialise and the stream having quietly fallen back to uncompressed. The
+// fallback is deliberate and silent by design, which is exactly why it needs a
+// test that would notice.
+void carriesOpusAudioOverTheWire() {
+    using jamlink::network::AudioStreamId;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "opus transport harness setup");
+        return;
+    }
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty() || !guest->join(invite) || !waitForConnected(*host, *guest)) {
+        check(false, "opus transport harness handshake");
+        return;
+    }
+
+    const auto peaks = pump(
+        *host, *guest, std::chrono::milliseconds(900), std::chrono::milliseconds(300));
+    const auto hostView = host->telemetry();
+
+    check(hostView.opusPacketsDecoded > 0U,
+          "audio arrives Opus-encoded rather than falling back to uncompressed");
+    check(hostView.undecodablePackets == 0U,
+          "no packet carried a codec tag this build could not use");
+    check(hostView.encodeFailures == 0U, "the encoder refused nothing");
+    // And it is still audible after the round trip, which is the point.
+    check(peaks.hostInstrument > audibleThreshold,
+          "Opus audio is audible at the far end");
+    std::cout << "    opus packets " << hostView.opusPacketsDecoded
+              << ", uncompressed " << hostView.pcmPacketsDecoded
+              << ", bitrate " << hostView.audioBitsPerSecond << "\n";
+
+    host->stop();
+    guest->stop();
+}
+
 void carriesAuthenticatedSourceClipStatusIndependently() {
     using jamlink::network::AudioStreamId;
     auto host = jamlink::network::createPlatformPeerAudioTransport();
@@ -861,6 +899,7 @@ int main() {
     survivesHostileDatagrams();
     remoteStreamsAreIndependentlyControllable();
     carriesAuthenticatedSourceClipStatusIndependently();
+    carriesOpusAudioOverTheWire();
     reportsADeliberateMuteAsAMuteRatherThanSilence();
     reconnectsAfterGuestRestart();
     negotiatesExactBuildAndExchangesReliableChat();

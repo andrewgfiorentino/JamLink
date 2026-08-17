@@ -7,6 +7,7 @@
 
 #include "jamlink/audio/soundcheck_audio_service.hpp"
 #include "jamlink/control/readiness_tracker.hpp"
+#include "jamlink/control/session_conductor.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
 #include "private_room_directory.hpp"
@@ -145,6 +146,14 @@ class AppController final : public QObject {
 
     Q_PROPERTY(QString bufferSizeExplanation READ bufferSizeExplanation NOTIFY setupChanged)
     Q_PROPERTY(QString sampleRateExplanation READ sampleRateExplanation NOTIFY setupChanged)
+    // One coherent answer about what the musician should understand, so the
+    // interface never has to reason across a dozen subsystem states itself.
+    Q_PROPERTY(QString sessionHeadline READ sessionHeadline NOTIFY roomChanged)
+    Q_PROPERTY(QString sessionExplanation READ sessionExplanation NOTIFY roomChanged)
+    Q_PROPERTY(QString sessionActionLabel READ sessionActionLabel NOTIFY roomChanged)
+    Q_PROPERTY(bool sessionActionEnabled READ sessionActionEnabled NOTIFY roomChanged)
+    Q_PROPERTY(bool sessionPlayable READ sessionPlayable NOTIFY roomChanged)
+    Q_PROPERTY(QString sessionPhase READ sessionPhase NOTIFY roomChanged)
     Q_PROPERTY(QString monitorPathSummary READ monitorPathSummary NOTIFY setupChanged)
     Q_PROPERTY(QString settingsSessionNotice READ settingsSessionNotice NOTIFY roomChanged)
     Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
@@ -325,6 +334,15 @@ public:
 
     [[nodiscard]] QString bufferSizeExplanation() const;
     [[nodiscard]] QString sampleRateExplanation() const;
+    [[nodiscard]] QString sessionHeadline() const;
+    [[nodiscard]] QString sessionExplanation() const;
+    [[nodiscard]] QString sessionActionLabel() const;
+    [[nodiscard]] bool sessionActionEnabled() const noexcept;
+    [[nodiscard]] bool sessionPlayable() const noexcept;
+    [[nodiscard]] QString sessionPhase() const;
+    // Invokes whatever the guidance is currently offering, so the interface
+    // does not need to know which action it is.
+    Q_INVOKABLE void takeSessionAction();
     [[nodiscard]] QString monitorPathSummary() const;
     [[nodiscard]] QString settingsSessionNotice() const;
     [[nodiscard]] bool asioActive() const noexcept;
@@ -533,6 +551,14 @@ private:
     bool restoredPreferences_{false};
     bool restoredSetupAvailable_{false};
     bool devicesAvailable_{false};
+    jamlink::control::SessionConductor conductor_;
+    jamlink::control::MusicianGuidance guidance_{};
+    // A peer that was here and is gone is recoverable; one that never arrived
+    // is not the same situation and must not read as one.
+    bool peerHasConnected_{false};
+    bool buildIncompatible_{false};
+    std::uint64_t conductorDropoutBaseline_{0U};
+    void refreshSessionGuidance();
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService_;
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;
