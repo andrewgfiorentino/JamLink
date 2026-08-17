@@ -5,7 +5,7 @@ open-source Windows application for private two-person sessions: guitar and
 voice travel as separate encrypted streams over a direct connection, with no
 server in the middle and no account to create.
 
-> Status: **0.4.0-test**. Under active development and validated in two-home
+> Status: **0.4.1-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -32,6 +32,15 @@ imposes.
 - **Four-track recording.** Your instrument, your voice, and each of your
   friend's streams, written as separate WAV files aligned to one timeline.
 - **Private text chat** over the same authenticated connection.
+- **Opus, tuned for playing rather than listening.** Restricted low-delay mode
+  adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the
+  entire monitoring path on an ASIO interface. Two streams take roughly
+  320 kbit/s upstream instead of 1.6 Mbit/s.
+- **One answer, not a dashboard.** A session conductor gathers what every
+  subsystem knows and says whether you can play. Anything claiming you can is
+  gated on evidence that audio is actually moving, never on a socket existing.
+  When something needs doing, JamLink offers one action rather than a wall of
+  warnings.
 - **Honest reporting.** Where a figure is inferred rather than measured, the
   text says so. Round trip and receive buffering are measured; one-way delay
   is derived.
@@ -74,10 +83,13 @@ detection, the tuner, recording, and what your friend hears all continue.
 - **No relay.** If both ends are behind carrier-grade or symmetric NAT, a
   direct connection may be impossible. JamLink says so rather than pretending,
   and will suggest the other person host if they can.
-- **Uncompressed audio.** 48 kHz mono PCM per stream, roughly 1.6 Mbit/s
-  upstream. There is no codec yet.
-- **Recording captures what arrived**, concealment included. Exchanging clean
-  local masters after a take is not implemented.
+- **Around 320 kbit/s upstream** for two streams. Lower than it was, but still
+  a real requirement on a thin uplink; there is no automatic bitrate adaptation
+  yet.
+- **Recording captures what arrived**, concealment included. Capturing pristine
+  local originals and exchanging them after a take is not implemented.
+- **Both people must run the same version.** The wire protocol is
+  version-checked, and it changed in 0.4.1.
 
 ## Building
 
@@ -125,10 +137,11 @@ wrong.
   simulations for independent capture and playback clocks.
 - **Offscreen rendering** of every screen, including minimum window width.
 
-Design notes for the two hardest paths are in
-[docs/receive-path.md](docs/receive-path.md) and
-[docs/send-path.md](docs/send-path.md). Both record the rules each was written
-to keep, and the defects that established them.
+Design notes for the hardest paths are in
+[docs/receive-path.md](docs/receive-path.md),
+[docs/send-path.md](docs/send-path.md), and
+[docs/session-conductor.md](docs/session-conductor.md). Each records the rules
+it was written to keep, and the defects that established them.
 
 ## Contributing
 
