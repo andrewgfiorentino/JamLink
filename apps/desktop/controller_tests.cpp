@@ -647,6 +647,32 @@ int main(int argc, char* argv[]) {
                         "settings opened from home still returns home") && passed;
     }
 
+    // A dropped connection must not empty the room of someone who is about to
+    // come back. The transport reports a deliberate departure and five seconds
+    // of silence identically, so forgetting them on either was forgetting them
+    // on a blip.
+    {
+        qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host"));
+        jamlink::desktop::AppController dropped(
+            directory / "reconnect-identity.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        const QVariantMap friendCard = dropped.roomParticipants().at(1).toMap();
+        // The fixture peer is known but not connected, which is exactly the
+        // state a drop leaves behind.
+        passed = expect(!dropped.peerConnected(), "the fixture peer is not connected")
+            && passed;
+        passed = expect(
+            friendCard.value(QStringLiteral("displayName")).toString()
+                != QStringLiteral("Friend"),
+            "a known friend keeps their name while the connection is down")
+            && passed;
+        passed = expect(
+            friendCard.value(QStringLiteral("stateLabel")).toString()
+                == QStringLiteral("AWAY"),
+            "a known friend reads as away rather than as never having arrived")
+            && passed;
+        qunsetenv("JAMLINK_VISUAL_PRIVATE_ROOM");
+    }
+
     // The session conductor, as the interface actually sees it. The point of
     // the layer is that one property answers what a dozen states used to.
     {

@@ -556,6 +556,9 @@ private:
     // A peer that was here and is gone is recoverable; one that never arrived
     // is not the same situation and must not read as one.
     bool peerHasConnected_{false};
+    // Their identity outlives a drop, so a blip does not empty the room of
+    // someone who is about to come back.
+    bool peerReconnecting_{false};
     bool buildIncompatible_{false};
     std::uint64_t conductorDropoutBaseline_{0U};
     void refreshSessionGuidance();

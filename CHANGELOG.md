@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A dropped connection no longer empties the room of someone who is about to come back. The transport reports a deliberate departure and five seconds of silence identically, so forgetting the other musician on one meant forgetting them on a two-second blip: their name reverted to "Friend", their avatar to the default, their instrument to "Instrument". Their identity is now kept, the room reads them as away rather than as never having arrived, and returning is announced as being back rather than as joining again.
+
 ## 0.4.1-test — 2026-08-17
 
 - The room now shows one coherent answer about what is happening, rather than leaving the interface to reason across audio, network, transport and recording states itself. A session conductor gathers what each subsystem already knows and decides what it adds up to; the rule it enforces is that anything claiming a musician can play is gated on evidence that audio is actually moving, never on a socket existing. An authenticated peer proves two programs agree with each other, not that two people can hear each other.

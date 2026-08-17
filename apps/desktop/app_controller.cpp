@@ -649,17 +649,22 @@ QVariantList AppController::roomParticipants() const {
         ? QStringLiteral("room:waiting-friend")
         : QString::fromStdString(remoteParticipant_.profileId);
     remote.insert(QStringLiteral("participantId"), remoteId);
-    remote.insert(QStringLiteral("displayName"), peerConnected()
-        ? remoteDisplayName() : QStringLiteral("Friend"));
+    // Their name survives a drop. Falling back to "Friend" the moment the
+    // connection blinks discards an identity JamLink still holds, and reads as
+    // though the room lost the person rather than the packets.
+    const bool remoteKnown = !remoteParticipant_.profileId.empty();
+    remote.insert(QStringLiteral("displayName"),
+        remoteKnown ? remoteDisplayName() : QStringLiteral("Friend"));
     remote.insert(QStringLiteral("avatarId"), remoteAvatarId().isEmpty()
         ? QStringLiteral("avatar:listener") : remoteAvatarId());
     remote.insert(QStringLiteral("customAvatarSource"), QUrl());
-    remote.insert(QStringLiteral("instrument"), peerConnected()
-        ? remotePrimaryInstrument() : QStringLiteral("Instrument"));
+    remote.insert(QStringLiteral("instrument"),
+        remoteKnown ? remotePrimaryInstrument() : QStringLiteral("Instrument"));
     remote.insert(QStringLiteral("local"), false);
     remote.insert(QStringLiteral("present"), peerConnected());
     remote.insert(QStringLiteral("stateLabel"), peerConnected()
-        ? QStringLiteral("HERE") : QStringLiteral("WAITING"));
+        ? QStringLiteral("HERE")
+        : (remoteKnown ? QStringLiteral("AWAY") : QStringLiteral("WAITING")));
     remote.insert(QStringLiteral("accent"), QStringLiteral("#a667e8"));
     remote.insert(QStringLiteral("surface"), QStringLiteral("#15131b"));
     remote.insert(QStringLiteral("instrumentLevel"), remoteInstrumentLevel());
@@ -2255,6 +2260,7 @@ void AppController::hostSession() {
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
     peerHasConnected_ = false;
+    peerReconnecting_ = false;
     buildIncompatible_ = false;
     conductor_.reset();
     restartAudio();
@@ -2368,6 +2374,7 @@ void AppController::joinDirectSession(const QString& inviteCode) {
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
     peerHasConnected_ = false;
+    peerReconnecting_ = false;
     buildIncompatible_ = false;
     conductor_.reset();
     restartAudio();
@@ -2405,6 +2412,7 @@ void AppController::leaveSession() {
     instrumentSendMuted_ = false;
     voiceSendMuted_ = false;
     peerHasConnected_ = false;
+    peerReconnecting_ = false;
     buildIncompatible_ = false;
     conductor_.reset();
     if (audioService_ && devicesAvailable_) {
@@ -2588,26 +2596,41 @@ void AppController::processRoomControlEvents() {
             ? QStringLiteral("Friend")
             : QString::fromStdString(event.participant.displayName);
         switch (event.type) {
-        case jamlink::network::RoomControlEventType::PeerJoined:
+        case jamlink::network::RoomControlEventType::PeerJoined: {
+            // Someone returning after a drop is not a new arrival, and saying
+            // so twice in the chat reads as though the room lost them.
+            const bool returning = peerReconnecting_
+                && remoteParticipant_.profileId == event.participant.profileId;
             remoteParticipant_ = event.participant;
             rememberParticipant(event.participant);
+            peerReconnecting_ = false;
             appendChatEntry(
-                QString(), QString(), displayName + QStringLiteral(" joined"),
+                QString(), QString(),
+                displayName + (returning ? QStringLiteral(" is back")
+                                         : QStringLiteral(" joined")),
                 event.timestampMilliseconds, false, true);
             roomUpdated = true;
             chatUpdated = true;
             break;
+        }
         case jamlink::network::RoomControlEventType::PeerLeft:
-            std::erase_if(remoteParticipants_, [&event](const auto& participant) {
-                return participant.profileId == event.participant.profileId;
-            });
-            if (remoteParticipant_.profileId == event.participant.profileId) {
-                remoteParticipant_ = remoteParticipants_.empty()
-                    ? jamlink::network::PeerParticipantInfo{}
-                    : remoteParticipants_.front();
-            }
+            // Their identity is deliberately kept.
+            //
+            // The transport raises this after five seconds of silence, and that
+            // is the only way it is ever raised: a deliberate departure and a
+            // dropped Wi-Fi connection are indistinguishable at this point.
+            // Forgetting them meant a two-second blip visibly emptied the room
+            // -- their name reverted to "Friend", their avatar to the default,
+            // their instrument to "Instrument" -- for someone who never went
+            // anywhere and was about to come back.
+            //
+            // Presence is reported separately, from peerConnected(), so the
+            // room already shows them as away without having to forget who they
+            // are. Identity is cleared when the musician actually leaves.
+            peerReconnecting_ = true;
             appendChatEntry(
-                QString(), QString(), displayName + QStringLiteral(" left"),
+                QString(), QString(),
+                displayName + QStringLiteral(" dropped out — reconnecting"),
                 event.timestampMilliseconds, false, true);
             roomUpdated = true;
             chatUpdated = true;
