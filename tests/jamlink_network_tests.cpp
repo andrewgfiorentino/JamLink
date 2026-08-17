@@ -262,6 +262,100 @@ JAMLINK_TEST(receiver_delivers_clean_stream_bit_exactly) {
     EXPECT_TRUE(telemetry.playing);
 }
 
+// A peer that restarts numbers its packets from zero again. Every slot in the
+// ring still holds a packet from before, and a slot may only be reclaimed once
+// the consumer has moved past it -- which it can never have done for the old
+// epoch, because the resync unprimes it. With a full ring that rejected every
+// new packet permanently: the stream would come back on the wire and never
+// come back in the room.
+JAMLINK_TEST(a_peer_that_restarts_its_numbering_recovers) {
+    AudioStreamReceiver receiver(defaultSettings());
+    const auto source = makeSource(packetFrames * 4U);
+    std::vector<float> out(packetFrames, 0.0F);
+    std::uint64_t arrival = 0U;
+
+    const auto feed = [&](std::uint32_t begin, std::uint32_t count) {
+        for (std::uint32_t index = 0U; index < count; ++index) {
+            receiver.submit(
+                begin + index,
+                std::span<const float>(source.data(), packetFrames),
+                arrival);
+            arrival += 5'000U;
+            // A short lead so the buffer primes before playout starts.
+            if (index >= 10U) {
+                static_cast<void>(receiver.pull(std::span<float>(out.data(), out.size())));
+            }
+        }
+    };
+
+    // Long enough that every one of the 128 slots holds an old packet.
+    feed(0U, 400U);
+    EXPECT_TRUE(receiver.telemetry().playing);
+    const std::uint64_t acceptedBefore = receiver.telemetry().packetsAccepted;
+
+    feed(0U, 200U);
+
+    const auto telemetry = receiver.telemetry();
+    EXPECT_TRUE(telemetry.resyncs >= 1U);
+    // Nearly all of the restarted stream must be taken, not discarded against
+    // slots the old stream left behind.
+    EXPECT_TRUE(telemetry.packetsAccepted > acceptedBefore + 150U);
+    EXPECT_TRUE(telemetry.playing);
+
+    // And what comes out is audio, not the silence of a stream that never
+    // recovered.
+    double loudest = 0.0;
+    for (const float sample : out) {
+        loudest = std::max(loudest, std::abs(static_cast<double>(sample)));
+    }
+    EXPECT_TRUE(loudest > 0.01);
+}
+
+// The audio device can stall -- a driver hiccup, a device change, the machine
+// swapping -- while packets keep arriving. Whatever piles up is old by the time
+// playout resumes, and carrying it would leave the two players permanently
+// further apart than they were before. It has to drain back to the target.
+JAMLINK_TEST(a_consumer_that_stalls_and_resumes_drains_back_to_its_target) {
+    AudioStreamReceiver receiver(defaultSettings());
+    const auto source = makeSource(packetFrames * 4U);
+    std::vector<float> out(packetFrames, 0.0F);
+    std::uint64_t arrival = 0U;
+    std::uint32_t sequence = 0U;
+
+    const auto submitOne = [&]() {
+        receiver.submit(
+            sequence, std::span<const float>(source.data(), packetFrames), arrival);
+        ++sequence;
+        arrival += 5'000U;
+    };
+
+    for (std::uint32_t index = 0U; index < 60U; ++index) {
+        submitOne();
+        if (index >= 10U) {
+            static_cast<void>(receiver.pull(std::span<float>(out.data(), out.size())));
+        }
+    }
+    EXPECT_TRUE(receiver.telemetry().playing);
+
+    // The consumer stops entirely while the peer keeps sending.
+    for (std::uint32_t index = 0U; index < 200U; ++index) {
+        submitOne();
+    }
+
+    // Playout resumes. It must come back to the target within a bounded number
+    // of callbacks rather than playing a backlog it will never work off.
+    const auto target = receiver.telemetry().targetDepthFrames;
+    bool recovered = false;
+    for (std::uint32_t index = 0U; index < 600U && !recovered; ++index) {
+        submitOne();
+        static_cast<void>(receiver.pull(std::span<float>(out.data(), out.size())));
+        const auto depth = receiver.telemetry().currentDepthFrames;
+        recovered = depth <= target + packetFrames * 4U;
+    }
+    EXPECT_TRUE(recovered);
+    EXPECT_TRUE(receiver.telemetry().playing);
+}
+
 JAMLINK_TEST(concealment_beats_zero_fill_on_isolated_loss) {
     const auto source = makeSource(packetFrames * 40U);
     const std::vector<std::size_t> lost{20U};

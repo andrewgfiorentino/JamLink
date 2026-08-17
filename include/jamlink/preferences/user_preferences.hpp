@@ -57,7 +57,10 @@ struct UserPreferences final {
     AudioSelection voice;
     AudioSelection output;
     std::uint32_t sampleRate{48'000U};
-    std::uint32_t bufferFrames{128U};
+    // Zero selects the automatic buffer size. A musician who does not know
+    // what a buffer is should not have to guess, and guessing high is what
+    // makes playing together feel late.
+    std::uint32_t bufferFrames{0U};
     float instrumentMonitorGain{0.72F};
     float voiceMonitorGain{0.55F};
     bool instrumentMonitorEnabled{false};

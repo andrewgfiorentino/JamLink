@@ -446,6 +446,12 @@ private:
     void scheduleAudioRestart();
     void restartAudio();
     void reportAudioDeviceDropouts();
+    void installBufferSizeOptions(std::vector<std::uint32_t> deviceValues);
+    // The frame count actually in use, resolving the automatic setting to the
+    // size it has settled on.
+    [[nodiscard]] std::uint32_t effectiveBufferFrames() const noexcept;
+    [[nodiscard]] bool automaticBufferSize() const noexcept;
+    void considerAutomaticBufferStep(std::uint64_t dropoutsSinceLastReport);
     void pollAudioTelemetry();
     [[nodiscard]] static QString audioStateText(
         jamlink::audio::SoundcheckAudioState state);
@@ -504,6 +510,11 @@ private:
     // Local audio drop-outs already reported, so the log records a rate rather
     // than repeating a running total at the telemetry poll rate.
     std::uint64_t reportedAudioDropouts_{0U};
+    // Where the automatic buffer size has settled. It only ever climbs within a
+    // session: stepping back down on a quiet stretch would oscillate, and the
+    // musician can always choose a size by hand.
+    std::uint32_t autoBufferFrames_{0U};
+    bool autoBufferRaised_{false};
     qint64 audioDropoutReportMilliseconds_{0};
     QTimer telemetryTimer_;
     QString currentPage_;

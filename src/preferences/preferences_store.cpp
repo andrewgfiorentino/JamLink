@@ -72,8 +72,10 @@ bool valid(const UserPreferences& preferences) noexcept {
     };
     const bool sampleRateValid = preferences.sampleRate >= 8'000U
         && preferences.sampleRate <= 384'000U;
-    const bool bufferValid = preferences.bufferFrames >= 1U
-        && preferences.bufferFrames <= 8'192U;
+    // Zero is the automatic buffer size: JamLink starts at the lowest the
+    // device offers and steps up only when that device actually reports
+    // dropping audio.
+    const bool bufferValid = preferences.bufferFrames <= 8'192U;
     const bool gainsValid = std::isfinite(preferences.instrumentMonitorGain)
         && std::isfinite(preferences.voiceMonitorGain)
         && preferences.instrumentMonitorGain >= 0.0F

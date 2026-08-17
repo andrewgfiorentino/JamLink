@@ -592,6 +592,56 @@ void remoteStreamsAreIndependentlyControllable() {
     guest->stop();
 }
 
+// A muted stream emits no audio packets, so the per-packet clip flag's carrier
+// is gone exactly when the state most needs reporting. Without this the
+// receiver can only say nothing is arriving, which reads as a broken link and
+// sends both musicians hunting a connection fault that does not exist.
+void reportsADeliberateMuteAsAMuteRatherThanSilence() {
+    using jamlink::network::AudioStreamId;
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "mute reporting harness setup");
+        return;
+    }
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty() || !guest->join(invite) || !waitForConnected(*host, *guest)) {
+        check(false, "mute reporting harness handshake");
+        return;
+    }
+    // The state rides the control packet, which is sent twice a second.
+    const auto settle = [&host, &guest]() {
+        static_cast<void>(pump(
+            *host, *guest, std::chrono::milliseconds(1'400),
+            std::chrono::milliseconds(200)));
+    };
+
+    guest->setLocalStreamMuted(AudioStreamId::Instrument, true);
+    settle();
+    auto hostView = host->telemetry();
+    check(hostView.streams[0].mutedByPeer && !hostView.streams[1].mutedByPeer,
+          "a muted instrument is reported as muted while voice is not");
+
+    guest->setLocalStreamMuted(AudioStreamId::Instrument, false);
+    guest->setSendMuted(true);
+    settle();
+    hostView = host->telemetry();
+    check(hostView.streams[0].mutedByPeer && hostView.streams[1].mutedByPeer,
+          "a room-wide mute is reported on both streams");
+
+    guest->setSendMuted(false);
+    settle();
+    hostView = host->telemetry();
+    check(!hostView.streams[0].mutedByPeer && !hostView.streams[1].mutedByPeer,
+          "unmuting clears the reported mute");
+    // The control packet grew by a byte, and the reply still carries only the
+    // timestamp, so the round trip must be unaffected.
+    check(hostView.roundTripMeasured, "the round trip survives the larger control packet");
+
+    host->stop();
+    guest->stop();
+}
+
 void carriesAuthenticatedSourceClipStatusIndependently() {
     using jamlink::network::AudioStreamId;
     auto host = jamlink::network::createPlatformPeerAudioTransport();
@@ -810,6 +860,7 @@ int main() {
     survivesHostileDatagrams();
     remoteStreamsAreIndependentlyControllable();
     carriesAuthenticatedSourceClipStatusIndependently();
+    reportsADeliberateMuteAsAMuteRatherThanSilence();
     reconnectsAfterGuestRestart();
     negotiatesExactBuildAndExchangesReliableChat();
     rejectsIncompatibleApplicationBuild();

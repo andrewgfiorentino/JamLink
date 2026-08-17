@@ -136,7 +136,7 @@ AppController::AppController(
 
     if (visualFixture_) {
         sampleRateValues_ = {44'100U, 48'000U, 96'000U};
-        bufferSizeValues_ = {64U, 128U, 256U};
+        installBufferSizeOptions({64U, 128U, 256U});
         instrumentOptions_ = {
             {QStringLiteral("fixture:interface"),
              QStringLiteral("Focusrite Scarlett 2i2 — Input 1"),
@@ -635,6 +635,8 @@ QVariantList AppController::roomParticipants() const {
     // A send mute needs a transport to act on, so the switch is only offered
     // once there is one rather than sitting there doing nothing.
     local.insert(QStringLiteral("canMute"), peerTransport_ != nullptr);
+    local.insert(QStringLiteral("instrumentMutedByPeer"), false);
+    local.insert(QStringLiteral("voiceMutedByPeer"), false);
     participants.push_back(local);
 
     QVariantMap remote;
@@ -663,6 +665,13 @@ QVariantList AppController::roomParticipants() const {
     remote.insert(QStringLiteral("voiceMuted"), remoteVoiceMuted_);
     remote.insert(QStringLiteral("controlsEnabled"), peerConnected());
     remote.insert(QStringLiteral("canMute"), peerConnected());
+    // Kept separate from instrumentMuted, which is this machine's own choice to
+    // silence them. Folding the two together would leave a switch that says
+    // "off" and cannot turn the audio back on.
+    remote.insert(QStringLiteral("instrumentMutedByPeer"),
+        peerConnected() && peerTelemetry_.streams[instrumentStream].mutedByPeer);
+    remote.insert(QStringLiteral("voiceMutedByPeer"),
+        peerConnected() && peerTelemetry_.streams[voiceStream].mutedByPeer);
     participants.push_back(remote);
 
     if (!visualRoomFixture_ && remoteParticipants_.size() > 1U) {
@@ -694,6 +703,8 @@ QVariantList AppController::roomParticipants() const {
             additional.insert(QStringLiteral("voiceMuted"), false);
             additional.insert(QStringLiteral("controlsEnabled"), false);
             additional.insert(QStringLiteral("canMute"), false);
+            additional.insert(QStringLiteral("instrumentMutedByPeer"), false);
+            additional.insert(QStringLiteral("voiceMutedByPeer"), false);
             participants.push_back(additional);
         }
     }
@@ -737,6 +748,8 @@ QVariantList AppController::roomParticipants() const {
             // session exists.
             fixture.insert(QStringLiteral("controlsEnabled"), false);
             fixture.insert(QStringLiteral("canMute"), false);
+            fixture.insert(QStringLiteral("instrumentMutedByPeer"), false);
+            fixture.insert(QStringLiteral("voiceMutedByPeer"), false);
             participants.push_back(fixture);
         }
     }
@@ -1113,6 +1126,10 @@ QStringList AppController::bufferSizes() const {
     QStringList result;
     result.reserve(static_cast<qsizetype>(bufferSizeValues_.size()));
     for (const auto value : bufferSizeValues_) {
+        if (value == 0U) {
+            result.push_back(QStringLiteral("Auto · lowest that stays clean"));
+            continue;
+        }
         const double milliseconds = bufferLatencyMilliseconds(value);
         QString verdict;
         // Thresholds chosen from what playing together actually tolerates:
@@ -1139,7 +1156,20 @@ QString AppController::bufferSizeExplanation() const {
     if (!validIndex(bufferSizeIndex_, bufferSizeValues_.size())) {
         return QStringLiteral("Choose a buffer size to see the delay it causes.");
     }
-    const std::uint32_t frames = bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)];
+    if (automaticBufferSize()) {
+        // The figure has to be the size actually in use, not the setting's
+        // name, or the one number a player needs is the one number missing.
+        return QStringLiteral(
+            "Currently %1 frames, about %2 ms between playing a note and hearing "
+            "it back. JamLink opens your device at the smallest size it offers "
+            "and moves up only when the device reports that it dropped audio. %3")
+            .arg(effectiveBufferFrames())
+            .arg(bufferLatencyMilliseconds(effectiveBufferFrames()), 0, 'f', 1)
+            .arg(autoBufferRaised_
+                ? QStringLiteral("It has had to move up during this session.")
+                : QStringLiteral("It has not had to move up so far."));
+    }
+    const std::uint32_t frames = effectiveBufferFrames();
     const double milliseconds = bufferLatencyMilliseconds(frames);
     const QString delay = QStringLiteral(
         "About %1 ms between playing a note and hearing it back through JamLink.")
@@ -1716,6 +1746,17 @@ QString AppController::connectionQuality() const {
     // those numbers alone a silent link scores better than a working one, so
     // the absence of arrivals has to be stated outright.
     if (qualityWindow_.stalled) {
+        // A muted stream sends nothing, which is indistinguishable from a
+        // broken one unless the sender says so. It does, on the periodic
+        // control packet, so this no longer reports a deliberate choice as a
+        // fault and sends both of them looking for a connection problem.
+        const auto& stalledVoice = peerTelemetry_.streams[voiceStream];
+        if (instrument.mutedByPeer && stalledVoice.mutedByPeer) {
+            return QStringLiteral("Your friend is muted · still connected");
+        }
+        if (instrument.mutedByPeer) {
+            return QStringLiteral("Your friend muted their guitar · still connected");
+        }
         return QStringLiteral("No audio from your friend · still connected");
     }
 
@@ -2651,17 +2692,7 @@ void AppController::updateOutputCapabilities() {
     }
     const auto& option = outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption;
     sampleRateValues_ = {option.mixSampleRate == 0U ? 48'000U : option.mixSampleRate};
-    bufferSizeValues_ = option.bufferFrameOptions;
-    std::sort(bufferSizeValues_.begin(), bufferSizeValues_.end());
-    bufferSizeValues_.erase(
-        std::remove(bufferSizeValues_.begin(), bufferSizeValues_.end(), 0U),
-        bufferSizeValues_.end());
-    bufferSizeValues_.erase(
-        std::unique(bufferSizeValues_.begin(), bufferSizeValues_.end()),
-        bufferSizeValues_.end());
-    if (bufferSizeValues_.empty()) {
-        bufferSizeValues_ = {480U};
-    }
+    installBufferSizeOptions(option.bufferFrameOptions);
     sampleRateIndex_ = 0;
     bufferSizeIndex_ = std::clamp(
         bufferSizeIndex_, 0, static_cast<int>(bufferSizeValues_.size() - 1U));
@@ -2856,7 +2887,7 @@ void AppController::restartAudio() {
         instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].serviceOption,
         voiceOptions_[static_cast<std::size_t>(voiceIndex_)].serviceOption,
         outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption,
-        bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)],
+        effectiveBufferFrames(),
         preferences_.instrumentMonitorGain,
         preferences_.voiceMonitorGain,
         preferences_.instrumentMonitorEnabled,
@@ -2881,7 +2912,9 @@ void AppController::restartAudio() {
             + backendName(configuration.voice.backend) + ", output "
             + backendName(configuration.output.backend)
             + "; requested buffer "
-            + std::to_string(bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)])
+            + (automaticBufferSize()
+                ? "automatic (" + std::to_string(effectiveBufferFrames()) + ")"
+                : std::to_string(effectiveBufferFrames()))
             + ", running buffer " + std::to_string(audioTelemetry_.outputBufferFrames)
             + " at " + std::to_string(rate)
             + " Hz, about " + std::to_string(static_cast<int>(monitorMilliseconds + 0.5))
@@ -2901,6 +2934,74 @@ void AppController::restartAudio() {
         setupMessage_ = audioStateText(audioTelemetry_.state);
     }
     emit setupChanged();
+}
+
+// Zero heads the list and means automatic. It is a real setting rather than a
+// label: the device is opened at the smallest size it offers, and only a device
+// that actually reports dropping audio moves it up.
+void AppController::installBufferSizeOptions(std::vector<std::uint32_t> deviceValues) {
+    std::sort(deviceValues.begin(), deviceValues.end());
+    deviceValues.erase(
+        std::remove(deviceValues.begin(), deviceValues.end(), 0U), deviceValues.end());
+    deviceValues.erase(
+        std::unique(deviceValues.begin(), deviceValues.end()), deviceValues.end());
+    if (deviceValues.empty()) {
+        deviceValues = {480U};
+    }
+    autoBufferFrames_ = deviceValues.front();
+    autoBufferRaised_ = false;
+    bufferSizeValues_.clear();
+    bufferSizeValues_.reserve(deviceValues.size() + 1U);
+    bufferSizeValues_.push_back(0U);
+    bufferSizeValues_.insert(
+        bufferSizeValues_.end(), deviceValues.begin(), deviceValues.end());
+    bufferSizeIndex_ = std::clamp(
+        bufferSizeIndex_, 0, static_cast<int>(bufferSizeValues_.size() - 1U));
+}
+
+bool AppController::automaticBufferSize() const noexcept {
+    return validIndex(bufferSizeIndex_, bufferSizeValues_.size())
+        && bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)] == 0U;
+}
+
+std::uint32_t AppController::effectiveBufferFrames() const noexcept {
+    if (!validIndex(bufferSizeIndex_, bufferSizeValues_.size())) {
+        return autoBufferFrames_;
+    }
+    const std::uint32_t selected =
+        bufferSizeValues_[static_cast<std::size_t>(bufferSizeIndex_)];
+    return selected == 0U ? autoBufferFrames_ : selected;
+}
+
+// Automatic means "the smallest size this machine can actually hold", and the
+// only honest evidence for that is the device reporting that it could not.
+// Stepping up is therefore driven by measured dropouts rather than by guessing
+// from the hardware, and it never steps back down within a session: a quiet
+// stretch is not proof the smaller size would have held, and oscillating
+// between two sizes would restart the audio device each time.
+void AppController::considerAutomaticBufferStep(std::uint64_t dropoutsSinceLastReport) {
+    if (!automaticBufferSize() || dropoutsSinceLastReport == 0U) {
+        return;
+    }
+    const auto next = std::find_if(
+        bufferSizeValues_.begin(), bufferSizeValues_.end(),
+        [this](std::uint32_t value) { return value > autoBufferFrames_; });
+    if (next == bufferSizeValues_.end()) {
+        JAMLINK_LOG("audio", "automatic buffer size is already at the largest this "
+            "device offers (" + std::to_string(autoBufferFrames_)
+            + " frames) and audio is still being dropped");
+        return;
+    }
+    JAMLINK_LOG("audio", "automatic buffer size raised from "
+        + std::to_string(autoBufferFrames_) + " to " + std::to_string(*next)
+        + " frames after the device dropped audio");
+    autoBufferFrames_ = *next;
+    autoBufferRaised_ = true;
+    setupMessage_ = QStringLiteral(
+        "Audio was dropping, so the buffer moved up to %1. You will hear a "
+        "short gap.").arg(autoBufferFrames_);
+    emit setupChanged();
+    scheduleAudioRestart();
 }
 
 void AppController::reportAudioDeviceDropouts() {
@@ -2933,6 +3034,7 @@ void AppController::reportAudioDeviceDropouts() {
         + "; running buffer " + std::to_string(audioTelemetry_.outputBufferFrames)
         + " frames. The buffer is too small for this machine, or another"
         + " program is competing for the device.");
+    considerAutomaticBufferStep(since);
 }
 
 void AppController::pollAudioTelemetry() {

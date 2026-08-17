@@ -100,3 +100,69 @@ Three rules for anything that reports connection health:
 
 Round trip and buffer depth are measured; one-way delay is derived from the
 round trip and is labelled as an estimate wherever it is shown.
+
+## Adjudicated findings
+
+Three concerns were raised against this file in review and carried unresolved
+across several releases. Each is settled here, with a regression test where the
+behaviour is worth locking down. Two of the three turned out not to be defects;
+recording why is the point, so they are not re-raised from the same reading of
+the code.
+
+### Stale slots after a resync — not a defect
+
+The concern: a peer that restarts numbers its packets from zero again, every
+slot in the ring still holds a packet from the previous epoch, and a slot may
+only be reclaimed once the consumer has moved past it — which it can never have
+done for the old epoch, because the resync unprimes it. With a full ring that
+would reject every new packet permanently, and the stream would come back on the
+wire without ever coming back in the room.
+
+It does not happen, because a slot is released the moment it is played
+(`takeRealPacket` stores a zero stamp after copying). The ring therefore holds
+only the live buffer depth, a handful of packets, not its full 128. After a
+resync at most that handful is stale, those few collide and are dropped, and
+priming succeeds from the empty remainder.
+
+`a_peer_that_restarts_its_numbering_recovers` holds this: it runs long enough to
+fill the ring, restarts the numbering, and requires nearly all of the restarted
+stream to be accepted and audible.
+
+One residual inaccuracy is left deliberately: those few collisions are counted
+as `packetsDropped`, which reads as network loss. It is a handful of packets
+once per restart, and separating them would cost a per-slot epoch tag on the
+realtime path for no audible benefit.
+
+### Frozen telemetry — not a defect, but the name is load-bearing
+
+`telemetry().playing` reports `primed_`. It means "playout has started", not
+"audio is arriving", and a stream that stops keeps reporting `playing` with a
+frozen depth, because a stretch does not advance playout.
+
+That is correct for what the field is, and the receiver cannot answer the other
+question honestly on its own: depth cannot distinguish "waiting for the buffer
+to grow" from "this stream has gone away". Only arrivals can, which is what
+`stalledPackets_` tracks internally and what the desktop's trailing-window stall
+detection reports to the musician. The room says "No audio from your friend"
+from that, not from this flag.
+
+Anything reading `playing` as "audio is flowing" is misreading it.
+
+### Drain after a stalled consumer — not a defect
+
+The concern: if the audio device stalls while packets keep arriving, the backlog
+grows to the ring's capacity, and resuming would play half a second of stale
+audio and carry that delay for the rest of the session.
+
+The trim path handles it. Depth above target plus slack drops one packet per
+callback, each one cross-faded, so playout walks back to the target instead of
+carrying the backlog.
+`a_consumer_that_stalls_and_resumes_drains_back_to_its_target` stops the consumer
+entirely for two hundred packets and requires the depth to return near target
+within a bounded number of callbacks.
+
+### The fourth finding
+
+A fourth item was recorded alongside these three, and its content was not
+preserved anywhere in the repository. It is not adjudicated here, and claiming
+otherwise would be worse than leaving this note.

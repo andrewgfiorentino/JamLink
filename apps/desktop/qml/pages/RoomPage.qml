@@ -280,6 +280,8 @@ Item {
                                         + " to my friend"
                                     : "Hear " + participantCard.modelData.displayName
                                         + "'s " + participantCard.modelData.instrument
+                                note: participantCard.modelData.instrumentMutedByPeer
+                                    ? "muted by them" : ""
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "instrument", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -302,6 +304,8 @@ Item {
                                     ? "Send my microphone to my friend"
                                     : "Hear " + participantCard.modelData.displayName
                                         + "'s microphone"
+                                note: participantCard.modelData.voiceMutedByPeer
+                                    ? "muted by them" : ""
                                 onGainMoved: value => root.controller.setRoomParticipantStreamGain(
                                     participantCard.modelData.participantId, "voice", value)
                                 onMuteToggled: muted => root.controller.setRoomParticipantStreamMuted(
@@ -958,6 +962,9 @@ Item {
         property bool meterFollowsMute: true
         property string accessibleLabel: title
         property string muteLabel: accessibleLabel
+        // State the panel reports but cannot change, such as the friend having
+        // muted themselves.
+        property string note: ""
         signal gainMoved(real value)
         signal muteToggled(bool muted)
         height: 88
@@ -982,13 +989,22 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 20
+                    width: parent.width - 20 - (stream.note === "" ? 0 : noteLabel.width + 6)
                     text: stream.title
                     color: stream.muted ? Theme.textMuted : Theme.text
                     elide: Text.ElideRight
                     font.family: Theme.fontFamily
                     font.pixelSize: 10
                     font.weight: Font.Medium
+                }
+                Text {
+                    id: noteLabel
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: stream.note !== ""
+                    text: stream.note
+                    color: Theme.textMuted
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 9
                 }
             }
             LevelBar {

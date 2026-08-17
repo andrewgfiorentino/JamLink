@@ -1285,6 +1285,8 @@ public:
             stream.peak = remotePeak_[index].load();
             stream.sourceClipped =
                 remoteSourceClipped_[index].load(std::memory_order_acquire) != 0U;
+            stream.mutedByPeer =
+                remoteStreamMutedByPeer_[index].load(std::memory_order_acquire) != 0U;
             stream.packetsAccepted = receiver.packetsAccepted;
         stream.packetsConcealed = receiver.packetsConcealed;
             stream.packetsLate = receiver.packetsLate;
@@ -1456,6 +1458,9 @@ private:
         roundTripMeasured_.store(false, std::memory_order_relaxed);
         for (auto& peak : remotePeak_) {
             peak.store(0.0F);
+        }
+        for (auto& muted : remoteStreamMutedByPeer_) {
+            muted.store(0U, std::memory_order_release);
         }
         for (auto& clipped : remoteSourceClipped_) {
             clipped.store(0U, std::memory_order_relaxed);
@@ -1701,7 +1706,11 @@ private:
             std::array<std::uint8_t, networkPacketFrames * 2U> networkPcm{};
             std::array<std::uint8_t, maximumDatagramBytes> receivedPacket{};
             std::array<std::uint8_t, maximumPlaintextBytes> decrypted{};
-            std::array<std::uint8_t, 8U> controlPayload{};
+            // Eight bytes of timestamp for the round trip, then one byte of
+            // per-stream mute state. Mute has to travel here rather than on the
+            // audio packets that carry the clip flag, because a muted stream
+            // sends no audio packets at all.
+            std::array<std::uint8_t, 9U> controlPayload{};
             ULONGLONG lastHello = 0U;
             ULONGLONG lastPing = 0U;
             ULONGLONG lastReceive = GetTickCount64();
@@ -1784,6 +1793,14 @@ private:
                 if (connected && now - lastPing >= 500U) {
                     const std::uint64_t stamp = nowMicroseconds();
                     std::memcpy(controlPayload.data(), &stamp, sizeof(stamp));
+                    std::uint8_t muteMask = 0U;
+                    for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+                        if (sendMuted_.load(std::memory_order_acquire) != 0U
+                            || localStreamMuted_[index].load(std::memory_order_acquire) != 0U) {
+                            muteMask |= static_cast<std::uint8_t>(1U << index);
+                        }
+                    }
+                    controlPayload[sizeof(stamp)] = muteMask;
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Ping, 0U, 0U, controlPayload));
                     lastPing = now;
@@ -2062,10 +2079,22 @@ private:
                 "This room requires the exact same JamLink build"});
             return true;
         }
-        if (type == PacketType::Ping && payloadBytes == sizeof(std::uint64_t)) {
+        if (type == PacketType::Ping
+            && (payloadBytes == sizeof(std::uint64_t)
+                || payloadBytes == sizeof(std::uint64_t) + 1U)) {
+            if (payloadBytes == sizeof(std::uint64_t) + 1U) {
+                const std::uint8_t muteMask = plaintext[sizeof(std::uint64_t)];
+                for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+                    remoteStreamMutedByPeer_[index].store(
+                        (muteMask & (1U << index)) != 0U ? 1U : 0U,
+                        std::memory_order_release);
+                }
+            }
+            // The Pong carries the timestamp only, so the round-trip
+            // measurement is unaffected by anything added here.
             static_cast<void>(sendPacket(
                 sendCipher, PacketType::Pong, 0U, 0U,
-                std::span<const std::uint8_t>(plaintext.data(), payloadBytes)));
+                std::span<const std::uint8_t>(plaintext.data(), sizeof(std::uint64_t))));
             return true;
         }
         if (type == PacketType::Pong && payloadBytes == sizeof(std::uint64_t)) {
@@ -2157,6 +2186,8 @@ private:
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localStreamMuted_{};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSourceClipped_{};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteSourceClipped_{};
+    // What the friend says they are deliberately not sending.
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteStreamMutedByPeer_{};
     // Each capture device has its own rate: an ASIO interface for the guitar
     // and a USB microphone for the voice need not agree, and forcing one rate
     // on both would resample whichever was wrong.
