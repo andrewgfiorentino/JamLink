@@ -99,6 +99,7 @@ include(JamLinkWarnings)
 add_library(jamlink_core STATIC
     src/audio/audio_route_graph.cpp
     src/audio/instrument_tuner.cpp
+    src/audio/opus_stream_codec.cpp
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
@@ -118,7 +119,36 @@ target_include_directories(jamlink_core
     PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
 )
+# Opus is linked into the core rather than the platform layer: the codec is
+# portable, and keeping it here lets the impairment tests exercise the real
+# encoder rather than a stand-in.
+target_link_libraries(jamlink_core PRIVATE opus)
 jamlink_set_warnings(jamlink_core)
+
+# Opus carries the audio on the wire. Built here rather than found on the
+# system so the corresponding-source archive, which is git archive HEAD, holds
+# everything that is statically linked into the executable.
+# Opus 1.4 declares a minimum older than current CMake will accept. Raising the
+# floor here keeps the vendored tree byte-identical to upstream, which is worth
+# more than avoiding one variable.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+# Opus builds its own test executables whenever BUILD_TESTING is set, which
+# CTest sets for JamLink's tests. Shadow it across the subdirectory only.
+set(_jamlink_build_testing_was ${BUILD_TESTING})
+set(BUILD_TESTING OFF)
+add_subdirectory(third_party/opus EXCLUDE_FROM_ALL)
+set(BUILD_TESTING ${_jamlink_build_testing_was})
+# Upstream code is not held to JamLink's warning settings.
+if(MSVC)
+    target_compile_options(opus PRIVATE /W0)
+else()
+    target_compile_options(opus PRIVATE -w)
+endif()
 
 if(WIN32)
     add_library(jamlink_asio_sdk STATIC
