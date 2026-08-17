@@ -1847,6 +1847,39 @@ bool AppController::hasPreferredWindowPosition() const noexcept {
 
 void AppController::navigate(const QString& page) { setCurrentPage(page); }
 
+void AppController::openSettings() {
+    if (currentPage_ != QStringLiteral("settings")) {
+        settingsReturnPage_ = currentPage_;
+    }
+    setCurrentPage(QStringLiteral("settings"));
+}
+
+void AppController::closeSettings() {
+    // Returning to a room that has since ended would show an empty one.
+    setCurrentPage(
+        settingsReturnPage_ == QStringLiteral("room") && roomActive()
+            ? QStringLiteral("room") : QStringLiteral("home"));
+}
+
+// What changing a setting costs while two people are playing.
+//
+// The audio device can be swapped without ending the session: the transport is
+// untouched by a restart, and the backend dispatcher re-applies the peer
+// exchange, tuner state and monitor controls every time it starts, so even
+// moving from shared Windows audio to ASIO keeps the friend hearing you. It is
+// still a real interruption, and saying so is better than a musician wondering
+// whether they have just dropped the room.
+QString AppController::settingsSessionNotice() const {
+    if (!roomActive()) {
+        return {};
+    }
+    return QStringLiteral(
+        "You are in a room. Levels, monitoring and mute take effect as you "
+        "change them. Choosing a different input, output or buffer size "
+        "restarts the audio device, which is a short silence for both of you — "
+        "the session stays connected and no new invite is needed.");
+}
+
 void AppController::closeTuner() {
     setCurrentPage(tunerReturnPage_ == QStringLiteral("room")
         ? QStringLiteral("room") : QStringLiteral("home"));

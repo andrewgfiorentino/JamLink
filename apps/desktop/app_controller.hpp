@@ -145,6 +145,7 @@ class AppController final : public QObject {
     Q_PROPERTY(QString bufferSizeExplanation READ bufferSizeExplanation NOTIFY setupChanged)
     Q_PROPERTY(QString sampleRateExplanation READ sampleRateExplanation NOTIFY setupChanged)
     Q_PROPERTY(QString monitorPathSummary READ monitorPathSummary NOTIFY setupChanged)
+    Q_PROPERTY(QString settingsSessionNotice READ settingsSessionNotice NOTIFY roomChanged)
     Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
 
     Q_PROPERTY(bool firewallNeedsAttention READ firewallNeedsAttention NOTIFY firewallChanged)
@@ -324,6 +325,7 @@ public:
     [[nodiscard]] QString bufferSizeExplanation() const;
     [[nodiscard]] QString sampleRateExplanation() const;
     [[nodiscard]] QString monitorPathSummary() const;
+    [[nodiscard]] QString settingsSessionNotice() const;
     [[nodiscard]] bool asioActive() const noexcept;
 
     [[nodiscard]] bool firewallNeedsAttention() const noexcept;
@@ -356,6 +358,10 @@ public:
 
     Q_INVOKABLE void navigate(const QString& page);
     Q_INVOKABLE void closeTuner();
+    // Settings is reachable from inside a room, so it has to remember where it
+    // was opened from rather than always dropping the musician back to Home.
+    Q_INVOKABLE void openSettings();
+    Q_INVOKABLE void closeSettings();
     Q_INVOKABLE void saveSoundcheck();
     Q_INVOKABLE void testOutput();
     Q_INVOKABLE void retryAudio();
@@ -502,6 +508,7 @@ private:
     QTimer telemetryTimer_;
     QString currentPage_;
     QString tunerReturnPage_{QStringLiteral("home")};
+    QString settingsReturnPage_{QStringLiteral("home")};
     QString setupMessage_;
     QString saveMessage_;
     bool visualFixture_{false};

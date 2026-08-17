@@ -615,6 +615,37 @@ int main(int argc, char* argv[]) {
                         "tuning shows the guitar as muted to the room") && passed;
     }
 
+    // Settings has to be reachable from inside a room and return there. The
+    // audio device is the setting most likely to need changing once you can
+    // hear the result, and leaving the session was previously the only way to
+    // reach it.
+    {
+        jamlink::desktop::AppController inRoom(
+            directory / "settings-in-room.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        passed = expect(!inRoom.settingsSessionNotice().isEmpty()
+                            && inRoom.settingsSessionNotice().contains(
+                                QStringLiteral("stays connected")),
+                        "settings states that changing a device keeps the session")
+            && passed;
+        inRoom.openSettings();
+        passed = expect(inRoom.currentPage() == QStringLiteral("settings"),
+                        "the room can open settings") && passed;
+        inRoom.closeSettings();
+        passed = expect(inRoom.currentPage() == QStringLiteral("room"),
+                        "closing settings returns to the room it was opened from")
+            && passed;
+
+        jamlink::desktop::AppController fromHome(
+            directory / "settings-from-home.jlpf", true, QStringLiteral("home"), 0U, 0U);
+        passed = expect(fromHome.settingsSessionNotice().isEmpty(),
+                        "the in-room notice stays out of the way outside a room")
+            && passed;
+        fromHome.openSettings();
+        fromHome.closeSettings();
+        passed = expect(fromHome.currentPage() == QStringLiteral("home"),
+                        "settings opened from home still returns home") && passed;
+    }
+
     qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host-drawer"));
     jamlink::desktop::AppController preflightFixture(
         directory / "preflight.jlpf", true,
