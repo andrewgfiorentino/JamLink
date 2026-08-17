@@ -35,7 +35,7 @@ official `ASIO-SDK_2.3.4_2025-10-15.zip` archive (SHA-256
 JamLink selects the SDK's GPL version 3 alternative for the ASIO interface
 files. The separately licensed host helpers retain their embedded
 three-clause BSD-style terms. The exact retained file list and trademark notice
-are in [`third_party/asio-sdk/README.md`](third_party/asio-sdk/README.md), and
+are in [`third_party/asio-sdk/README.md`](../third_party/asio-sdk/README.md), and
 the SDK license is retained beside it. No hardware-vendor driver is bundled.
 
 ## Runtime network service
@@ -44,7 +44,7 @@ The host queries Cloudflare's public STUN endpoint `stun.cloudflare.com:3478` fo
 
 ### Material Design Icons
 
-Ten Material Design Icons Round SVG assets are vendored at revision `50f0603134ce7b70b2d71b686cc13e8b57ccb74c` under Apache-2.0. JamLink added a root white fill for deterministic Qt colorization without changing path geometry. Exact file hashes and the modification notice are in [`apps/desktop/assets/README.md`](apps/desktop/assets/README.md); the full license is in [`third_party/material-design-icons/LICENSE`](third_party/material-design-icons/LICENSE).
+Ten Material Design Icons Round SVG assets are vendored at revision `50f0603134ce7b70b2d71b686cc13e8b57ccb74c` under Apache-2.0. JamLink added a root white fill for deterministic Qt colorization without changing path geometry. Exact file hashes and the modification notice are in [`apps/desktop/assets/README.md`](../apps/desktop/assets/README.md); the full license is in [`third_party/material-design-icons/LICENSE`](../third_party/material-design-icons/LICENSE).
 
 ## Build requirements
 

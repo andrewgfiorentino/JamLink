@@ -25,3 +25,6 @@ __pycache__/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Qt installer log from scripts/
+aqtinstall.log

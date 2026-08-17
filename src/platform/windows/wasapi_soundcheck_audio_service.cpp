@@ -1001,7 +1001,7 @@ private:
             // cannot supply. Its return value was discarded, so every underrun
             // put a block of digital silence on the wire as though it were the
             // guitar, and the send rate sat well under the one packet per five
-            // milliseconds the stream owed. A tester heard the result as
+            // milliseconds the stream owed. Field testing heard the result as
             // bit-crushing and glitching on a link with a 4 ms round trip.
             if (peerExchange_ != nullptr) {
                 sendHealth.process(std::span<const float>(scratch.data(), frames));

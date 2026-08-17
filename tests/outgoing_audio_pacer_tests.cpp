@@ -4,11 +4,11 @@
 // What the outgoing send path owes the person on the other end.
 //
 // Every one of these tests exists because a live session went wrong in a way
-// that a screenshot could not distinguish from a bad network. A tester's
-// guitar arrived bit-crushed and glitching while the link itself carried a 4 ms
-// round trip; the send rate sat near 120 packets per second per stream where
-// 200 was owed, and the shortfall was read as loss rather than as audio the
-// sender never transmitted. These assertions make that shortfall a build
+// that a screenshot could not distinguish from a bad network. Guitar audio
+// arrived bit-crushed and glitching while the link itself carried a 4 ms round
+// trip; the send rate sat near 120 packets per second per stream where 200 was
+// owed, and the shortfall was read as loss rather than as audio the sender
+// never transmitted. These assertions make that shortfall a build
 // failure instead of a diagnosis.
 
 #include "jamlink/network/outgoing_audio_pacer.hpp"
