@@ -103,6 +103,7 @@ add_library(jamlink_core STATIC
     src/audio/private_soundcheck_processor.cpp
     src/clock/clock_domain_controller.cpp
     src/control/readiness_tracker.cpp
+    src/control/session_conductor.cpp
     src/control/room_authority.cpp
     src/diagnostics/session_log.cpp
     src/network/audio_stream_receiver.cpp

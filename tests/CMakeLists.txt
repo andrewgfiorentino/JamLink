@@ -51,6 +51,16 @@ add_test(NAME jamlink_opus_codec_tests COMMAND jamlink_opus_codec_tests)
 set_tests_properties(jamlink_opus_codec_tests PROPERTIES
     TIMEOUT 120 LABELS "audio;codec")
 
+add_executable(jamlink_session_conductor_tests session_conductor_tests.cpp)
+target_link_libraries(jamlink_session_conductor_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_session_conductor_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_session_conductor_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_session_conductor_tests)
+
+add_test(NAME jamlink_session_conductor_tests COMMAND jamlink_session_conductor_tests)
+set_tests_properties(jamlink_session_conductor_tests PROPERTIES
+    TIMEOUT 30 LABELS "control;session")
+
 add_executable(jamlink_tuner_tests jamlink_tuner_tests.cpp)
 target_link_libraries(jamlink_tuner_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_tuner_tests PRIVATE cxx_std_20)
