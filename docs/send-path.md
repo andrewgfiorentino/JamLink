@@ -26,8 +26,8 @@ function of *your* playback device. On Windows shared-mode audio the capture and
 render endpoints run on independent clocks with a converter bridging them, and
 that converter zero-fills whatever it cannot supply. Because its return value
 was discarded, every underrun placed a block of digital silence on the wire as
-though it were the guitar. A tester heard this as bit-crushing and glitching
-across a link whose round trip was 4 ms.
+though it were the guitar. In field testing this was heard as bit-crushing and
+glitching across a link whose round trip was 4 ms.
 
 ASIO was unaffected, because capture and playback there share one clock in one
 callback — which is why the same session sounded fine in one direction and
@@ -37,9 +37,9 @@ broken in the other, and why the fault was initially misread as packet loss.
 
 A receiver measures the spacing of arrivals and cannot distinguish a sender's
 bursts from network jitter. Releasing a backlog back to back therefore makes a
-flawless link measure as an unstable one: the first successful two-home session
-ran over a 4 ms round trip and still reported a 135 ms receive buffer, with
-concealment running almost continuously.
+flawless link measure as an unstable one. An early two-home field test ran over
+a 4 ms round trip and still reported a 135 ms receive buffer, with concealment
+running almost continuously.
 
 `OutgoingAudioPacer` advances its deadline by exactly one packet per packet
 sent, so the schedule stays tied to the media clock rather than to whenever the

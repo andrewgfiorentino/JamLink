@@ -9,8 +9,8 @@ three-clause BSD-style terms.
 
 - Upstream: <https://www.steinberg.net/developers/asio/>
 - Exact archive, hash, retained files, and trademark notice:
-  [`third_party/asio-sdk/README.md`](third_party/asio-sdk/README.md)
-- SDK license: [`third_party/asio-sdk/LICENSE.txt`](third_party/asio-sdk/LICENSE.txt)
+  [`third_party/asio-sdk/README.md`](../third_party/asio-sdk/README.md)
+- SDK license: [`third_party/asio-sdk/LICENSE.txt`](../third_party/asio-sdk/LICENSE.txt)
 
 ASIO is a trademark of Steinberg Media Technologies GmbH. Hardware-vendor
 drivers are not included in JamLink.
@@ -20,8 +20,8 @@ drivers are not included in JamLink.
 JamLink vendors ten Material Design Icons Round SVG files from Google at revision `50f0603134ce7b70b2d71b686cc13e8b57ccb74c` under Apache-2.0.
 
 - Upstream: <https://github.com/google/material-design-icons>
-- License: [`third_party/material-design-icons/LICENSE`](third_party/material-design-icons/LICENSE)
-- Exact files, JamLink hashes, and modification notice: [`apps/desktop/assets/README.md`](apps/desktop/assets/README.md)
+- License: [`third_party/material-design-icons/LICENSE`](../third_party/material-design-icons/LICENSE)
+- Exact files, JamLink hashes, and modification notice: [`apps/desktop/assets/README.md`](../apps/desktop/assets/README.md)
 
 ## Qt 6.10.3 friend-test runtime inventory
 

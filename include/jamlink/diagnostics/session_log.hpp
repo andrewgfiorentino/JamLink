@@ -12,8 +12,8 @@ namespace jamlink::diagnostics {
 
 // Append-only local log of what the connection actually did.
 //
-// The first live two-person test failed with no record of which step broke, so
-// the next failure has to leave evidence behind. This records the connection
+// An early two-person field test failed with no record of which step broke, so
+// any later failure has to leave evidence behind. This records the connection
 // lifecycle: binding, each router mapping protocol tried and its answer, public
 // address discovery, handshake progress, and why a session ended.
 //

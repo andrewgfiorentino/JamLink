@@ -559,10 +559,10 @@ int main(int argc, char* argv[]) {
                     "scaled room keeps stable local-first participant ordering") && passed;
     qunsetenv("JAMLINK_VISUAL_ROOM_SIZE");
 
-    // The room's mute controls. A tester found the friend's channel switches
-    // would not toggle during a live session and that there were no switches at
-    // all for their own channels, so they could not stop a vocal microphone
-    // sending guitar bleed.
+    // The room's mute controls. Field testing found the friend's channel
+    // switches would not toggle during a session, and that there were no
+    // switches at all for a musician's own channels, so a vocal microphone
+    // could not be stopped from sending guitar bleed.
     {
         jamlink::desktop::AppController mutes(
             directory / "room-mutes.jlpf", true, QStringLiteral("room"), 0U, 0U);

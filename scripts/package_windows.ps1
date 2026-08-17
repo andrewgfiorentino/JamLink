@@ -161,13 +161,26 @@ if (Test-Path -LiteralPath $redistNotice -PathType Leaf) {
 
 $documents = @(
     "LICENSE",
-    "NOTICE",
-    "THIRD_PARTY_LICENSES.md",
-    "TONIGHT_TEST.md",
-    "SOURCE_AND_LICENSES.md"
+    "NOTICE"
 )
 foreach ($document in $documents) {
     Copy-Item -LiteralPath (Join-Path $repositoryRoot $document) -Destination $packageDirectory
+}
+
+# Mirrored under docs/ so the pointers in NOTICE resolve the same way in the
+# package as they do in the repository.
+$packageDocuments = Join-Path $packageDirectory "docs"
+New-Item -ItemType Directory -Path $packageDocuments -Force | Out-Null
+$documentation = @(
+    "THIRD_PARTY_LICENSES.md",
+    "SOURCE_AND_LICENSES.md",
+    "DEPENDENCIES.md",
+    "dependencies.json",
+    "running-a-session.md"
+)
+foreach ($document in $documentation) {
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs/$document") `
+        -Destination $packageDocuments
 }
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "third_party\material-design-icons\LICENSE") `
     -Destination (Join-Path $packageDirectory "MATERIAL_DESIGN_ICONS_LICENSE.txt")

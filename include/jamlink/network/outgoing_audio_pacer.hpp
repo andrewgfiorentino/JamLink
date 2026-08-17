@@ -18,13 +18,13 @@ namespace jamlink::network {
 // represents, converting from the capture device's rate to the network rate on
 // the way.
 //
-// Two rules this exists to keep, each learned from a live session.
+// Two rules this exists to keep, each established in two-home field testing.
 //
 // Packets must not clump. A receiver measures the spacing of its sender's
 // arrivals and cannot distinguish sender bursts from network jitter, so a
-// backlog emitted back to back makes a flawless link look unstable: the first
-// successful two-home session ran over a 4 ms round trip and still reported a
-// 135 ms receive buffer, with concealment running almost continuously.
+// backlog emitted back to back makes a flawless link look unstable: an early
+// field test ran over a 4 ms round trip and still reported a 135 ms receive
+// buffer, with concealment running almost continuously.
 //
 // Captured audio must not be stranded. The design that replaced those bursts
 // capped catch-up at four packets per wake-up and then, if still behind,

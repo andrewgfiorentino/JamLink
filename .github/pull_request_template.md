@@ -13,14 +13,14 @@
 ## Licensing
 
 - [ ] I am the copyright holder, **or** I have added my line to
-      [CONTRIBUTORS.md](../CONTRIBUTORS.md) agreeing to
-      [CLA.md](../CLA.md) in this pull request.
+      [CONTRIBUTORS.md](../docs/CONTRIBUTORS.md) agreeing to
+      [CLA.md](../docs/CLA.md) in this pull request.
 
 <!-- A contribution merged without this permanently removes the project's
-     ability to relicense. It cannot be fixed afterwards. See CONTRIBUTING.md. -->
+     ability to relicense. It cannot be fixed afterwards. See docs/CONTRIBUTING.md. -->
 
 - [ ] This adds no third-party code, **or** the dependency was agreed first and
-      its licence is recorded in THIRD_PARTY_LICENSES.md.
+      its licence is recorded in docs/THIRD_PARTY_LICENSES.md.
 
 ## Checks
 

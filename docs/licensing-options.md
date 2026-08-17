@@ -24,8 +24,8 @@ here on.
 
 **One merged contribution without a CLA ends it.** Relicensing would then need
 the individual agreement of every contributor, in perpetuity, including anyone
-who stops replying. This is why [CONTRIBUTING.md](../CONTRIBUTING.md) and
-[CLA.md](../CLA.md) exist and why the pull request template leads with them.
+who stops replying. This is why [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CLA.md](CLA.md) exist and why the pull request template leads with them.
 
 ## What the dependencies allow
 

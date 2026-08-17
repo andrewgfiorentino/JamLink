@@ -41,10 +41,10 @@ ConnectionPreflightResult evaluateConnectionPreflight(
     if (checks.portMapping == PortMappingState::Failed) {
         // The router was asked for a port and refused. Port forwarding is a
         // real remedy but not one most people can follow, and it is not needed:
-        // with a single invite code only the host must be reachable. A tester
-        // whose router granted a mapping one hour and refused it the next
-        // connected without trouble the moment the other person made the
-        // invite, so that is the instruction worth leading with.
+        // with a single invite code only the host must be reachable. In field
+        // testing a router granted a mapping one hour and refused it the next,
+        // and the session connected without trouble the moment the other end
+        // made the invite, so that is the instruction worth leading with.
         return {ConnectionPreflightOutcome::DirectMayNeedHelp,
                 ConnectionPreflightAction::AskFriendToHost, true};
     }

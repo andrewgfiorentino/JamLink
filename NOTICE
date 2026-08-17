@@ -12,7 +12,7 @@ Such exceptions apply only to the files that state them; they do not change
 the GPL-3.0-or-later status of the primary JamLink application.
 
 Third-party notices and license obligations are recorded in
-THIRD_PARTY_LICENSES.md and dependencies.json.
+docs/THIRD_PARTY_LICENSES.md and docs/dependencies.json.
 
 The desktop source includes selected Google Material Design Icons under
 the Apache License 2.0. The exact revision, changed-file notice, hashes,
@@ -22,7 +22,7 @@ third_party/material-design-icons.
 The desktop build uses an external Qt 6.10.3 kit under Qt's
 GPL-3.0-only option. The friend-test ZIP packages the required Qt runtime;
 exact corresponding-source identities and obligations are documented in
-SOURCE_AND_LICENSES.md, THIRD_PARTY_LICENSES.md, and DEPENDENCIES.md.
+docs/SOURCE_AND_LICENSES.md, docs/THIRD_PARTY_LICENSES.md, and docs/DEPENDENCIES.md.
 Qt and the Qt logo are trademarks of The Qt Company Ltd.
 
 The Windows audio backend includes selected files from the Steinberg ASIO SDK
