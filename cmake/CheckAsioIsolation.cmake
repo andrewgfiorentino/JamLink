@@ -12,6 +12,11 @@
 # This test fails the build the moment a second file starts including it, which
 # is the point at which the boundary would otherwise quietly disappear.
 
+# Script mode runs with no project, so no policy defaults are in force. Without
+# this, IN_LIST is not recognised and the check fails for the wrong reason --
+# which it did, on a CMake newer than the one it was written against.
+cmake_minimum_required(VERSION 3.25)
+
 set(JAMLINK_ASIO_PERMITTED
     "src/platform/windows/asio_soundcheck_audio_service.cpp")
 
@@ -30,7 +35,10 @@ file(GLOB_RECURSE JAMLINK_SOURCES
 set(JAMLINK_VIOLATIONS "")
 foreach(source IN LISTS JAMLINK_SOURCES)
     file(RELATIVE_PATH relative "${JAMLINK_SOURCE_DIR}" "${source}")
-    if(relative IN_LIST JAMLINK_ASIO_PERMITTED)
+    # list(FIND) rather than IN_LIST, so the check does not depend on a policy
+    # being set in a context that has no project to set it.
+    list(FIND JAMLINK_ASIO_PERMITTED "${relative}" permitted_index)
+    if(NOT permitted_index EQUAL -1)
         continue()
     endif()
     file(READ "${source}" contents)
