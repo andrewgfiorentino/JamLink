@@ -1,11 +1,11 @@
 # JamLink
 
 **Play music together over the internet, in real time.** JamLink is a free and
-open-source Windows application for private two-person sessions: guitar and
-voice travel as separate encrypted streams over a direct connection, with no
-server in the middle and no account to create.
+open-source Windows application for small private sessions: guitar and voice
+travel as separate encrypted streams over direct connections, with no server in
+the middle and no account to create.
 
-> Status: **0.4.5-test**. Under active development and validated in two-home
+> Status: **0.4.6-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -110,15 +110,14 @@ detection, the tuner, recording, and what your friend hears all continue.
 ## Known limitations
 
 - **Windows only**, x64.
-- **Three people, and the third can only hear the host.** The transport now
-  carries several musicians at once: each has their own connection, keys,
-  buffers and meters, and a room that loses one keeps playing. What is missing
-  is the last introduction — two people who joined the same host are not yet
-  told about each other, so they connect to the host but not to one another.
-  Until that lands, a third musician is worth having only if everyone is
-  content to hear the person who created the room. See
+- **Up to six people, and everyone hears everyone.** Each musician has their
+  own connection, keys, buffers and meters, and a room that loses somebody
+  keeps playing. Everyone sends directly to everyone else, so upload grows with
+  the number of other people — a fourth musician costs every existing musician
+  more, not only the one joining. JamLink declines to admit somebody when your
+  connection has already said it cannot carry the people who are here. See
   [docs/multi-participant-architecture.md](docs/multi-participant-architecture.md)
-  for the plan and the bandwidth arithmetic behind it.
+  for the bandwidth arithmetic.
 - **No relay, and no rendezvous yet.** The guest probes every address the
   invite named, but the host cannot punch outward until it has heard from the
   guest. If both ends are behind carrier-grade or symmetric NAT, a direct
