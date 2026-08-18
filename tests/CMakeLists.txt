@@ -91,6 +91,16 @@ add_test(NAME jamlink_ice_agent_tests COMMAND jamlink_ice_agent_tests)
 set_tests_properties(jamlink_ice_agent_tests PROPERTIES
     TIMEOUT 30 LABELS "network;traversal")
 
+add_executable(jamlink_bitrate_controller_tests bitrate_controller_tests.cpp)
+target_link_libraries(jamlink_bitrate_controller_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_bitrate_controller_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_bitrate_controller_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_bitrate_controller_tests)
+
+add_test(NAME jamlink_bitrate_controller_tests COMMAND jamlink_bitrate_controller_tests)
+set_tests_properties(jamlink_bitrate_controller_tests PROPERTIES
+    TIMEOUT 30 LABELS "network;codec")
+
 add_executable(jamlink_send_limiter_tests send_limiter_tests.cpp)
 target_link_libraries(jamlink_send_limiter_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_send_limiter_tests PRIVATE cxx_std_20)

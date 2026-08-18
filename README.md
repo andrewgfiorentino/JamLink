@@ -47,10 +47,17 @@ imposes.
   and while it is on the room says so plainly rather than leaving you to
   wonder whether your friend can hear you.
 - **Private text chat** over the same authenticated connection.
+- **A send that adapts to the uplink you actually have.** Each end reports what
+  it is losing, and the other lowers its rate when that is sustained — quickly
+  down, slowly back up, so a session never swings audibly between two
+  qualities. A last-resort limiter keeps a hot input from reaching your friend
+  as clipping, on the network path only: what you monitor, what you record, and
+  the pristine originals are untouched.
 - **Opus, tuned for playing rather than listening.** Restricted low-delay mode
   adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the
   entire monitoring path on an ASIO interface. Two streams take roughly
-  320 kbit/s upstream instead of 1.6 Mbit/s.
+  320 kbit/s upstream instead of 1.6 Mbit/s, and less than that on a connection
+  that cannot carry it.
 - **One answer, not a dashboard.** A session conductor gathers what every
   subsystem knows and says whether you can play. Anything claiming you can is
   gated on evidence that audio is actually moving, never on a socket existing.
@@ -105,9 +112,6 @@ detection, the tuner, recording, and what your friend hears all continue.
   guest. If both ends are behind carrier-grade or symmetric NAT, a direct
   connection may still be impossible. JamLink says so rather than pretending,
   and will suggest the other person host if they can.
-- **Around 320 kbit/s upstream** for two streams. Lower than it was, but still
-  a real requirement on a thin uplink; there is no automatic bitrate adaptation
-  yet.
 - **Exchanging originals is not implemented yet.** Each side keeps pristine
   local originals of its own sources, but they are not yet sent to the other
   person, so your copy of your friend's audio is still whatever arrived.

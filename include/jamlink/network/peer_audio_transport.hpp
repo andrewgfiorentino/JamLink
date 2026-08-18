@@ -173,6 +173,10 @@ struct PeerTransportTelemetry final {
     // a hot input is the gain knob, and a limiter that quietly cleaned it up
     // would remove the reason to go and turn it down.
     std::uint64_t limitedSendSamples{0U};
+    // How many times the send rate has had to be reduced because the far
+    // end reported losing what we sent, and whether it has run out of room.
+    std::uint32_t bitrateReductions{0U};
+    bool uplinkExhausted{false};
 
     // Path finding. A guest probes every address the invite named until one
     // answers. Both figures matter in a failure report: probes prove packets

@@ -41,6 +41,11 @@ struct SupportSnapshot final {
     // the normal state; a large number means the input gain is too high and
     // the friend has been hearing the ceiling.
     std::uint64_t limitedSendSamples{0U};
+    // How far the send rate has had to be walked down for the far end, and
+    // whether it ran out of room. The bitrate above is what is being sent now
+    // rather than what the build starts at.
+    std::uint32_t bitrateReductions{0U};
+    bool uplinkExhausted{false};
 
     // Audio path. Device identities are names, never file paths.
     //

@@ -1644,6 +1644,8 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.undecodablePackets = peerTelemetry_.undecodablePackets;
     snapshot.encodeFailures = peerTelemetry_.encodeFailures;
     snapshot.limitedSendSamples = peerTelemetry_.limitedSendSamples;
+    snapshot.bitrateReductions = peerTelemetry_.bitrateReductions;
+    snapshot.uplinkExhausted = peerTelemetry_.uplinkExhausted;
 
     // Device names, never the paths or identifiers they were resolved from.
     const auto deviceName = [](const std::vector<DeviceOption>& options, int index) {

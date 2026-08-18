@@ -20,6 +20,7 @@
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
+#include "jamlink/network/bitrate_controller.hpp"
 #include "jamlink/network/ice_agent.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
@@ -1380,7 +1381,13 @@ public:
         }
         snapshot.candidateProbesSent = iceProbes_.load(std::memory_order_relaxed);
         snapshot.candidateRoundsExhausted = iceRounds_.load(std::memory_order_relaxed);
-        snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
+        // What is actually being sent now, not the rate the build starts
+        // at. Reporting the constant while the link had quietly halved it
+        // is the same class of untruth as the fields this bundle already
+        // had to have fixed.
+        snapshot.audioBitsPerSecond = bitrateControllers_[0].bitsPerSecond();
+        snapshot.bitrateReductions = bitrateControllers_[0].reductions();
+        snapshot.uplinkExhausted = bitrateControllers_[0].exhausted();
         for (const auto* decoder : streamDecoders_) {
             if (decoder == nullptr) {
                 continue;
@@ -1695,6 +1702,12 @@ private:
         packetsSent_.store(0U, std::memory_order_relaxed);
         for (auto& limiter : sendLimiters_) {
             limiter.prepare(networkSampleRate);
+        }
+        for (auto& controller : bitrateControllers_) {
+            controller.reset();
+        }
+        for (auto& pending : pendingBitrate_) {
+            pending.store(0U, std::memory_order_relaxed);
         }
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
@@ -2023,7 +2036,15 @@ private:
             // per-stream mute state. Mute has to travel here rather than on the
             // audio packets that carry the clip flag, because a muted stream
             // sends no audio packets at all.
-            std::array<std::uint8_t, 9U> controlPayload{};
+            // Eight bytes of timestamp, one of mute state, then one byte
+            // per stream saying what fraction of it this end has had to
+            // conceal since the last report. The far end is the only
+            // witness to what our uplink is doing, so its send rate has to
+            // be decided from what we tell it here rather than from
+            // anything it can measure on its own.
+            std::array<std::uint8_t, 9U + audioStreamCount> controlPayload{};
+            std::array<std::uint64_t, audioStreamCount> lastAccepted{};
+            std::array<std::uint64_t, audioStreamCount> lastConcealed{};
             ULONGLONG lastHello = 0U;
             ULONGLONG lastPing = 0U;
             ULONGLONG lastReceive = GetTickCount64();
@@ -2111,6 +2132,23 @@ private:
                         }
                     }
                     controlPayload[sizeof(stamp)] = muteMask;
+                    for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+                        const auto stream = receivers_[index].telemetry();
+                        const std::uint64_t accepted =
+                            stream.packetsAccepted - lastAccepted[index];
+                        const std::uint64_t concealed =
+                            stream.packetsConcealed - lastConcealed[index];
+                        lastAccepted[index] = stream.packetsAccepted;
+                        lastConcealed[index] = stream.packetsConcealed;
+                        const std::uint64_t total = accepted + concealed;
+                        // A window with almost nothing in it says nothing
+                        // about the link. A percentage of three packets
+                        // would drop the rate on a stream that is muted.
+                        controlPayload[sizeof(stamp) + 1U + index] = total < 20U
+                            ? std::uint8_t{0}
+                            : static_cast<std::uint8_t>(
+                                std::min<std::uint64_t>(concealed * 100U / total, 100U));
+                    }
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Ping, 0U, 0U, controlPayload));
                     lastPing = now;
@@ -2221,6 +2259,16 @@ private:
                 static_cast<void>(localAudio_[index].readAndZeroFill(
                     std::span<float>(localScratch.data(), frames)));
                 pacer.accept(std::span<const float>(localScratch.data(), frames));
+            }
+            // Applied here rather than where the report arrived, because
+            // the encoder belongs to this loop and reconfiguring it from
+            // the packet handler would be a second thread touching it.
+            const std::uint32_t requestedBitrate =
+                pendingBitrate_[index].exchange(0U, std::memory_order_acquire);
+            if (requestedBitrate != 0U) {
+                static_cast<void>(encoders[index].setBitsPerSecond(requestedBitrate));
+                JAMLINK_LOG("codec", "stream " + std::to_string(index)
+                    + " send rate now " + std::to_string(requestedBitrate) + " bit/s");
             }
             // The pacer holds the schedule: it releases on the cadence the audio
             // itself represents, makes up lateness by sending sooner rather than
@@ -2419,8 +2467,24 @@ private:
         }
         if (type == PacketType::Ping
             && (payloadBytes == sizeof(std::uint64_t)
-                || payloadBytes == sizeof(std::uint64_t) + 1U)) {
-            if (payloadBytes == sizeof(std::uint64_t) + 1U) {
+                || payloadBytes == sizeof(std::uint64_t) + 1U
+                || payloadBytes == sizeof(std::uint64_t) + 1U + audioStreamCount)) {
+            if (payloadBytes == sizeof(std::uint64_t) + 1U + audioStreamCount) {
+                // What the far end says it is losing of what we send. Down
+                // fast and up slowly is decided in core; here it is only
+                // applied, and only when the rate actually changed, so a
+                // steady link never reconfigures an encoder at all.
+                for (std::size_t index = 0U; index < audioStreamCount; ++index) {
+                    const std::uint8_t loss =
+                        plaintext[sizeof(std::uint64_t) + 1U + index];
+                    if (bitrateControllers_[index].observe(loss)) {
+                        pendingBitrate_[index].store(
+                            bitrateControllers_[index].bitsPerSecond(),
+                            std::memory_order_release);
+                    }
+                }
+            }
+            if (payloadBytes >= sizeof(std::uint64_t) + 1U) {
                 const std::uint8_t muteMask = plaintext[sizeof(std::uint64_t)];
                 for (std::size_t index = 0U; index < audioStreamCount; ++index) {
                     remoteStreamMutedByPeer_[index].store(
@@ -2542,6 +2606,10 @@ private:
     std::atomic<std::uint64_t> sessionsEstablished_{0U};
     // Owned by the network worker, which is the only thread that encodes.
     std::array<jamlink::audio::SendLimiter, audioStreamCount> sendLimiters_{};
+    // Touched only by the network worker; the rate it decides crosses to
+    // the send loop through the atomics below.
+    std::array<BitrateController, audioStreamCount> bitrateControllers_{};
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> pendingBitrate_{};
     // Candidate negotiation. Both are written in join() before the worker
     // starts and afterwards touched only by the worker thread.
     std::vector<IceCandidate> remoteCandidates_;
