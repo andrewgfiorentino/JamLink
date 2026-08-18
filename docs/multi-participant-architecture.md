@@ -91,11 +91,40 @@ common. The room secret stayed shared too, because per-peer key material is
 step 2 and has to be — reusing a nonce across two peers under one key would be
 a serious defect rather than an optimisation.
 
-**2. Encode once, encrypt per peer.** The codec payload for a packet is the
-same for everybody, so it is encoded once. The encryption is not: every peer
-has its own key pair and its own nonce sequence, and reusing a nonce across
-peers would be a serious defect rather than an optimisation. Encode once, seal
-N−1 times.
+**2. Encode once, encrypt per peer. — key schedule done, wiring next.**
+
+Starting this turned up something worth writing down before any of it is
+wired. Keying both directions from the room secret alone, which is what happens
+today, is sound with one peer and is two separate defects with several:
+
+- **Everyone in the room can read everyone else’s traffic.** Two musicians’
+  chat and audio would be decryptable by a third who was merely in the same
+  room. That is not what a private session means.
+- **A packet is not bound to its recipient.** Sealed under a key everybody
+  holds, a packet addressed to one musician authenticates perfectly as one
+  addressed to another. Cross-peer confusion of that kind is a security defect
+  rather than a glitch, and it is invisible while there is only one peer to be
+  confused with.
+
+The obvious fix — renegotiate a key per pair — costs a round trip and a rekey
+point, both of which are risk in the handshake. It is not needed. Every packet
+already carries the sender’s eight-byte nonce prefix in the clear, because the
+receiver needs it to reconstruct the nonce. Both ends therefore hold both
+prefixes from the first packet onward. Sorting the two makes the pair identity
+symmetric, so each side computes the same discriminator without agreeing who is
+“first”, and direction is layered on top exactly as now so a packet still
+cannot be reflected back at its sender.
+
+No new field, no extra round trip, and every pair keyed apart.
+
+`jamlink::network::PeerKeySchedule` implements and tests that derivation. It
+fails closed when no HMAC is installed, because sending in the clear following
+a derivation failure would be the worst available recovery.
+
+What remains is the transport wiring: creating the ciphers once the remote
+prefix is known rather than at worker start, and re-deriving when a peer
+restarts and its prefix changes. That changes the key a duo uses, so it is a
+release both people must install — which is already true of every release.
 
 **3. Room membership.** Today an invite names one host and the guest connects
 to it. With a mesh, a third musician has to end up connected to *both* of the
