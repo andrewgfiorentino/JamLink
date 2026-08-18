@@ -145,13 +145,42 @@ fine until the second peer arrives.
 This changes the key a duo uses, so both people must install it — already true
 of every release.
 
-**3. Room membership.** Today an invite names one host and the guest connects
-to it. With a mesh, a third musician has to end up connected to *both* of the
-first two, which means the room has to tell arriving members about each other.
-The signalling service already models a session as a set of participants with a
-bounded roster, which is the shape this needs; it is not deployed, so the first
-version can distribute membership over the existing authenticated control
-channel from whoever created the room.
+**3. Room membership. — roster done, transport next.** An invite names one host
+and the guest connects to it. In a mesh, if Andrew hosts and Mike and Sam each
+join him, Mike and Sam are in the same room, have never heard of each other,
+and must be connected directly — because that is what a mesh is.
+
+`jamlink::network::RoomRoster` holds who is present, where each of them can be
+reached, and answers the question that has no obvious owner: **which end of a
+pair reaches out.**
+
+That question is the substance of this step. Every pair has to agree, without
+asking each other, which end plays the part the host plays today — the
+direction keys and the handshake both depend on it. Two hosts, or two guests,
+is a session that never forms and reports nothing while not forming. Both ends
+therefore run the same comparison over the same two participant identifiers and
+reach opposite answers with nothing exchanged. Identical identifiers are
+reported as undecidable rather than guessed, because a copied identity must not
+be able to make somebody open a second session against their own name.
+
+Two more rules the roster carries:
+
+- **Reconnecting replaces addresses rather than adding them.** Somebody whose
+  router gave them a new port would otherwise leave everyone probing where
+  nobody is.
+- **Acting on it is idempotent.** The roster arrives on every change and again
+  on every reconnect, so a room must not accumulate duplicate sessions with the
+  same person.
+
+Introductions come from whoever created the room, since they are the only
+participant guaranteed to know everyone. That has a consequence worth stating
+rather than discovering: **if the room’s creator leaves, existing pairs keep
+playing but nobody new can be introduced.** A duo has the same property today
+and nobody notices, because there is nobody left to introduce.
+
+What remains is the transport: a control message carrying the roster, guests
+publishing their candidates to the creator so there is something to distribute,
+and the connection manager that opens a second slot when the roster says to.
 
 **4. Mixing, and the interface.** Each remote participant needs its own level,
 mute, meter, and jitter buffer — the per-stream controls that exist for one
