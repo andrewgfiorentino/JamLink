@@ -113,6 +113,13 @@ class AppController final : public QObject {
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
 
     Q_PROPERTY(QString recordingDirectory READ recordingDirectory WRITE setRecordingDirectory NOTIFY settingsChanged)
+    // Which sources a take may contain. Talkback is the usual reason to turn
+    // one off: it belongs in the session, not in the recording.
+    Q_PROPERTY(bool recordLocalInstrument READ recordLocalInstrument WRITE setRecordLocalInstrument NOTIFY settingsChanged)
+    Q_PROPERTY(bool recordLocalVoice READ recordLocalVoice WRITE setRecordLocalVoice NOTIFY settingsChanged)
+    Q_PROPERTY(bool recordRemoteInstrument READ recordRemoteInstrument WRITE setRecordRemoteInstrument NOTIFY settingsChanged)
+    Q_PROPERTY(bool recordRemoteVoice READ recordRemoteVoice WRITE setRecordRemoteVoice NOTIFY settingsChanged)
+    Q_PROPERTY(QString recordSelectionSummary READ recordSelectionSummary NOTIFY settingsChanged)
     Q_PROPERTY(int preferredUdpPort READ preferredUdpPort WRITE setPreferredUdpPort NOTIFY settingsChanged)
     Q_PROPERTY(bool automaticRouterMapping READ automaticRouterMapping WRITE setAutomaticRouterMapping NOTIFY settingsChanged)
     Q_PROPERTY(int latencyMode READ latencyMode WRITE setLatencyMode NOTIFY settingsChanged)
@@ -299,6 +306,15 @@ public:
 
     [[nodiscard]] QString recordingDirectory() const;
     void setRecordingDirectory(const QString& directory);
+    [[nodiscard]] bool recordLocalInstrument() const noexcept;
+    [[nodiscard]] bool recordLocalVoice() const noexcept;
+    [[nodiscard]] bool recordRemoteInstrument() const noexcept;
+    [[nodiscard]] bool recordRemoteVoice() const noexcept;
+    void setRecordLocalInstrument(bool included);
+    void setRecordLocalVoice(bool included);
+    void setRecordRemoteInstrument(bool included);
+    void setRecordRemoteVoice(bool included);
+    [[nodiscard]] QString recordSelectionSummary() const;
     [[nodiscard]] int preferredUdpPort() const noexcept;
     void setPreferredUdpPort(int port);
     [[nodiscard]] bool automaticRouterMapping() const noexcept;
@@ -487,6 +503,8 @@ private:
     void scheduleSave();
     void scheduleAudioRestart();
     void restartAudio();
+    [[nodiscard]] jamlink::record::RecordTrackSelection recordSelection() const;
+    void applyRecordSelection();
     // The same rule the audio service enforces, asked of the current
     // selections rather than of the last start attempt, so the answer is
     // already there when a musician picks an impossible combination and does

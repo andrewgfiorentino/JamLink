@@ -32,6 +32,10 @@ imposes.
   extrapolates the instrument's own waveform rather than inserting silence.
 - **A chromatic tuner** that mutes your guitar to the room while you use it,
   and can stay open beside the session once you turn that off.
+- **Recording only what you meant to record.** Each of the four sources can be
+  left out of a take, and a source you turn off is never written to disk rather
+  than written and discarded. A take says which sources were deliberately
+  excluded, so a missing track can never be mistaken for one that failed.
 - **Recording that keeps a pristine copy.** Your instrument and your voice, each
   of your friend's streams, and — separately — local originals of your own
   sources taken before the monitor converter and before the network could touch
@@ -107,8 +111,6 @@ detection, the tuner, recording, and what your friend hears all continue.
 - **Exchanging originals is not implemented yet.** Each side keeps pristine
   local originals of its own sources, but they are not yet sent to the other
   person, so your copy of your friend's audio is still whatever arrived.
-- **Recording is all or nothing.** Individual channels cannot yet be excluded
-  from a take, so talkback is recorded along with everything else.
 - **Both people must run the same version.** The wire protocol is
   version-checked, and it changed in 0.4.1.
 

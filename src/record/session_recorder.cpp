@@ -128,9 +128,26 @@ bool SessionRecorder::start(
     std::uint32_t sampleRate,
     std::uint32_t localInstrumentRate,
     std::uint32_t localVoiceRate) {
+    return start(directory, sessionName, sampleRate, localInstrumentRate,
+                 localVoiceRate, RecordTrackSelection{});
+}
+
+bool SessionRecorder::start(
+    const std::filesystem::path& directory,
+    const std::string& sessionName,
+    std::uint32_t sampleRate,
+    std::uint32_t localInstrumentRate,
+    std::uint32_t localVoiceRate,
+    const RecordTrackSelection& selection) {
     if (recording_.load(std::memory_order_acquire)) {
         return false;
     }
+    // Pressing record and getting a directory of nothing is never what was
+    // meant, and it would be indistinguishable from a take that failed.
+    if (!selection.any()) {
+        return false;
+    }
+    selection_ = selection;
     if (sampleRate < 8'000U || sampleRate > 384'000U || sessionName.empty()) {
         return false;
     }
@@ -165,6 +182,12 @@ bool SessionRecorder::start(
         track.ring->clear();
         track.frames = 0U;
         track.file.clear();
+        // An excluded track leaves no file. An empty WAV is exactly what a
+        // failed track leaves behind, and the take manifest would then have no
+        // way to tell a musician's choice from a fault.
+        if (!selection_.includes(static_cast<RecordTrack>(index))) {
+            continue;
+        }
         track.file.open(
             session / trackFileName(static_cast<RecordTrack>(index)),
             std::ios::binary | std::ios::trunc);
@@ -210,6 +233,11 @@ void SessionRecorder::write(RecordTrack track, std::span<const float> monoSample
     if (index >= recordTrackCount) {
         return;
     }
+    // Dropped here rather than counted as a loss: nobody asked for these
+    // frames, so they are not missing from anything.
+    if (!selection_.included[index]) {
+        return;
+    }
     if (tracks_[index].ring->write(monoSamples) != monoSamples.size()) {
         droppedFrames_.fetch_add(monoSamples.size(), std::memory_order_relaxed);
     }
@@ -221,6 +249,9 @@ void SessionRecorder::run() noexcept {
         const bool finishing = stopRequested_.load(std::memory_order_acquire);
         std::size_t drained = 0U;
         for (Track& track : tracks_) {
+            if (!track.file.is_open()) {
+                continue;
+            }
             for (;;) {
                 const std::size_t available = track.ring->availableReadFrames();
                 if (available == 0U) {

@@ -398,7 +398,13 @@ public:
         const std::string& sessionName) override {
         recordingInstrumentHealth_.clearClipLatch();
         recordingVoiceHealth_.clearClipLatch();
-        return started_ && recorder_.start(directory, sessionName, asioSampleRate);
+        return started_ && recorder_.start(
+            directory, sessionName, asioSampleRate, 0U, 0U, recordSelection_);
+    }
+
+    void setRecordTrackSelection(
+        const jamlink::record::RecordTrackSelection& selection) noexcept override {
+        recordSelection_ = selection;
     }
 
     void stopRecording() noexcept override { recorder_.stop(); }
@@ -964,6 +970,7 @@ private:
     std::atomic<SoundcheckAudioState> state_{SoundcheckAudioState::Stopped};
     InstrumentTuner tuner_;
     jamlink::record::SessionRecorder recorder_;
+    jamlink::record::RecordTrackSelection recordSelection_{};
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
     float currentInstrumentGain_{1.0F};
     float currentVoiceGain_{1.0F};

@@ -363,10 +363,51 @@ Item {
                         SettingsRule {}
                         SettingsHeading { text: "What gets recorded" }
                         SettingsNote {
-                            text: "Every take writes four 32-bit float WAV files, aligned to "
-                                + "one timeline: your instrument, your voice, and each of "
-                                + "your friend's two streams. They are separate so you can "
-                                + "mix them afterwards."
+                            text: "Turn a source off and it is never written to disk, rather "
+                                + "than written and thrown away. Talkback is the usual "
+                                + "reason: it belongs in the session, not in the take."
+                        }
+
+                        Repeater {
+                            model: [
+                                {label: "Your guitar", kind: 0},
+                                {label: "Your voice", kind: 1},
+                                {label: "Their guitar", kind: 2},
+                                {label: "Their voice", kind: 3}
+                            ]
+                            SettingsRow {
+                                id: trackRow
+                                required property var modelData
+                                label: trackRow.modelData.label
+                                JamSwitch {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    checked: trackRow.modelData.kind === 0
+                                        ? root.controller.recordLocalInstrument
+                                        : trackRow.modelData.kind === 1
+                                            ? root.controller.recordLocalVoice
+                                            : trackRow.modelData.kind === 2
+                                                ? root.controller.recordRemoteInstrument
+                                                : root.controller.recordRemoteVoice
+                                    Accessible.name: "Record " + trackRow.modelData.label
+                                    onToggled: {
+                                        if (trackRow.modelData.kind === 0)
+                                            root.controller.recordLocalInstrument = checked
+                                        else if (trackRow.modelData.kind === 1)
+                                            root.controller.recordLocalVoice = checked
+                                        else if (trackRow.modelData.kind === 2)
+                                            root.controller.recordRemoteInstrument = checked
+                                        else
+                                            root.controller.recordRemoteVoice = checked
+                                    }
+                                }
+                            }
+                        }
+                        SettingsNote { text: root.controller.recordSelectionSummary }
+
+                        SettingsRule {}
+                        SettingsNote {
+                            text: "Each selected source is a separate 32-bit float WAV, "
+                                + "aligned to one timeline, so they can be mixed afterwards."
                         }
                         SettingsNote {
                             text: "Your friend's tracks are what arrived over the network, "

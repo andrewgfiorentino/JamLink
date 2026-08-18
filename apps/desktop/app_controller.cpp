@@ -378,6 +378,108 @@ void AppController::applyLocalSendMutes() {
         jamlink::network::AudioStreamId::Voice, voiceSendMuted_);
 }
 
+bool AppController::recordLocalInstrument() const noexcept {
+    return preferences_.recordLocalInstrument;
+}
+bool AppController::recordLocalVoice() const noexcept {
+    return preferences_.recordLocalVoice;
+}
+bool AppController::recordRemoteInstrument() const noexcept {
+    return preferences_.recordRemoteInstrument;
+}
+bool AppController::recordRemoteVoice() const noexcept {
+    return preferences_.recordRemoteVoice;
+}
+
+// Excluding a source means it is never written, not written and deleted. The
+// local original follows its live track: a musician who says "do not record my
+// microphone" has not asked for a pristine copy of it somewhere else.
+jamlink::record::RecordTrackSelection AppController::recordSelection() const {
+    using jamlink::record::RecordTrack;
+    jamlink::record::RecordTrackSelection selection;
+    if (!preferences_.recordLocalInstrument) {
+        selection.exclude(RecordTrack::LocalInstrument);
+        selection.exclude(RecordTrack::LocalInstrumentOriginal);
+    }
+    if (!preferences_.recordLocalVoice) {
+        selection.exclude(RecordTrack::LocalVoice);
+        selection.exclude(RecordTrack::LocalVoiceOriginal);
+    }
+    if (!preferences_.recordRemoteInstrument) {
+        selection.exclude(RecordTrack::RemoteInstrument);
+    }
+    if (!preferences_.recordRemoteVoice) {
+        selection.exclude(RecordTrack::RemoteVoice);
+    }
+    return selection;
+}
+
+void AppController::applyRecordSelection() {
+    if (audioService_) {
+        audioService_->setRecordTrackSelection(recordSelection());
+    }
+    scheduleSave();
+    emit settingsChanged();
+}
+
+void AppController::setRecordLocalInstrument(bool included) {
+    if (preferences_.recordLocalInstrument == included) {
+        return;
+    }
+    preferences_.recordLocalInstrument = included;
+    applyRecordSelection();
+}
+void AppController::setRecordLocalVoice(bool included) {
+    if (preferences_.recordLocalVoice == included) {
+        return;
+    }
+    preferences_.recordLocalVoice = included;
+    applyRecordSelection();
+}
+void AppController::setRecordRemoteInstrument(bool included) {
+    if (preferences_.recordRemoteInstrument == included) {
+        return;
+    }
+    preferences_.recordRemoteInstrument = included;
+    applyRecordSelection();
+}
+void AppController::setRecordRemoteVoice(bool included) {
+    if (preferences_.recordRemoteVoice == included) {
+        return;
+    }
+    preferences_.recordRemoteVoice = included;
+    applyRecordSelection();
+}
+
+// Says what a take will actually contain, because four switches are easy to
+// leave in a state nobody remembers choosing.
+QString AppController::recordSelectionSummary() const {
+    QStringList kept;
+    if (preferences_.recordLocalInstrument) {
+        kept.push_back(QStringLiteral("your guitar"));
+    }
+    if (preferences_.recordLocalVoice) {
+        kept.push_back(QStringLiteral("your voice"));
+    }
+    if (preferences_.recordRemoteInstrument) {
+        kept.push_back(QStringLiteral("their guitar"));
+    }
+    if (preferences_.recordRemoteVoice) {
+        kept.push_back(QStringLiteral("their voice"));
+    }
+    if (kept.isEmpty()) {
+        return QStringLiteral(
+            "Nothing is selected, so there is nothing to record. Turn at least "
+            "one source back on.");
+    }
+    if (kept.size() == 4) {
+        return QStringLiteral(
+            "Takes contain all four sources, plus pristine originals of your own.");
+    }
+    return QStringLiteral("Takes will contain %1. The rest is never written to disk.")
+        .arg(kept.join(QStringLiteral(", ")));
+}
+
 QString AppController::recordingDirectory() const {
     if (!preferences_.recordingDirectory.empty()) {
         return QString::fromStdString(preferences_.recordingDirectory);
@@ -1017,6 +1119,9 @@ void AppController::toggleRecording() {
     // A sortable, human-readable folder per take.
     const QString name = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyy-MM-dd HH-mm-ss"));
+    // Applied here rather than only when the switches change, so a take always
+    // reflects what the settings currently say.
+    audioService_->setRecordTrackSelection(recordSelection());
     if (!audioService_->startRecording(directory, name.toStdString())) {
         setupMessage_ = QStringLiteral("Recording could not be started");
         emit setupChanged();
@@ -1684,24 +1789,33 @@ void AppController::beginTake(
         source.fileName = file;
         activeTake_.sources.push_back(source);
     };
-    addSource("instrument", "local-capture", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalInstrument));
-    addSource("voice", "local-capture", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalVoice));
-    addSource("instrument", "local-original", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalInstrumentOriginal));
-    addSource("voice", "local-original", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalVoiceOriginal));
-    addSource("instrument", "network-received", remoteId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::RemoteInstrument));
-    addSource("voice", "network-received", remoteId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::RemoteVoice));
+    const auto selection = recordSelection();
+    const auto addIncluded = [&](
+        jamlink::record::RecordTrack track, std::string_view role,
+        std::string_view origin, const std::string& participant) {
+        if (selection.includes(track)) {
+            addSource(role, origin, participant,
+                jamlink::record::SessionRecorder::trackFileName(track));
+            return;
+        }
+        // Named rather than silently absent. A track that is missing because
+        // it was asked for and failed, and one that was never wanted, look
+        // identical on disk, and only one of them is a problem.
+        activeTake_.excludedSources.push_back(
+            std::string(origin) + ":" + std::string(role));
+    };
+    addIncluded(jamlink::record::RecordTrack::LocalInstrument,
+        "instrument", "local-capture", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalVoice,
+        "voice", "local-capture", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalInstrumentOriginal,
+        "instrument", "local-original", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalVoiceOriginal,
+        "voice", "local-original", localId);
+    addIncluded(jamlink::record::RecordTrack::RemoteInstrument,
+        "instrument", "network-received", remoteId);
+    addIncluded(jamlink::record::RecordTrack::RemoteVoice,
+        "voice", "network-received", remoteId);
 
     static_cast<void>(jamlink::record::TakeJournal::begin(activeTakeDirectory_, activeTake_));
 }

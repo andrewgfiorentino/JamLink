@@ -82,6 +82,11 @@ struct TakeManifest final {
     // Semantic events only: "peer dropped", "device lost". No secrets, no
     // endpoints, no chat.
     std::vector<std::string> interruptions;
+    // Sources the musician chose to leave out, named so that a take missing a
+    // track can be read correctly. Without this, a deliberately excluded
+    // source and one that failed to record look identical -- the take would be
+    // claiming something about itself that is not true.
+    std::vector<std::string> excludedSources;
     std::uint64_t droppedFrames{0U};
 
     [[nodiscard]] bool complete() const noexcept { return state == TakeState::Ready; }

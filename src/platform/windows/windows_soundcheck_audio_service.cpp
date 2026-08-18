@@ -127,6 +127,15 @@ public:
         return active_ != nullptr && active_->startRecording(directory, sessionName);
     }
 
+    void setRecordTrackSelection(
+        const jamlink::record::RecordTrackSelection& selection) noexcept override {
+        // Both, because which backend is active can change between choosing
+        // this and pressing record.
+        recordSelection_ = selection;
+        wasapi_->setRecordTrackSelection(selection);
+        asio_->setRecordTrackSelection(selection);
+    }
+
     void stopRecording() noexcept override {
         wasapi_->stopRecording();
         asio_->stopRecording();
@@ -174,6 +183,7 @@ private:
     std::unique_ptr<ISoundcheckAudioService> asio_;
     ISoundcheckAudioService* active_{nullptr};
     AudioTopologyResult lastTopology_{};
+    jamlink::record::RecordTrackSelection recordSelection_{};
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
     float instrumentGain_{1.0F};
     float voiceGain_{1.0F};

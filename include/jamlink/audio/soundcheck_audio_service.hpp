@@ -156,6 +156,11 @@ public:
         const std::filesystem::path& directory,
         const std::string& sessionName) = 0;
     virtual void stopRecording() noexcept = 0;
+    // Which tracks the next take will contain. Applies from the next start:
+    // changing what a take holds while it is being written would leave a file
+    // that stops partway through and looks exactly like a failure.
+    virtual void setRecordTrackSelection(
+        const jamlink::record::RecordTrackSelection&) noexcept {}
     [[nodiscard]] virtual jamlink::record::RecorderTelemetry recorderTelemetry()
         const noexcept = 0;
     // Control-thread only; processing must be stopped while changing this
