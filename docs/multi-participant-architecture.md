@@ -121,10 +121,29 @@ No new field, no extra round trip, and every pair keyed apart.
 fails closed when no HMAC is installed, because sending in the clear following
 a derivation failure would be the worst available recovery.
 
-What remains is the transport wiring: creating the ciphers once the remote
-prefix is known rather than at worker start, and re-deriving when a peer
-restarts and its prefix changes. That changes the key a duo uses, so it is a
-release both people must install — which is already true of every release.
+**Wired.** The transport now seals a join request with the room key — it has
+to, since whoever sends it has not heard from the other end and cannot know
+their prefix — and everything after it with the pair key. That is the entire
+rekey: one packet type, no negotiation, no extra round trip.
+
+Two properties the wiring had to get right, and does:
+
+- **A forged header cannot tear down a live session.** Keys built from a prefix
+  are held aside as candidates and committed only once a packet has actually
+  authenticated under them. Otherwise anyone able to send a datagram could
+  replace a running session’s keys by putting a different prefix in a header.
+- **A peer that restarts still works.** It arrives with a new prefix, the
+  candidate path derives fresh keys, and the session re-establishes — which is
+  the same path a first connection takes, so it is exercised every session
+  rather than only on reconnect.
+
+Verified by disabling derivation and confirming the loopback handshake fails.
+A passing suite alone would not have distinguished pair keys working from a
+silent fall back to the room key, which is exactly the sort of thing that looks
+fine until the second peer arrives.
+
+This changes the key a duo uses, so both people must install it — already true
+of every release.
 
 **3. Room membership.** Today an invite names one host and the guest connects
 to it. With a mesh, a third musician has to end up connected to *both* of the

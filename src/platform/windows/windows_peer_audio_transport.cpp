@@ -22,6 +22,7 @@
 #include "jamlink/network/audio_stream_receiver.hpp"
 #include "jamlink/control/room_capacity.hpp"
 #include "jamlink/network/bitrate_controller.hpp"
+#include "jamlink/network/peer_key_schedule.hpp"
 #include "jamlink/network/ice_agent.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
@@ -45,6 +46,7 @@
 #include <cstring>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <span>
 #include <string>
@@ -1067,6 +1069,16 @@ struct PeerSlot final {
     Direction receiveDirection{Direction::GuestToHost};
     ReplayWindow replayWindow;
     std::array<std::uint8_t, noncePrefixBytes> noncePrefix{};
+    // The other end's prefix, read from the header of anything they send. It
+    // is in the clear because the receiver needs it to rebuild the nonce, and
+    // that is exactly what makes a per-pair key derivable without a round trip.
+    std::array<std::uint8_t, noncePrefixBytes> remoteNoncePrefix{};
+    bool remotePrefixKnown{false};
+    // Keys belonging to this pair rather than to the room. Absent until the
+    // other end has said something, which is why the join request itself is
+    // still sealed with the room key and nothing else is.
+    std::optional<AesGcmCipher> pairSend;
+    std::optional<AesGcmCipher> pairReceive;
     std::uint32_t nonceCounter{0U};
     bool nonceExhausted{false};
     std::array<std::uint32_t, audioStreamCount> sendSequence{};
@@ -1099,6 +1111,10 @@ public:
         // One slot today. Everything that follows addresses it by index rather
         // than by being the only thing there is.
         peers_[0] = std::make_unique<PeerSlot>();
+        // Core derives the pair keys and holds no crypto of its own, so the
+        // platform primitive is handed to it once here. Without it derivation
+        // fails closed rather than falling back to anything weaker.
+        installHmacSha256(&hmacSha256);
     }
 
     [[nodiscard]] PeerSlot& peer(std::size_t index = 0U) noexcept {
@@ -1844,7 +1860,7 @@ private:
     }
 
     [[nodiscard]] bool sendPacket(
-        AesGcmCipher& cipher,
+        AesGcmCipher& roomCipher,
         PacketType type,
         std::uint32_t sampleRate,
         std::uint16_t frameCount,
@@ -1854,6 +1870,12 @@ private:
         // several candidate addresses is the only way to find out which one a
         // pair of routers will actually carry.
         const sockaddr_in* destination = nullptr) noexcept {
+        // A join request is sealed with the room key, because at that moment
+        // this end has not heard from the other and cannot know its prefix.
+        // Everything after it is sealed with the pair key. That is the whole
+        // rekey: one packet type, no negotiation, no extra round trip.
+        AesGcmCipher& cipher = (type == PacketType::Hello || !peer().pairSend.has_value())
+            ? roomCipher : *peer().pairSend;
         std::array<std::uint8_t, maximumDatagramBytes> packet{};
         // Media sequences are per stream so each receive buffer sees a
         // contiguous run. Replay protection uses the nonce counter, which is
@@ -2059,6 +2081,12 @@ private:
             peer().replayWindow.reset();
             peer().nonceCounter = 0U;
             peer().nonceExhausted = false;
+            // Cleared with the rest of the session state. A stale pair key
+            // would otherwise outlive the session it belonged to and be used
+            // to seal the next one.
+            peer().pairSend.reset();
+            peer().pairReceive.reset();
+            peer().remotePrefixKnown = false;
             if (!sendCipher.valid() || !receiveCipher.valid()
                 || !BCRYPT_SUCCESS(BCryptGenRandom(
                     nullptr, peer().noncePrefix.data(), static_cast<ULONG>(peer().noncePrefix.size()),
@@ -2371,9 +2399,45 @@ private:
         }
     }
 
+    // Builds this pair's ciphers from the two nonce prefixes.
+    //
+    // Both ends sort the pair before hashing it, so each computes the same key
+    // without having to agree which of them is first. Nothing is committed to
+    // the slot until a packet has actually authenticated under the result --
+    // otherwise anyone able to send a datagram could replace a live session's
+    // keys just by putting a different prefix in a header.
+    [[nodiscard]] bool buildPairCiphers(
+        std::span<const std::uint8_t, noncePrefixBytes> remotePrefix,
+        std::optional<AesGcmCipher>& sendOut,
+        std::optional<AesGcmCipher>& receiveOut) noexcept {
+        std::array<std::uint8_t, 32U> sendKey{};
+        std::array<std::uint8_t, 32U> receiveKey{};
+        const auto asDirection = [](Direction direction) {
+            return direction == Direction::HostToGuest
+                ? KeyDirection::HostToGuest : KeyDirection::GuestToHost;
+        };
+        const bool derived = derivePeerKey(
+                std::span<const std::uint8_t, 32U>(secret_),
+                std::span<const std::uint8_t, noncePrefixBytes>(peer().noncePrefix),
+                remotePrefix, asDirection(peer().sendDirection),
+                std::span<std::uint8_t, 32U>(sendKey))
+            && derivePeerKey(
+                std::span<const std::uint8_t, 32U>(secret_),
+                std::span<const std::uint8_t, noncePrefixBytes>(peer().noncePrefix),
+                remotePrefix, asDirection(peer().receiveDirection),
+                std::span<std::uint8_t, 32U>(receiveKey));
+        if (derived) {
+            sendOut.emplace(std::span<const std::uint8_t, 32U>(sendKey));
+            receiveOut.emplace(std::span<const std::uint8_t, 32U>(receiveKey));
+        }
+        SecureZeroMemory(sendKey.data(), sendKey.size());
+        SecureZeroMemory(receiveKey.data(), receiveKey.size());
+        return derived && sendOut->valid() && receiveOut->valid();
+    }
+
     [[nodiscard]] bool handlePacket(
         AesGcmCipher& sendCipher,
-        AesGcmCipher& receiveCipher,
+        AesGcmCipher& roomReceiveCipher,
         std::span<const std::uint8_t> packet,
         std::array<std::uint8_t, maximumPlaintextBytes>& plaintext,
         const sockaddr_in& source,
@@ -2399,12 +2463,51 @@ private:
         const auto ciphertext = packet.subspan(headerBytes, payloadBytes);
         const auto tag = std::span<const std::uint8_t, tagBytes>(
             packet.data() + headerBytes + payloadBytes, tagBytes);
-        if (!receiveCipher.decrypt(
+        // The type is in the header, so which key opens this is decided before
+        // anything is decrypted rather than after.
+        const PacketType type = static_cast<PacketType>(packet[5U]);
+        const auto carriedPrefix = std::span<const std::uint8_t, noncePrefixBytes>(
+            packet.data() + 20U, noncePrefixBytes);
+        const bool prefixMatchesSession = peer().remotePrefixKnown
+            && std::memcmp(carriedPrefix.data(), peer().remoteNoncePrefix.data(),
+                           noncePrefixBytes) == 0;
+
+        // Candidates, held aside until the packet proves they are the right
+        // keys. A peer that restarts arrives with a new prefix, and that has to
+        // work -- but so does refusing to let a forged header tear down a
+        // session that is running perfectly well.
+        std::optional<AesGcmCipher> candidateSend;
+        std::optional<AesGcmCipher> candidateReceive;
+        AesGcmCipher* opener = nullptr;
+        if (type == PacketType::Hello) {
+            // The join request cannot be pair-keyed: whoever sent it had not
+            // heard from us yet and could not know our prefix.
+            opener = &roomReceiveCipher;
+        } else if (prefixMatchesSession && peer().pairReceive.has_value()) {
+            opener = &*peer().pairReceive;
+        } else if (buildPairCiphers(carriedPrefix, candidateSend, candidateReceive)) {
+            opener = &*candidateReceive;
+        } else {
+            return false;
+        }
+        if (!opener->decrypt(
                 packet.first(headerBytes), ciphertext, tag,
                 std::span<std::uint8_t>(plaintext.data(), payloadBytes))) {
             return false;
         }
-        const PacketType type = static_cast<PacketType>(packet[5U]);
+        // Authenticated, so the prefix it carried is theirs and the keys built
+        // from it are this pair's. Committed only here.
+        if (!prefixMatchesSession || !peer().pairSend.has_value()) {
+            // Derived straight into the slot rather than moved into it: a
+            // cipher owns a platform key handle and is deliberately neither
+            // copyable nor movable. This runs once when a peer arrives or
+            // restarts, never per packet.
+            if (buildPairCiphers(carriedPrefix, peer().pairSend, peer().pairReceive)) {
+                std::memcpy(
+                    peer().remoteNoncePrefix.data(), carriedPrefix.data(), noncePrefixBytes);
+                peer().remotePrefixKnown = true;
+            }
+        }
         const std::uint32_t sequence = readU32(packet.data() + 8U);
         // While a guest is still finding a path, the answer legitimately comes
         // back from an address it has not settled on: a router may rewrite the
