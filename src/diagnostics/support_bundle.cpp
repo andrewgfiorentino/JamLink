@@ -126,6 +126,10 @@ std::string renderSupportBundle(const SupportSnapshot& snapshot) {
     writeField(out, "uncompressed packets decoded", snapshot.pcmPacketsDecoded);
     writeField(out, "undecodable packets", snapshot.undecodablePackets);
     writeField(out, "encode failures", snapshot.encodeFailures);
+    writeField(out, "limited send samples", snapshot.limitedSendSamples);
+    writeField(out, "bitrate reductions",
+        static_cast<std::uint64_t>(snapshot.bitrateReductions));
+    writeField(out, "uplink out of room", snapshot.uplinkExhausted);
 
     out << "\nAudio\n";
     // Device and audio system together, per endpoint. They can differ, and
@@ -228,6 +232,9 @@ std::string renderSupportBundleJson(const SupportSnapshot& snapshot) {
     number("pcmPacketsDecoded", snapshot.pcmPacketsDecoded);
     number("undecodablePackets", snapshot.undecodablePackets);
     number("encodeFailures", snapshot.encodeFailures);
+    number("limitedSendSamples", snapshot.limitedSendSamples);
+    number("bitrateReductions", snapshot.bitrateReductions);
+    flag("uplinkExhausted", snapshot.uplinkExhausted);
     text("instrumentDevice", snapshot.instrumentDevice);
     text("instrumentBackend", snapshot.instrumentBackend);
     text("voiceDevice", snapshot.voiceDevice);

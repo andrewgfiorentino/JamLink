@@ -1643,6 +1643,9 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.pcmPacketsDecoded = peerTelemetry_.pcmPacketsDecoded;
     snapshot.undecodablePackets = peerTelemetry_.undecodablePackets;
     snapshot.encodeFailures = peerTelemetry_.encodeFailures;
+    snapshot.limitedSendSamples = peerTelemetry_.limitedSendSamples;
+    snapshot.bitrateReductions = peerTelemetry_.bitrateReductions;
+    snapshot.uplinkExhausted = peerTelemetry_.uplinkExhausted;
 
     // Device names, never the paths or identifiers they were resolved from.
     const auto deviceName = [](const std::vector<DeviceOption>& options, int index) {
@@ -1837,7 +1840,41 @@ void AppController::finaliseTake() {
     }
     static_cast<void>(
         jamlink::record::TakeJournal::finalise(activeTakeDirectory_, activeTake_));
+    writeTakeProjectFile();
     activeTakeDirectory_.clear();
+}
+
+// A folder of aligned WAV files is the right thing to write, and it still
+// leaves the musician dragging six of them onto a timeline and trusting they
+// line up -- which is exactly the moment a good take gets ruined by a nudge.
+// The alignment is something JamLink knows for certain, so it is written down.
+//
+// Failure here is deliberately silent. The take itself is already finalised and
+// verified by this point; a project file that could not be written is a
+// convenience missing, not a recording lost, and saying so would put an error
+// in front of a musician about something that costs them nothing.
+void AppController::writeTakeProjectFile() {
+    if (activeTake_.sources.empty()) {
+        return;
+    }
+    // Names as people rather than as profile identifiers. The manifest carries
+    // identifiers because those are what survive being exchanged; a track
+    // header is read by one person who knows who they played with.
+    auto manifest = activeTake_;
+    for (auto& source : manifest.sources) {
+        if (source.origin == "network-received") {
+            source.participantId = remoteParticipant_.displayName.empty()
+                ? remoteDisplayName().toStdString() : remoteParticipant_.displayName;
+        } else {
+            source.participantId = preferences_.profile.displayName;
+        }
+    }
+    const auto path = activeTakeDirectory_ / "take.rpp";
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return;
+    }
+    file << jamlink::record::writeReaperProject(manifest);
 }
 
 // Anything left mid-recording by a crash is found, kept, and marked as needing
@@ -3029,7 +3066,42 @@ QJsonObject AppController::roomCompatibility() const {
     };
 }
 
+// What this connection has to carry, and whether one more will fit.
+//
+// The bitrate currently in use rather than the one the build starts at: if the
+// link has already stepped down to fit the people here, it has more room than
+// the nominal figure would suggest, and this and the bitrate controller would
+// otherwise contradict each other.
+jamlink::control::RoomCapacityResult AppController::roomCapacity() const {
+    jamlink::control::RoomCapacityEvidence evidence;
+    evidence.participants = static_cast<std::uint32_t>(std::max(roomParticipantCount(), 1));
+    evidence.streamsPerParticipant =
+        static_cast<std::uint32_t>(jamlink::network::audioStreamCount);
+    evidence.bitsPerSecondPerStream = peerTelemetry_.audioBitsPerSecond == 0U
+        ? 96'000U : peerTelemetry_.audioBitsPerSecond;
+    evidence.sendRateAlreadyReduced = peerTelemetry_.bitrateReductions > 0U;
+    return jamlink::control::evaluateRoomCapacity(evidence);
+}
+
+bool AppController::roomHasSpace() const { return roomCapacity().canAdmitAnother; }
+
+QString AppController::roomCapacityAdvice() const {
+    const auto advice = roomCapacity().advice();
+    return QString::fromUtf8(advice.data(), static_cast<qsizetype>(advice.size()));
+}
+
 void AppController::decideWaitingRequest(const QString& requestId, bool admit) {
+    // Refused here rather than only greyed out in the interface. A room that
+    // cannot carry another musician must not admit one because a button was
+    // reachable by some other route, and the person waiting is better told now
+    // than after everybody's audio has broken up.
+    if (admit && !roomHasSpace()) {
+        roomDirectory_.decide(requestId, false);
+        setupMessage_ = roomCapacityAdvice();
+        emit roomChanged();
+        emit setupChanged();
+        return;
+    }
     roomDirectory_.decide(requestId, admit);
 }
 
