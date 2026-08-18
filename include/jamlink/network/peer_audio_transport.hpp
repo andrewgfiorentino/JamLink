@@ -168,6 +168,12 @@ struct PeerTransportTelemetry final {
     // previously confirm or contradict it.
     std::uint64_t sessionsEstablished{0U};
 
+    // Samples the send limiter had to hold below full scale on their way out.
+    // Diagnostic only, and never a substitute for the clip latch: the fix for
+    // a hot input is the gain knob, and a limiter that quietly cleaned it up
+    // would remove the reason to go and turn it down.
+    std::uint64_t limitedSendSamples{0U};
+
     // Path finding. A guest probes every address the invite named until one
     // answers. Both figures matter in a failure report: probes prove packets
     // actually left, and a round that exhausted every candidate without an

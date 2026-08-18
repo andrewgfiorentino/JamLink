@@ -37,6 +37,10 @@ struct SupportSnapshot final {
     std::uint64_t pcmPacketsDecoded{0U};
     std::uint64_t undecodablePackets{0U};
     std::uint64_t encodeFailures{0U};
+    // Samples the send limiter held below full scale on the way out. Zero is
+    // the normal state; a large number means the input gain is too high and
+    // the friend has been hearing the ceiling.
+    std::uint64_t limitedSendSamples{0U};
 
     // Audio path. Device identities are names, never file paths.
     //

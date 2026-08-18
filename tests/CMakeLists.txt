@@ -91,6 +91,16 @@ add_test(NAME jamlink_ice_agent_tests COMMAND jamlink_ice_agent_tests)
 set_tests_properties(jamlink_ice_agent_tests PROPERTIES
     TIMEOUT 30 LABELS "network;traversal")
 
+add_executable(jamlink_send_limiter_tests send_limiter_tests.cpp)
+target_link_libraries(jamlink_send_limiter_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_send_limiter_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_send_limiter_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_send_limiter_tests)
+
+add_test(NAME jamlink_send_limiter_tests COMMAND jamlink_send_limiter_tests)
+set_tests_properties(jamlink_send_limiter_tests PROPERTIES
+    TIMEOUT 30 LABELS "audio;send")
+
 add_executable(jamlink_nat_behaviour_tests nat_behaviour_tests.cpp)
 target_link_libraries(jamlink_nat_behaviour_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_nat_behaviour_tests PRIVATE cxx_std_20)

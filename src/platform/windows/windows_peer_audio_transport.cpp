@@ -16,6 +16,7 @@
 #include "jamlink/audio/async_mono_resampler.hpp"
 #include "jamlink/diagnostics/session_log.hpp"
 #include "jamlink/audio/gain_stage.hpp"
+#include "jamlink/audio/send_limiter.hpp"
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
@@ -1374,6 +1375,9 @@ public:
         snapshot.sessionsEstablished =
             sessionsEstablished_.load(std::memory_order_relaxed);
         snapshot.natBehaviour = natBehaviour_.load(std::memory_order_acquire);
+        for (const auto& limiter : sendLimiters_) {
+            snapshot.limitedSendSamples += limiter.limitedSamples();
+        }
         snapshot.candidateProbesSent = iceProbes_.load(std::memory_order_relaxed);
         snapshot.candidateRoundsExhausted = iceRounds_.load(std::memory_order_relaxed);
         snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
@@ -1689,6 +1693,9 @@ private:
     void launchWorker() {
         stopRequested_.store(false, std::memory_order_release);
         packetsSent_.store(0U, std::memory_order_relaxed);
+        for (auto& limiter : sendLimiters_) {
+            limiter.prepare(networkSampleRate);
+        }
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
         sessionsEstablished_.store(0U, std::memory_order_relaxed);
@@ -2221,6 +2228,12 @@ private:
             // to drop. The loop ends of its own accord when nothing is due.
             while (pacer.release(
                 nowMicros, std::span<float>(networkFloat.data(), networkFloat.size()))) {
+                // Last thing before the encoder, and only on what leaves the
+                // machine. The monitor, the recording, and above all the
+                // pristine local originals never see this: the originals are
+                // what was played and have to stay lossless.
+                sendLimiters_[index].process(
+                    std::span<float>(networkFloat.data(), networkFloat.size()));
                 const std::size_t written = encoders[index].encode(
                     std::span<const float>(networkFloat.data(), networkFloat.size()),
                     std::span<std::uint8_t>(networkPcm));
@@ -2527,6 +2540,8 @@ private:
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
     std::atomic<std::uint64_t> packetsSent_{0U};
     std::atomic<std::uint64_t> sessionsEstablished_{0U};
+    // Owned by the network worker, which is the only thread that encodes.
+    std::array<jamlink::audio::SendLimiter, audioStreamCount> sendLimiters_{};
     // Candidate negotiation. Both are written in join() before the worker
     // starts and afterwards touched only by the worker thread.
     std::vector<IceCandidate> remoteCandidates_;
