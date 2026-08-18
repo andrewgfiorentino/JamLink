@@ -222,6 +222,47 @@ Those are judgement rather than substitution, which is why they are separated
 from the move above: a half-converted worker is the one failure mode that
 cannot be shipped at all.
 
+### The decisions that have to be made before that code is written
+
+Written down because they are the expensive part to re-derive, not the typing.
+
+**Attributing a packet.** Match the source address against live slots first. A
+packet that matches nothing and is not a join request is rejected. A join
+request that matches nothing asks for a slot. That ordering matters: the other
+way round, anyone could take a slot by sending anything.
+
+**Allocating a slot.** First free one, refused when the room is full — the
+capacity guard already answers whether there is room, and it should be asked
+here rather than a second rule invented. A refused musician has to be told,
+because silence is indistinguishable from a network that never carried them.
+
+**What a room being connected means.** Today one flag answers it. With several
+peers there are at least two honest answers — anybody is here, everybody the
+roster names is here — and the conductor, the room screen, and the recording
+gate do not obviously want the same one. Decide once, name it, and let all
+three read it.
+
+**When a peer times out.** Per-peer now, but freeing the slot immediately loses
+the endpoint that a reconnect would reuse, which is the thing that currently
+lets a session re-form without a new invite. Probably: keep the slot and its
+addresses, mark it not connected, free it only when somebody else needs it.
+
+**Sending to several peers.** The pacer releases one packet on a schedule. That
+packet is encoded once and sealed once per peer, so the release must not be
+drained per peer or every musician after the first gets silence. This is the
+single easiest place in the whole conversion to introduce a fault that only
+appears with three people.
+
+**What becomes per-peer in telemetry.** Round trip, buffer depth, jitter and
+concealment are one number each today, and the interface shows one friend.
+Either they become per-peer and the room screen grows, or they are aggregated
+and the bundle stops being able to say which musician the trouble was with.
+The second is cheaper and worse.
+
+**Mixing.** Playback pulls from one peer’s receivers. With several it mixes
+them, which is where per-participant level and mute stop being a convenience
+and start being how somebody deals with one person’s bad connection.
+
 **4. Mixing, and the interface.** Each remote participant needs its own level,
 mute, meter, and jitter buffer — the per-stream controls that exist for one
 friend, per person. The interface is already scaffolded for this: the room page
