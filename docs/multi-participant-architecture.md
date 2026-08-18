@@ -192,8 +192,17 @@ Two things it gets right and one thing it does not do:
   already knows the host’s addresses can re-form a dropped session without
   being handed a fresh invite. The first version of the test asserted
   one-directional reporting, which was a guess rather than a requirement.
-- **It does not yet distribute.** The creator knows everyone; nobody is told
-  about anybody else.
+- **It distributes.** The creator forwards what it knows to each member, so two
+  musicians who joined the same host are introduced and open a session between
+  them. A room of three is a room rather than a star.
+
+  Carried on the same packet a musician uses to say where they are. A separate
+  packet type was written first and was worse: one more thing on the wire for
+  no gain, and the interesting question -- whether to believe an address list
+  about somebody else -- is answered by who sent it rather than by which packet
+  it arrived on. A musician may always describe themselves; only the peer whose
+  invite we used may describe anybody else, because joining their room is
+  already choosing to trust them with it.
 
 **The worker is converted.** It was written around exactly one peer: one
 handshake, one connected flag, one timeout, one probe schedule, one cipher

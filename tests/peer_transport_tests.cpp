@@ -1186,6 +1186,54 @@ void admitsASecondMusicianAndSendsToBoth() {
 // deadline would have timed the whole room out on the silence of whoever left.
 // It is also where "connected" and "complete" visibly stop being the same
 // question: two people can still play, and the room is no longer whole.
+// The property that makes a mesh a mesh rather than a star: two musicians who
+// each joined the same host end up hearing each other directly.
+//
+// Everything else in a room of three works without this. Both guests reach the
+// host, the host reaches both, the pacer fans out correctly, and every other
+// three-person assertion passes -- while Mike cannot hear Sam. Three people who
+// cannot all hear each other is not a room, so this is asserted out loud rather
+// than inferred from the rest passing.
+void twoGuestsAreIntroducedAndHearEachOther() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto first = jamlink::network::createPlatformPeerAudioTransport();
+    auto second = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !first || !second) {
+        check(false, "introduction harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    first->setLocalParticipant(participant("profile-first", "Mike"));
+    second->setLocalParticipant(participant("profile-second", "Sam"));
+
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty() || !first->join(invite) || !waitForConnected(*host, *first)
+        || !second->join(invite)
+        || !waitForPeerCount(*host, 2U, std::chrono::milliseconds(6'000))) {
+        check(false, "introduction harness connects both guests to the host");
+        return;
+    }
+
+    const auto peaks = pumpRoom(
+        {host.get(), first.get(), second.get()},
+        std::chrono::milliseconds(6'000), std::chrono::milliseconds(1'500));
+
+    check(waitForPeerCount(*first, 2U, std::chrono::milliseconds(4'000)),
+          "a guest ends up in session with the other guest, not only the host");
+    check(waitForPeerCount(*second, 2U, std::chrono::milliseconds(4'000)),
+          "and the other guest likewise");
+    check(peaks[1] > audibleThreshold && peaks[2] > audibleThreshold,
+          "audio reaches both guests once the room is whole");
+    // Nobody is introduced to themselves, which would have a machine dialling
+    // its own address for the rest of the session.
+    check(first->telemetry().connectedPeers <= 2U,
+          "a guest opens one session per other musician and no more");
+
+    second->stop();
+    first->stop();
+    host->stop();
+}
+
 void oneMusicianLeavingLeavesTheRestPlaying() {
     auto host = jamlink::network::createPlatformPeerAudioTransport();
     auto staying = jamlink::network::createPlatformPeerAudioTransport();
@@ -1344,6 +1392,7 @@ int main() {
     rejectsIncompatibleApplicationBuild();
     additionalGuestCannotDisplaceActivePerformer();
     admitsASecondMusicianAndSendsToBoth();
+    twoGuestsAreIntroducedAndHearEachOther();
     oneMusicianLeavingLeavesTheRestPlaying();
     aRefusedMusicianIsToldRatherThanLeftWaiting();
 
