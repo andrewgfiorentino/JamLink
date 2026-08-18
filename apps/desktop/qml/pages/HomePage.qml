@@ -30,7 +30,9 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: 22
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 9
+            // Zero, because the two halves of the name must touch. The gap
+            // after the meter is its own spacer.
+            spacing: 0
             LevelBar {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 27
@@ -38,10 +40,25 @@ Item {
                 segmentCount: 7
                 level: 0.72
             }
+            Item { width: 9; height: 1 }
+            // The product is called JamLink. This read "JAM" -- not clipped by a
+            // layout, simply half a name in the source, which is why it kept
+            // looking like an occlusion bug and kept coming back. Two runs
+            // rather than one string so the second half carries the accent,
+            // and so losing it would be a visible deletion instead of an edit
+            // to a literal nobody re-reads.
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: "JAM"
+                text: "Jam"
                 color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: 20
+                font.weight: Font.DemiBold
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Link"
+                color: Theme.accentBright
                 font.family: Theme.fontFamily
                 font.pixelSize: 20
                 font.weight: Font.DemiBold
