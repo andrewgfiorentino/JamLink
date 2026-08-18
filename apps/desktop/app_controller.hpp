@@ -85,7 +85,15 @@ class AppController final : public QObject {
     Q_PROPERTY(QString voiceSignalGuidance READ voiceSignalGuidance NOTIFY setupChanged)
     Q_PROPERTY(QString outputSignalGuidance READ outputSignalGuidance NOTIFY setupChanged)
     Q_PROPERTY(bool roomActive READ roomActive NOTIFY roomChanged)
+    // Two questions, not one. peerConnected is "is anybody here", which is
+    // what decides whether a musician can play at all; roomComplete is
+    // "is everybody here", which is what says the room is still filling up.
+    // Both come from the transport, which names them once so that the room
+    // screen, the conductor and the recording gate cannot answer them
+    // differently from one another.
     Q_PROPERTY(bool peerConnected READ peerConnected NOTIFY roomChanged)
+    Q_PROPERTY(bool roomComplete READ roomComplete NOTIFY roomChanged)
+    Q_PROPERTY(int connectedPeerCount READ connectedPeerCount NOTIFY roomChanged)
     Q_PROPERTY(QString roomStatus READ roomStatus NOTIFY roomChanged)
     Q_PROPERTY(QString inviteCode READ inviteCode NOTIFY roomChanged)
     Q_PROPERTY(bool privateRoomCodesAvailable READ privateRoomCodesAvailable CONSTANT)
@@ -278,6 +286,8 @@ public:
     [[nodiscard]] QString outputSignalGuidance() const;
     [[nodiscard]] bool roomActive() const noexcept;
     [[nodiscard]] bool peerConnected() const noexcept;
+    [[nodiscard]] bool roomComplete() const noexcept;
+    [[nodiscard]] int connectedPeerCount() const noexcept;
     [[nodiscard]] QString roomStatus() const;
     [[nodiscard]] QString inviteCode() const;
     [[nodiscard]] bool privateRoomCodesAvailable() const noexcept;

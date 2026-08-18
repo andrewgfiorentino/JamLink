@@ -206,6 +206,9 @@ if(WIN32)
     set_target_properties(jamlink_peer_transport_tests PROPERTIES CXX_EXTENSIONS OFF)
     jamlink_set_warnings(jamlink_peer_transport_tests)
     add_test(NAME jamlink_peer_transport_tests COMMAND jamlink_peer_transport_tests)
+    # A room of six on loopback, and one departure that has to cross a real
+    # five-second receive deadline. The two-person suite fitted in seventy
+    # seconds; a mesh does not.
     set_tests_properties(jamlink_peer_transport_tests PROPERTIES
-        TIMEOUT 70 LABELS "network;loopback")
+        TIMEOUT 180 LABELS "network;loopback;mesh")
 endif()
