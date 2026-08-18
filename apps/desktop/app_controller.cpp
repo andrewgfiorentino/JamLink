@@ -3066,7 +3066,42 @@ QJsonObject AppController::roomCompatibility() const {
     };
 }
 
+// What this connection has to carry, and whether one more will fit.
+//
+// The bitrate currently in use rather than the one the build starts at: if the
+// link has already stepped down to fit the people here, it has more room than
+// the nominal figure would suggest, and this and the bitrate controller would
+// otherwise contradict each other.
+jamlink::control::RoomCapacityResult AppController::roomCapacity() const {
+    jamlink::control::RoomCapacityEvidence evidence;
+    evidence.participants = static_cast<std::uint32_t>(std::max(roomParticipantCount(), 1));
+    evidence.streamsPerParticipant =
+        static_cast<std::uint32_t>(jamlink::network::audioStreamCount);
+    evidence.bitsPerSecondPerStream = peerTelemetry_.audioBitsPerSecond == 0U
+        ? 96'000U : peerTelemetry_.audioBitsPerSecond;
+    evidence.sendRateAlreadyReduced = peerTelemetry_.bitrateReductions > 0U;
+    return jamlink::control::evaluateRoomCapacity(evidence);
+}
+
+bool AppController::roomHasSpace() const { return roomCapacity().canAdmitAnother; }
+
+QString AppController::roomCapacityAdvice() const {
+    const auto advice = roomCapacity().advice();
+    return QString::fromUtf8(advice.data(), static_cast<qsizetype>(advice.size()));
+}
+
 void AppController::decideWaitingRequest(const QString& requestId, bool admit) {
+    // Refused here rather than only greyed out in the interface. A room that
+    // cannot carry another musician must not admit one because a button was
+    // reachable by some other route, and the person waiting is better told now
+    // than after everybody's audio has broken up.
+    if (admit && !roomHasSpace()) {
+        roomDirectory_.decide(requestId, false);
+        setupMessage_ = roomCapacityAdvice();
+        emit roomChanged();
+        emit setupChanged();
+        return;
+    }
     roomDirectory_.decide(requestId, admit);
 }
 

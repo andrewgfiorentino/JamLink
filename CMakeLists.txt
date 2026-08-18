@@ -116,6 +116,7 @@ add_library(jamlink_core STATIC
     src/network/nat_behaviour.cpp
     src/network/bitrate_controller.cpp
     src/record/daw_project.cpp
+    src/control/room_capacity.cpp
     src/network/peer_audio_codec.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp

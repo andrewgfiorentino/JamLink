@@ -7,6 +7,7 @@
 
 #include "jamlink/audio/soundcheck_audio_service.hpp"
 #include "jamlink/control/readiness_tracker.hpp"
+#include "jamlink/control/room_capacity.hpp"
 #include "jamlink/control/session_conductor.hpp"
 #include "jamlink/diagnostics/support_bundle.hpp"
 #include "jamlink/record/daw_project.hpp"
@@ -166,6 +167,11 @@ class AppController final : public QObject {
     Q_PROPERTY(QString sessionPhase READ sessionPhase NOTIFY roomChanged)
     Q_PROPERTY(QString monitorPathSummary READ monitorPathSummary NOTIFY setupChanged)
     Q_PROPERTY(QString settingsSessionNotice READ settingsSessionNotice NOTIFY roomChanged)
+    // Mesh: everyone sends to everyone, so one more musician costs every
+    // musician already here more upload. Said before somebody is admitted,
+    // never discovered after the room has got worse for all of them.
+    Q_PROPERTY(bool roomHasSpace READ roomHasSpace NOTIFY roomChanged)
+    Q_PROPERTY(QString roomCapacityAdvice READ roomCapacityAdvice NOTIFY roomChanged)
     Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
 
     // Three real devices can each work perfectly and still be unable to run
@@ -377,6 +383,8 @@ public:
     Q_INVOKABLE QString exportSupportBundle();
     [[nodiscard]] QString monitorPathSummary() const;
     [[nodiscard]] QString settingsSessionNotice() const;
+    [[nodiscard]] bool roomHasSpace() const;
+    [[nodiscard]] QString roomCapacityAdvice() const;
     [[nodiscard]] bool asioActive() const noexcept;
     [[nodiscard]] bool audioSetupBlocked() const;
     [[nodiscard]] QString audioSetupAdvice() const;
@@ -510,6 +518,7 @@ private:
     // selections rather than of the last start attempt, so the answer is
     // already there when a musician picks an impossible combination and does
     // not have to wait for a failure to find out.
+    [[nodiscard]] jamlink::control::RoomCapacityResult roomCapacity() const;
     [[nodiscard]] jamlink::audio::AudioTopologyResult currentTopology() const;
     // Where in the affected selector the named interface actually is, or -1
     // when nothing enumerated satisfies the diagnosis.

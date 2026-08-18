@@ -110,7 +110,11 @@ detection, the tuner, recording, and what your friend hears all continue.
 ## Known limitations
 
 - **Windows only**, x64.
-- **Two people per room.** Larger sessions are not implemented.
+- **Two people per room.** A small group is the goal and the design is settled
+  on a full mesh — everyone sending directly to everyone — but the transport
+  still carries exactly one peer. See
+  [docs/multi-participant-architecture.md](docs/multi-participant-architecture.md)
+  for the plan and the bandwidth arithmetic behind it.
 - **No relay, and no rendezvous yet.** The guest probes every address the
   invite named, but the host cannot punch outward until it has heard from the
   guest. If both ends are behind carrier-grade or symmetric NAT, a direct
