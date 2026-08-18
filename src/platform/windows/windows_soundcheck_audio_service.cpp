@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Andrew Fiorentino
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "jamlink/audio/audio_topology.hpp"
 #include "windows_audio_services.hpp"
 
 #include <algorithm>
@@ -33,19 +34,37 @@ public:
 
     [[nodiscard]] bool start(const SoundcheckAudioConfiguration& configuration) override {
         stop();
-        const auto backend = configuration.output.backend;
-        const bool validWasapi = backend == SoundcheckBackend::WasapiShared
-            && configuration.instrument.backend == SoundcheckBackend::WasapiShared
-            && configuration.voice.backend == SoundcheckBackend::WasapiShared;
-        const bool validAsioMaster = backend == SoundcheckBackend::Asio
-            && configuration.instrument.backend == SoundcheckBackend::Asio;
-        if (!validWasapi && !validAsioMaster) {
+        // Whether these three devices can run together is decided in one
+        // place, and the same answer reaches the interface and the support
+        // bundle. This used to be judged here from the output's backend alone,
+        // which rejected a legitimate setup -- an interface for the guitar with
+        // a USB microphone for voice -- as an unsupported format, when nothing
+        // about any format was unsupported and the engine simply never started.
+        const auto asEndpoint = [](const SoundcheckEndpointOption& option,
+                                   SoundcheckBackend backend) {
+            AudioTopologyEndpoint endpoint;
+            endpoint.backend = backend;
+            endpoint.endpointId = option.endpointId;
+            endpoint.displayName = option.displayName;
+            return endpoint;
+        };
+        AudioTopology topology;
+        topology.instrument =
+            asEndpoint(configuration.instrument, configuration.instrument.backend);
+        topology.voice = asEndpoint(configuration.voice, configuration.voice.backend);
+        topology.output = asEndpoint(configuration.output, configuration.output.backend);
+        lastTopology_ = evaluateAudioTopology(topology);
+        if (!lastTopology_.supported) {
             lastTelemetry_ = {};
+            // Reported as a configuration problem rather than a device format
+            // problem, because that is what it is and the difference decides
+            // what a musician is told to do about it.
             lastTelemetry_.state = SoundcheckAudioState::UnsupportedFormat;
             lastTelemetry_.nativeError = -1;
             return false;
         }
-        active_ = backend == SoundcheckBackend::Asio ? asio_.get() : wasapi_.get();
+        active_ = lastTopology_.masterBackend == SoundcheckBackend::Asio
+            ? asio_.get() : wasapi_.get();
         active_->setPeerAudioExchange(peerExchange_);
         active_->setTunerEnabled(tunerEnabled_);
         active_->setMonitorControls(
@@ -56,6 +75,10 @@ public:
             return false;
         }
         return true;
+    }
+
+    [[nodiscard]] AudioTopologyResult audioTopology() const noexcept override {
+        return lastTopology_;
     }
 
     void stop() noexcept override {
@@ -150,6 +173,7 @@ private:
     std::unique_ptr<ISoundcheckAudioService> wasapi_;
     std::unique_ptr<ISoundcheckAudioService> asio_;
     ISoundcheckAudioService* active_{nullptr};
+    AudioTopologyResult lastTopology_{};
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
     float instrumentGain_{1.0F};
     float voiceGain_{1.0F};

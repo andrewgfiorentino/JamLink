@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include "jamlink/audio/audio_topology.hpp"
+#include "jamlink/audio/soundcheck_backend.hpp"
+
 #include "jamlink/audio/instrument_tuner.hpp"
 #include "jamlink/audio/level_meter.hpp"
 #include "jamlink/record/session_recorder.hpp"
@@ -18,11 +21,6 @@ class IPeerAudioExchange;
 }
 
 namespace jamlink::audio {
-
-enum class SoundcheckBackend : std::uint8_t {
-    WasapiShared,
-    Asio
-};
 
 struct SoundcheckEndpointOption final {
     std::string endpointId;
@@ -177,6 +175,14 @@ public:
     // callback. No test sample may reach monitor, recording, or network buses.
     virtual void requestSignalHealthSelfTest(SignalHealthPath) noexcept {}
     [[nodiscard]] virtual SoundcheckAudioTelemetry telemetry() const noexcept = 0;
+
+    // Whether the chosen devices can run together, and the one thing to change
+    // if not. Defaulted so only the dispatcher, which owns the decision, has to
+    // answer it. The interface and the support bundle both read this rather
+    // than each re-deriving the rules.
+    [[nodiscard]] virtual AudioTopologyResult audioTopology() const noexcept {
+        return {};
+    }
 };
 
 [[nodiscard]] std::unique_ptr<ISoundcheckAudioService>
