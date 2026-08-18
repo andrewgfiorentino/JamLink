@@ -145,13 +145,123 @@ fine until the second peer arrives.
 This changes the key a duo uses, so both people must install it — already true
 of every release.
 
-**3. Room membership.** Today an invite names one host and the guest connects
-to it. With a mesh, a third musician has to end up connected to *both* of the
-first two, which means the room has to tell arriving members about each other.
-The signalling service already models a session as a set of participants with a
-bounded roster, which is the shape this needs; it is not deployed, so the first
-version can distribute membership over the existing authenticated control
-channel from whoever created the room.
+**3. Room membership. — roster done, transport next.** An invite names one host
+and the guest connects to it. In a mesh, if Andrew hosts and Mike and Sam each
+join him, Mike and Sam are in the same room, have never heard of each other,
+and must be connected directly — because that is what a mesh is.
+
+`jamlink::network::RoomRoster` holds who is present, where each of them can be
+reached, and answers the question that has no obvious owner: **which end of a
+pair reaches out.**
+
+That question is the substance of this step. Every pair has to agree, without
+asking each other, which end plays the part the host plays today — the
+direction keys and the handshake both depend on it. Two hosts, or two guests,
+is a session that never forms and reports nothing while not forming. Both ends
+therefore run the same comparison over the same two participant identifiers and
+reach opposite answers with nothing exchanged. Identical identifiers are
+reported as undecidable rather than guessed, because a copied identity must not
+be able to make somebody open a second session against their own name.
+
+Two more rules the roster carries:
+
+- **Reconnecting replaces addresses rather than adding them.** Somebody whose
+  router gave them a new port would otherwise leave everyone probing where
+  nobody is.
+- **Acting on it is idempotent.** The roster arrives on every change and again
+  on every reconnect, so a room must not accumulate duplicate sessions with the
+  same person.
+
+Introductions come from whoever created the room, since they are the only
+participant guaranteed to know everyone. That has a consequence worth stating
+rather than discovering: **if the room’s creator leaves, existing pairs keep
+playing but nobody new can be introduced.** A duo has the same property today
+and nobody notices, because there is nobody left to introduce.
+
+**Half wired.** There is now a `Candidates` packet, and both ends send it once
+a session is up. Each end therefore knows where the other can actually be
+reached, and the room’s creator accumulates a roster with something real in it
+to introduce people with.
+
+Two things it gets right and one thing it does not do:
+
+- **An address list is believed only after it authenticates**, and only when it
+  names the participant this session already proved. It is what everyone else
+  will be told to probe, so an unverified one would let anybody redirect a room.
+- **Both ends report**, which is right rather than incidental: a guest that
+  already knows the host’s addresses can re-form a dropped session without
+  being handed a fresh invite. The first version of the test asserted
+  one-directional reporting, which was a guess rather than a requirement.
+- **It does not yet distribute.** The creator knows everyone; nobody is told
+  about anybody else.
+
+**What is left, and why it is not a small change.** The worker loop was written
+around exactly one peer: one handshake, one connected flag, one timeout, one
+probe schedule, one cipher pair.
+
+**The session state has moved.** `connected`, the receive deadline, and the
+hello and ping clocks were locals in the worker. They are per-peer now, which
+is the part of the conversion that could be done mechanically and proved by the
+compiler: the locals were deleted, so anything still expecting them fails to
+build rather than quietly sharing one musician’s connection state with another.
+
+It matters more than it looks. A single connected flag cannot describe a room
+where one musician is present and another has dropped, and a single receive
+deadline would time the whole room out on the silence of whoever left.
+
+**Two things remain, and neither is mechanical:**
+
+- **Routing.** An arriving packet is still assumed to be from *the* peer. It
+  has to be attributed to one — by source address once a session holds, and by
+  slot allocation when a stranger sends a join request.
+- **Fan-out and lifecycle.** The worker services one session per pass. It has
+  to service each live slot, open one when the roster says to, and let one peer
+  time out without disturbing the others.
+
+Those are judgement rather than substitution, which is why they are separated
+from the move above: a half-converted worker is the one failure mode that
+cannot be shipped at all.
+
+### The decisions that have to be made before that code is written
+
+Written down because they are the expensive part to re-derive, not the typing.
+
+**Attributing a packet.** Match the source address against live slots first. A
+packet that matches nothing and is not a join request is rejected. A join
+request that matches nothing asks for a slot. That ordering matters: the other
+way round, anyone could take a slot by sending anything.
+
+**Allocating a slot.** First free one, refused when the room is full — the
+capacity guard already answers whether there is room, and it should be asked
+here rather than a second rule invented. A refused musician has to be told,
+because silence is indistinguishable from a network that never carried them.
+
+**What a room being connected means.** Today one flag answers it. With several
+peers there are at least two honest answers — anybody is here, everybody the
+roster names is here — and the conductor, the room screen, and the recording
+gate do not obviously want the same one. Decide once, name it, and let all
+three read it.
+
+**When a peer times out.** Per-peer now, but freeing the slot immediately loses
+the endpoint that a reconnect would reuse, which is the thing that currently
+lets a session re-form without a new invite. Probably: keep the slot and its
+addresses, mark it not connected, free it only when somebody else needs it.
+
+**Sending to several peers.** The pacer releases one packet on a schedule. That
+packet is encoded once and sealed once per peer, so the release must not be
+drained per peer or every musician after the first gets silence. This is the
+single easiest place in the whole conversion to introduce a fault that only
+appears with three people.
+
+**What becomes per-peer in telemetry.** Round trip, buffer depth, jitter and
+concealment are one number each today, and the interface shows one friend.
+Either they become per-peer and the room screen grows, or they are aggregated
+and the bundle stops being able to say which musician the trouble was with.
+The second is cheaper and worse.
+
+**Mixing.** Playback pulls from one peer’s receivers. With several it mixes
+them, which is where per-participant level and mute stop being a convenience
+and start being how somebody deals with one person’s bad connection.
 
 **4. Mixing, and the interface.** Each remote participant needs its own level,
 mute, meter, and jitter buffer — the per-stream controls that exist for one
