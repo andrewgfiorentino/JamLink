@@ -975,6 +975,58 @@ void keepsProbingAfterAnEarlyRoundFindsNothing() {
     guest->stop();
 }
 
+// In a mesh everybody has to be findable by everybody else, and only the host
+// publishes addresses today because only the host has to be found. The room's
+// creator is the one participant guaranteed to know everyone, so guests tell it
+// where they are and it has something real to introduce people with.
+void aGuestTellsTheRoomWhereItCanBeReached() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "roster harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    guest->setLocalParticipant(participant("profile-guest", "Mike"));
+    check(host->roomMembers().empty(), "a room nobody has reported into is empty");
+
+    const std::string invite = forceLoopback(host->host(0U, false));
+    const bool connected = !invite.empty() && guest->join(invite)
+        && waitForConnected(*host, *guest);
+    check(connected, "roster harness connects");
+    if (!connected) {
+        return;
+    }
+
+    // Published once the session is up rather than during the handshake, so it
+    // cannot delay a connection forming.
+    std::vector<jamlink::network::RosterMember> members;
+    for (int attempt = 0; attempt < 200 && members.empty(); ++attempt) {
+        members = host->roomMembers();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(members.size() == 1U, "the guest reaches the room's roster");
+    if (members.size() == 1U) {
+        check(members[0].participantId == "profile-guest",
+              "the roster names the authenticated participant, not a claimed one");
+        check(!members[0].candidates.empty(),
+              "the roster carries somewhere the guest can actually be reached");
+    }
+
+    // Both ends report, because both run the same worker -- and that is right
+    // rather than incidental. In a mesh everybody has to be findable by
+    // everybody, and a guest that already knows the host's addresses can
+    // re-form a dropped session without being handed a fresh invite.
+    const auto asKnownToGuest = guest->roomMembers();
+    check(asKnownToGuest.size() == 1U
+              && asKnownToGuest[0].participantId == "profile-host",
+          "the host is findable by the guest as well, not only the reverse");
+
+    check(exchangeAudio(*host, *guest), "audio still flows alongside the report");
+    host->stop();
+    guest->stop();
+}
+
 } // namespace
 
 int main() {
@@ -985,6 +1037,7 @@ int main() {
     }
 
     rejectsMalformedInvites();
+    aGuestTellsTheRoomWhereItCanBeReached();
     connectsThroughACandidateThatIsNotTheFirstOffered();
     keepsProbingAfterAnEarlyRoundFindsNothing();
     reportsDeterministicOfflineHostPreflight();

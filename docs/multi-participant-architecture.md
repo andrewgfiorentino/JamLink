@@ -178,9 +178,33 @@ rather than discovering: **if the room’s creator leaves, existing pairs keep
 playing but nobody new can be introduced.** A duo has the same property today
 and nobody notices, because there is nobody left to introduce.
 
-What remains is the transport: a control message carrying the roster, guests
-publishing their candidates to the creator so there is something to distribute,
-and the connection manager that opens a second slot when the roster says to.
+**Half wired.** There is now a `Candidates` packet, and both ends send it once
+a session is up. Each end therefore knows where the other can actually be
+reached, and the room’s creator accumulates a roster with something real in it
+to introduce people with.
+
+Two things it gets right and one thing it does not do:
+
+- **An address list is believed only after it authenticates**, and only when it
+  names the participant this session already proved. It is what everyone else
+  will be told to probe, so an unverified one would let anybody redirect a room.
+- **Both ends report**, which is right rather than incidental: a guest that
+  already knows the host’s addresses can re-form a dropped session without
+  being handed a fresh invite. The first version of the test asserted
+  one-directional reporting, which was a guess rather than a requirement.
+- **It does not yet distribute.** The creator knows everyone; nobody is told
+  about anybody else.
+
+**What is left, and why it is not a small change.** The worker loop is written
+around exactly one peer: one handshake, one connected flag, one timeout, one
+probe schedule, one cipher pair. Making it multi-slot means incoming packets
+have to be routed to a peer rather than assumed to be from *the* peer, a new
+slot has to be opened when the roster says so, and every per-session timer
+becomes per-peer. That is a rewrite of the connection management rather than an
+addition to it, and it is the point at which a second peer genuinely exists.
+
+It should be started fresh rather than appended to a long session, because a
+half-converted worker is the one failure mode that cannot be shipped at all.
 
 **4. Mixing, and the interface.** Each remote participant needs its own level,
 mute, meter, and jitter buffer — the per-stream controls that exist for one

@@ -23,6 +23,7 @@
 #include "jamlink/control/room_capacity.hpp"
 #include "jamlink/network/bitrate_controller.hpp"
 #include "jamlink/network/peer_key_schedule.hpp"
+#include "jamlink/network/room_roster.hpp"
 #include "jamlink/network/ice_agent.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
@@ -101,7 +102,15 @@ enum class PacketType : std::uint8_t {
     // receives can never be reached: the guest's Hello is discarded by the
     // router before JamLink sees it. Punching opens that mapping from both
     // sides at once. It carries no payload and changes no session state.
-    Punch = 9U
+    Punch = 9U,
+    // Where the sender can be reached, sent once a session is up.
+    //
+    // Only the host publishes addresses today, in the invite, because only the
+    // host has to be found. In a mesh everybody has to be findable by everybody
+    // else, and the room's creator is the one participant guaranteed to know
+    // them all -- so guests tell it where they are, and it will have something
+    // real to introduce people with.
+    Candidates = 10U
 };
 
 // Both peers know the same room secret, so a single key would let an attacker
@@ -1214,6 +1223,10 @@ public:
         const NatAssessment nat = discoverPublicAddress
             ? probeNatBehaviour(socket_.get(), publicEndpoint)
             : NatAssessment{};
+        if (publicEndpoint.succeeded) {
+            publicAddress_ = publicEndpoint.address;
+            publicPort_ = publicEndpoint.port;
+        }
         natBehaviour_.store(nat.behaviour, std::memory_order_release);
         JAMLINK_LOG("host", std::string("router mapping behaviour ")
             + std::string(natBehaviourName(nat.behaviour))
@@ -1440,6 +1453,11 @@ public:
 
     [[nodiscard]] std::string inviteCode() const override { return inviteCode_; }
     [[nodiscard]] std::uint16_t localPort() const noexcept override { return localPort_; }
+
+    [[nodiscard]] std::vector<RosterMember> roomMembers() const override {
+        const std::scoped_lock lock(rosterMutex_);
+        return roster_.members();
+    }
 
     [[nodiscard]] PeerTransportTelemetry telemetry() const noexcept override {
         PeerTransportTelemetry snapshot;
@@ -2150,6 +2168,7 @@ private:
             ULONGLONG lastSummary = GetTickCount64();
             bool connected = false;
             bool loggedConnected = false;
+            bool publishedCandidates = false;
             JAMLINK_LOG("session", hostMode_ ? "worker started as host"
                                              : "worker started as guest");
 
@@ -2218,6 +2237,22 @@ private:
                             + " buffer " + std::to_string(voice.currentDepthFrames / 48U)
                             + "ms; out instrument " + std::to_string(peer().sendSequence[0])
                             + " voice " + std::to_string(peer().sendSequence[1]));
+                    }
+                }
+                // Sent once per session rather than repeatedly: addresses do
+                // not change while a session holds, and a session that drops
+                // and re-forms sends it again because this resets with the
+                // rest of the connection state.
+                if (connected && !publishedCandidates) {
+                    std::array<std::uint8_t, 512U> rosterPayload{};
+                    const std::size_t rosterBytes = encodeCandidateReport(
+                        localParticipant, rosterPayload);
+                    if (rosterBytes != 0U
+                        && sendPacket(
+                            sendCipher, PacketType::Candidates, 0U, 0U,
+                            std::span<const std::uint8_t>(
+                                rosterPayload.data(), rosterBytes))) {
+                        publishedCandidates = true;
                     }
                 }
                 if (connected && now - lastPing >= 500U) {
@@ -2312,6 +2347,7 @@ private:
                 }
                 if (connected && GetTickCount64() - lastReceive > 5'000U) {
                     connected = false;
+                    publishedCandidates = false;
                     appendControlEvent(RoomControlEvent{
                         RoomControlEventType::PeerLeft, 0U, systemTimeMilliseconds(),
                         remoteParticipant(), "Connection lost"});
@@ -2433,6 +2469,52 @@ private:
         SecureZeroMemory(sendKey.data(), sendKey.size());
         SecureZeroMemory(receiveKey.data(), receiveKey.size());
         return derived && sendOut->valid() && receiveOut->valid();
+    }
+
+    // "profile-id\ndisplay name\ncandidates". The candidate text is the same
+    // form an invite carries, so there is one encoding of an address in the
+    // project rather than two that can drift apart.
+    [[nodiscard]] std::size_t encodeCandidateReport(
+        const PeerParticipantInfo& participant,
+        std::span<std::uint8_t> destination) const {
+        std::vector<IceCandidate> mine;
+        const std::string localAddress = localIpv4Address();
+        if (!localAddress.empty() && localPort_ != 0U) {
+            mine.push_back(IceCandidate{localAddress, localPort_, CandidateKind::Host});
+        }
+        // Whatever a router told us about ourselves, when it did. A guest never
+        // ran this for its own sake before, because nobody had to find it.
+        if (!publicAddress_.empty() && publicPort_ != 0U) {
+            mine.push_back(IceCandidate{
+                publicAddress_, publicPort_, CandidateKind::ServerReflexive});
+        }
+        if (mine.empty()) {
+            return 0U;
+        }
+        const std::string text = participant.profileId + "\n"
+            + participant.displayName + "\n" + encodeCandidates(mine);
+        if (text.size() > destination.size()) {
+            return 0U;
+        }
+        std::memcpy(destination.data(), text.data(), text.size());
+        return text.size();
+    }
+
+    [[nodiscard]] static bool decodeCandidateReport(
+        std::span<const std::uint8_t> payload, RosterMember& member) {
+        const std::string text(
+            reinterpret_cast<const char*>(payload.data()), payload.size());
+        const auto firstBreak = text.find('\n');
+        const auto secondBreak = firstBreak == std::string::npos
+            ? std::string::npos : text.find('\n', firstBreak + 1U);
+        if (firstBreak == std::string::npos || secondBreak == std::string::npos) {
+            return false;
+        }
+        member.participantId = text.substr(0U, firstBreak);
+        member.displayName = text.substr(firstBreak + 1U, secondBreak - firstBreak - 1U);
+        member.candidates.clear();
+        return !member.participantId.empty()
+            && decodeCandidates(text.substr(secondBreak + 1U), member.candidates);
     }
 
     [[nodiscard]] bool handlePacket(
@@ -2685,6 +2767,21 @@ private:
             }
             return true;
         }
+        if (type == PacketType::Candidates && connected) {
+            RosterMember member;
+            if (!decodeCandidateReport(payload, member)) {
+                return false;
+            }
+            // Authenticated before it is believed. An address list is what
+            // everyone else will be told to probe, so accepting an unverified
+            // one would let anybody redirect a room.
+            if (member.participantId != peer().remoteParticipant.profileId) {
+                return false;
+            }
+            const std::scoped_lock lock(rosterMutex_);
+            static_cast<void>(roster_.remember(member));
+            return true;
+        }
         if (type == PacketType::Chat && connected) {
             return receiveChatMessage(sendCipher, payload);
         }
@@ -2739,6 +2836,10 @@ private:
     std::array<std::unique_ptr<PeerSlot>, maximumPeerSlots> peers_{};
     std::array<std::uint8_t, 32U> secret_{};
     std::string inviteCode_;
+    // This machine as a router reported it, kept so it can be told to the
+    // room rather than only put in an invite.
+    std::string publicAddress_;
+    std::uint16_t publicPort_{0U};
     std::uint16_t localPort_{0U};
     bool hostMode_{false};
     bool mappedPort_{false};
@@ -2766,6 +2867,10 @@ private:
     // and a USB microphone for the voice need not agree, and forcing one rate
     // on both would resample whichever was wrong.
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
+    // Who is in the room and where they can be reached. Guarded because the
+    // worker fills it in while the control thread reads it for the interface.
+    mutable std::mutex rosterMutex_;
+    RoomRoster roster_;
     std::atomic<std::uint64_t> packetsSent_{0U};
     // Owned by the network worker, which is the only thread that encodes.
     std::array<jamlink::audio::SendLimiter, audioStreamCount> sendLimiters_{};

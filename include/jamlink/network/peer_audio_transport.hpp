@@ -5,6 +5,7 @@
 
 #include "jamlink/network/connection_preflight.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
+#include "jamlink/network/room_roster.hpp"
 
 #include <array>
 #include <cstddef>
@@ -214,6 +215,11 @@ public:
 
     // A zero port selects an available UDP port. The returned invite is empty
     // on failure and contains the address, port, and a random 256-bit secret.
+    // Who this end knows is in the room, and where they can be reached. Empty
+    // for a transport that has not been told about anybody, which is every
+    // transport until a guest reports its addresses.
+    [[nodiscard]] virtual std::vector<RosterMember> roomMembers() const { return {}; }
+
     [[nodiscard]] virtual std::string host(
         std::uint16_t port = 0U,
         bool discoverPublicAddress = true,
