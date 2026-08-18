@@ -1520,7 +1520,15 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.mediaProtocolVersion = jamlink::network::currentMediaProtocolVersion;
     snapshot.controlProtocolVersion = jamlink::network::currentControlProtocolVersion;
 
-    snapshot.audioCodec = peerTelemetry_.opusPacketsDecoded > 0U ? "opus" : "pcm16";
+    // Named from what was actually decoded. Reporting "pcm16" whenever no
+    // Opus arrived turned "nothing crossed the wire at all" into a positive
+    // claim about which codec was carrying the session, which is how a field
+    // bundle came to name a codec for a session that never started.
+    const bool anyOpus = peerTelemetry_.opusPacketsDecoded > 0U;
+    const bool anyPcm = peerTelemetry_.pcmPacketsDecoded > 0U;
+    snapshot.audioCodec = anyOpus && anyPcm
+        ? "opus and uncompressed"
+        : anyOpus ? "opus" : (anyPcm ? "pcm16" : "nothing decoded");
     snapshot.codecBitsPerSecond = peerTelemetry_.audioBitsPerSecond;
     snapshot.codecFrameMilliseconds = 5U;
     snapshot.opusPacketsDecoded = peerTelemetry_.opusPacketsDecoded;
@@ -1528,15 +1536,36 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.undecodablePackets = peerTelemetry_.undecodablePackets;
     snapshot.encodeFailures = peerTelemetry_.encodeFailures;
 
-    snapshot.audioBackend = asioActive() ? "ASIO" : "WASAPI shared";
     // Device names, never the paths or identifiers they were resolved from.
     const auto deviceName = [](const std::vector<DeviceOption>& options, int index) {
         return validIndex(index, options.size())
             ? options[static_cast<std::size_t>(index)].displayName.toStdString() : std::string();
     };
+    // One backend line used to stand for all three endpoints and was read off
+    // the output alone. A field failure whose guitar was on an interface
+    // driver while its headphones went through Windows was reported as a plain
+    // Windows setup, and that single wrong line is what hid the fault.
+    const auto backendName = [](const std::vector<DeviceOption>& options, int index) {
+        if (!validIndex(index, options.size())) {
+            return std::string();
+        }
+        return options[static_cast<std::size_t>(index)].serviceOption.backend
+                == jamlink::audio::SoundcheckBackend::Asio
+            ? std::string("ASIO") : std::string("Windows shared");
+    };
     snapshot.instrumentDevice = deviceName(instrumentOptions_, instrumentIndex_);
+    snapshot.instrumentBackend = backendName(instrumentOptions_, instrumentIndex_);
     snapshot.voiceDevice = deviceName(voiceOptions_, voiceIndex_);
+    snapshot.voiceBackend = backendName(voiceOptions_, voiceIndex_);
     snapshot.outputDevice = deviceName(outputOptions_, outputIndex_);
+    snapshot.outputBackend = backendName(outputOptions_, outputIndex_);
+    // The verdict the audio service itself acts on, not a second derivation
+    // of the same rule that could disagree with it.
+    const auto topology = currentTopology();
+    snapshot.audioTopologySupported = topology.supported;
+    snapshot.audioTopologyReason =
+        std::string(jamlink::audio::topologyReasonName(topology.reason));
+    snapshot.audioRunning = audioActive();
     snapshot.sampleRate = audioTelemetry_.outputSampleRate;
     snapshot.requestedBufferFrames = effectiveBufferFrames();
     snapshot.runningBufferFrames = audioTelemetry_.outputBufferFrames;
@@ -1569,8 +1598,15 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.packetsReceived = peerTelemetry_.packetsReceived;
     snapshot.packetsConcealed = instrument.packetsConcealed;
     snapshot.packetsLate = instrument.packetsLate;
+    // The first establishment is the join; anything beyond it is a reconnect.
+    // This was declared and printed from the day the field reports started
+    // arriving, and never assigned, so every bundle ever sent has claimed
+    // zero reconnects whatever actually happened.
+    snapshot.reconnectCount = peerTelemetry_.sessionsEstablished > 0U
+        ? peerTelemetry_.sessionsEstablished - 1U : 0U;
 
     snapshot.recording = recording();
+    snapshot.recorderDroppedFrames = recorderTelemetry_.droppedFrames;
 
     // Phase to phase and nothing else: no invite, no key, no endpoint, no chat.
     for (std::size_t index = 0U; index < conductor_.transitionCount(); ++index) {

@@ -1300,6 +1300,8 @@ public:
         snapshot.portMapping = portMapping_.load(std::memory_order_acquire);
         snapshot.reachability = reachability_.load(std::memory_order_acquire);
         snapshot.encodeFailures = encodeFailures_.load(std::memory_order_relaxed);
+        snapshot.sessionsEstablished =
+            sessionsEstablished_.load(std::memory_order_relaxed);
         snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
         for (const auto* decoder : streamDecoders_) {
             if (decoder == nullptr) {
@@ -1485,6 +1487,7 @@ private:
         packetsSent_.store(0U, std::memory_order_relaxed);
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
+        sessionsEstablished_.store(0U, std::memory_order_relaxed);
         roundTripMicroseconds_.store(0U, std::memory_order_relaxed);
         roundTripMeasured_.store(false, std::memory_order_relaxed);
         for (auto& peak : remotePeak_) {
@@ -2078,6 +2081,7 @@ private:
                 sendCipher, PacketType::HelloAck, 0U, 0U,
                 encodedLocalParticipant));
             if (!wasConnected) {
+                sessionsEstablished_.fetch_add(1U, std::memory_order_relaxed);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::PeerJoined, 0U,
                     systemTimeMilliseconds(), participant, "joined"});
@@ -2103,6 +2107,7 @@ private:
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             if (!wasConnected) {
+                sessionsEstablished_.fetch_add(1U, std::memory_order_relaxed);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::PeerJoined, 0U,
                     systemTimeMilliseconds(), participant, "joined"});
@@ -2245,6 +2250,7 @@ private:
     // on both would resample whichever was wrong.
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
     std::atomic<std::uint64_t> packetsSent_{0U};
+    std::atomic<std::uint64_t> sessionsEstablished_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};
     std::atomic<std::uint64_t> packetsRejected_{0U};
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};

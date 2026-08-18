@@ -71,8 +71,15 @@ constexpr const char* fullInvite =
     snapshot.codecBitsPerSecond = 96'000U;
     snapshot.codecFrameMilliseconds = 5U;
     snapshot.opusPacketsDecoded = 12'400U;
-    snapshot.audioBackend = "ASIO";
     snapshot.instrumentDevice = "Focusrite USB ASIO - Input 1";
+    snapshot.instrumentBackend = "ASIO";
+    snapshot.voiceDevice = "Yeti Stereo Microphone";
+    snapshot.voiceBackend = "Windows shared";
+    snapshot.outputDevice = "Focusrite USB ASIO - Outputs 1-2";
+    snapshot.outputBackend = "ASIO";
+    snapshot.audioTopologySupported = true;
+    snapshot.audioTopologyReason = "ValidAsioWithSecondaryWasapiVoice";
+    snapshot.audioRunning = true;
     snapshot.sampleRate = 48'000U;
     snapshot.runningBufferFrames = 128U;
     snapshot.roundTripMeasured = true;
@@ -80,6 +87,53 @@ constexpr const char* fullInvite =
     snapshot.lifecycleTransitions = {"Connecting -> ReadyToPlay", "ReadyToPlay -> Degraded"};
     snapshot.logExcerpt = {"mapping upnp granted", "handshake complete"};
     return snapshot;
+}
+
+// A two-home field test was diagnosed from a bundle that said "backend: WASAPI
+// shared" while the guitar was on an interface driver, "codec: pcm16" when
+// nothing had been decoded at all, and "sample rate: 0" for an engine that
+// never opened. Every one of those read as a measurement.
+JAMLINK_TEST(a_mixed_audio_setup_is_not_reported_as_a_uniform_one) {
+    SupportSnapshot snapshot = realistic();
+    snapshot.instrumentBackend = "ASIO";
+    snapshot.voiceBackend = "Windows shared";
+    snapshot.outputBackend = "Windows shared";
+    snapshot.audioTopologySupported = false;
+    snapshot.audioTopologyReason = "AsioInstrumentRequiresAsioOutput";
+
+    const std::string text = renderSupportBundle(snapshot);
+    // All three endpoints are named, so no single line can stand for a setup
+    // whose parts disagree.
+    EXPECT_TRUE(text.find("instrument audio system: ASIO") != std::string::npos);
+    EXPECT_TRUE(text.find("voice audio system: Windows shared") != std::string::npos);
+    EXPECT_TRUE(text.find("output audio system: Windows shared") != std::string::npos);
+    // And the verdict is stated rather than left to be re-derived by whoever
+    // reads the bundle.
+    EXPECT_TRUE(text.find("can run together: no") != std::string::npos);
+    EXPECT_TRUE(text.find("AsioInstrumentRequiresAsioOutput") != std::string::npos);
+}
+
+JAMLINK_TEST(an_engine_that_never_started_says_so_instead_of_reporting_zero) {
+    SupportSnapshot snapshot = realistic();
+    snapshot.audioRunning = false;
+    snapshot.sampleRate = 0U;
+    snapshot.runningBufferFrames = 0U;
+
+    const std::string text = renderSupportBundle(snapshot);
+    EXPECT_TRUE(text.find("engine running: no") != std::string::npos);
+    // "sample rate: 0" invites a reader to look for a device running at no
+    // rate. There was no device.
+    EXPECT_TRUE(text.find("sample rate: 0") == std::string::npos);
+    EXPECT_TRUE(text.find("running buffer: 0") == std::string::npos);
+    EXPECT_TRUE(text.find("sample rate: (engine never started)") != std::string::npos);
+    EXPECT_TRUE(text.find("running buffer: (engine never started)") != std::string::npos);
+
+    // A running engine must still report its real numbers, including a
+    // genuinely zero one.
+    snapshot.audioRunning = true;
+    const std::string running = renderSupportBundle(snapshot);
+    EXPECT_TRUE(running.find("sample rate: 0") != std::string::npos);
+    EXPECT_TRUE(running.find("(engine never started)") == std::string::npos);
 }
 
 JAMLINK_TEST(a_room_secret_never_reaches_the_bundle) {

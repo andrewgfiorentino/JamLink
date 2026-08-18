@@ -159,6 +159,13 @@ struct PeerTransportTelemetry final {
     // becoming silence.
     std::uint64_t encodeFailures{0U};
     std::uint32_t audioBitsPerSecond{0U};
+
+    // How many times a peer session has actually been established on this
+    // transport. The first is the join; every one after it is a reconnect.
+    // Counted rather than inferred, because "it kept dropping out" is the
+    // commonest report there is and nothing in a support bundle could
+    // previously confirm or contradict it.
+    std::uint64_t sessionsEstablished{0U};
 };
 
 // Realtime side of the transport. These calls only touch bounded lock-free

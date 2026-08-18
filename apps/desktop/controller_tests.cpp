@@ -745,9 +745,18 @@ int main(int argc, char* argv[]) {
         passed = expect(preview.contains(QStringLiteral("JamLink support bundle"))
                             && preview.contains(QStringLiteral("no room secrets")),
                         "the bundle says what it is and what it withholds") && passed;
-        // The facts a bad-audio report turns on.
+        // The facts a bad-audio report turns on. Each endpoint names its own
+        // audio system: a single "backend" line stood for all three until a
+        // field test was diagnosed from one that described the output while
+        // the guitar was somewhere else entirely.
         passed = expect(preview.contains(QStringLiteral("codec"))
-                            && preview.contains(QStringLiteral("backend"))
+                            && preview.contains(QStringLiteral("instrument audio system"))
+                            && preview.contains(QStringLiteral("voice audio system"))
+                            && preview.contains(QStringLiteral("output audio system"))
+                            && preview.contains(QStringLiteral("can run together"))
+                            && preview.contains(QStringLiteral("topology"))
+                            && preview.contains(QStringLiteral("engine running"))
+                            && preview.contains(QStringLiteral("reconnects"))
                             && preview.contains(QStringLiteral("Session lifecycle")),
                         "the bundle carries the facts worth having") && passed;
         // Nothing that looks like a room secret or an invite may appear.
