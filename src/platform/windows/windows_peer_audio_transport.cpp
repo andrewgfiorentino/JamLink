@@ -1117,6 +1117,14 @@ struct PeerSlot final {
     // duo; a mesh has to answer it pair by pair, because a musician can be
     // the host of one pair and the guest of another in the same room.
     bool hostRole{true};
+    // The musician whose invite we used. Only their forwarded entries are
+    // believed: a forwarded address list is exactly as trustworthy as whoever
+    // forwarded it, and joining somebody's room is already choosing to trust
+    // them with it.
+    bool introducer{false};
+    // Roster version this peer has been told about, so a settled room stops
+    // repeating itself.
+    std::uint32_t announcedRosterVersion{0U};
 
     // Where this peer is, and how packets to it are sealed and checked.
     sockaddr_in remoteAddress{};
@@ -1634,6 +1642,7 @@ public:
         // The invite names one musician, so this end takes one slot and
         // reaches out on it as that pair's guest. Every other slot stays free
         // for whoever the room introduces later.
+        peer().introducer = true;
         if (!prepareSlotSession(peer(), false)) {
             state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
             return false;
@@ -2786,6 +2795,9 @@ private:
                             slot.publishedCandidates = true;
                         }
                     }
+                    if (slot.connected) {
+                        introduceRoomTo(slot, roomCiphers, localParticipant);
+                    }
                     if (slot.connected && now - slot.lastPing >= 500U) {
                         sendControlPing(slot, roomCiphers);
                         slot.lastPing = now;
@@ -3022,6 +3034,66 @@ private:
         }
     }
 
+    // Tells one musician about everyone else in the room.
+    //
+    // Only whoever created the room does this. They are the one participant
+    // guaranteed to know everybody, which is why introductions come from there
+    // rather than from whoever happens to notice first.
+    //
+    // Carried on the same packet a musician uses to say where they are. A
+    // separate type was tried and was worse: it is one more thing on the wire
+    // for no gain, and the interesting question -- whether to believe an
+    // address list about somebody else -- is answered by who sent it rather
+    // than by which packet it arrived on.
+    //
+    // Sent again only when the roster actually changes, so a settled room
+    // costs nothing.
+    void introduceRoomTo(
+        PeerSlot& slot,
+        RoomCiphers& roomCiphers,
+        const PeerParticipantInfo& localParticipant) {
+        if (!hostMode_ || !slot.pairSend.has_value()) {
+            return;
+        }
+        std::vector<RosterMember> toAnnounce;
+        std::uint32_t version = 0U;
+        {
+            const std::scoped_lock lock(rosterMutex_);
+            version = rosterVersion_;
+            if (slot.announcedRosterVersion == version) {
+                return;
+            }
+            for (const RosterMember& member : roster_.members()) {
+                // Never introduce somebody to themselves, and never to us --
+                // they are already talking to both.
+                if (member.participantId == slot.remoteParticipant.profileId
+                    || member.participantId == localParticipant.profileId
+                    || member.candidates.empty()) {
+                    continue;
+                }
+                toAnnounce.push_back(member);
+            }
+        }
+        bool allSent = true;
+        for (const RosterMember& member : toAnnounce) {
+            std::array<std::uint8_t, 512U> payload{};
+            const std::size_t bytes = encodeMemberEntry(member, payload);
+            if (bytes == 0U
+                || !sendPacket(
+                    slot, roomCiphers, PacketType::Candidates, 0U, 0U,
+                    std::span<const std::uint8_t>(payload.data(), bytes))) {
+                allSent = false;
+                break;
+            }
+        }
+        if (allSent) {
+            // Marked only once every entry got out, so a send that failed part
+            // way is retried rather than leaving somebody unintroduced for the
+            // rest of the session.
+            slot.announcedRosterVersion = version;
+        }
+    }
+
     void logSessionSummary(ULONGLONG now) {
         const std::uint64_t received = packetsReceived_.load(std::memory_order_relaxed);
         const std::uint64_t rejected = packetsRejected_.load(std::memory_order_relaxed);
@@ -3239,6 +3311,23 @@ private:
         }
         const std::string text = participant.profileId + "\n"
             + participant.displayName + "\n" + encodeCandidates(mine);
+        if (text.size() > destination.size()) {
+            return 0U;
+        }
+        std::memcpy(destination.data(), text.data(), text.size());
+        return text.size();
+    }
+
+    // The same three-line shape encodeCandidateReport writes, for a musician
+    // who is not us. One encoding of a person's whereabouts in the project
+    // rather than two that can drift apart.
+    [[nodiscard]] static std::size_t encodeMemberEntry(
+        const RosterMember& member, std::span<std::uint8_t> destination) {
+        if (member.participantId.empty() || member.candidates.empty()) {
+            return 0U;
+        }
+        const std::string text = member.participantId + "\n"
+            + member.displayName + "\n" + encodeCandidates(member.candidates);
         if (text.size() > destination.size()) {
             return 0U;
         }
@@ -3669,11 +3758,24 @@ private:
             // Authenticated before it is believed. An address list is what
             // everyone else will be told to probe, so accepting an unverified
             // one would let anybody redirect a room.
-            if (member.participantId != slot.remoteParticipant.profileId) {
+            //
+            // A musician may always describe themselves. Describing somebody
+            // else is an introduction, and only the peer whose invite we used
+            // may make one -- joining their room is already choosing to trust
+            // them with it, and a forwarded entry is exactly as trustworthy as
+            // whoever forwarded it. Anyone else doing it would be redirecting
+            // a room they do not run.
+            if (member.participantId != slot.remoteParticipant.profileId
+                && !slot.introducer) {
                 return false;
+            }
+            // An introduction naming us would have this machine dial itself.
+            if (member.participantId == localParticipant.profileId) {
+                return true;
             }
             const std::scoped_lock lock(rosterMutex_);
             static_cast<void>(roster_.remember(member));
+            ++rosterVersion_;
             rosterSize_.store(
                 static_cast<std::uint32_t>(roster_.size()), std::memory_order_release);
             return true;
@@ -3784,6 +3886,7 @@ private:
     // worker fills it in while the control thread reads it for the interface.
     mutable std::mutex rosterMutex_;
     RoomRoster roster_;
+    std::uint32_t rosterVersion_{1U};
     // How many the roster names, published for the noexcept telemetry call.
     std::atomic<std::uint32_t> rosterSize_{0U};
     std::atomic<std::uint64_t> packetsSent_{0U};
