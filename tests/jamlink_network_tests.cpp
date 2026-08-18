@@ -785,6 +785,74 @@ JAMLINK_TEST(receive_depth_adapts_to_jitter_and_stays_bounded) {
               << (settled.targetDepthFrames * 1000U / sampleRate) << " ms\n";
 }
 
+JAMLINK_TEST(a_wide_gap_does_not_freeze_the_jitter_estimate_forever) {
+    // Found by re-reviewing this file rather than in the field, which is the
+    // only way it would have been found: the symptom is a buffer that quietly
+    // stops adapting, and the audible result -- dropouts on a link that had
+    // got worse -- looks exactly like the network being bad.
+    //
+    // Resync rebases on a jump measured from the highest sequence seen. The
+    // jitter estimator measured from the last packet it had timed, and skipped
+    // any step of half the ring or more. Between those two thresholds sat a
+    // band where neither fired, and the estimator's anchor was left behind
+    // permanently: every later packet measured an ever-larger step from a
+    // sequence that never advanced again.
+    auto settings = defaultSettings();
+    settings.shrinkHoldPackets = 40U;
+    AudioStreamReceiver receiver(settings);
+    const auto source = makeSource(packetFrames * 4U);
+    const auto block = std::span<const float>(source.data(), packetFrames);
+    std::vector<float> output(packetFrames, 0.0F);
+
+    std::uint64_t now = 0U;
+    std::uint32_t packet = 0U;
+    for (; packet < 200U; ++packet) {
+        receiver.submit(packet, asPayload(block), now);
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(output));
+    }
+    const auto calm = receiver.telemetry();
+    EXPECT_TRUE(calm.targetDepthFrames == 2U * packetFrames);
+
+    // The step has to be exactly half the ring, and it has to be the very next
+    // packet the estimator sees. One more and the resync path rebases
+    // everything; one less and the measurement is taken normally. Only this
+    // single width falls between the two thresholds, which is why the defect
+    // survived every impairment profile the suite already runs -- a jittered
+    // source reorders the first arrival after the gap and lands outside the
+    // band by accident.
+    const auto gap = static_cast<std::uint32_t>(settings.slotCount / 2U);
+    const std::uint32_t lastTimed = packet - 1U;
+    packet = lastTimed + gap;
+    now += static_cast<std::uint64_t>(gap) * packetPeriodMicroseconds;
+    receiver.submit(packet, asPayload(block), now);
+    static_cast<void>(receiver.pull(output));
+    now += packetPeriodMicroseconds;
+    ++packet;
+
+    // A rough link from here on. The buffer has to grow, exactly as it does
+    // for a stream that never saw a gap.
+    jamlink::testing::DeterministicChannel jitterSource(
+        jamlink::testing::ImpairmentProfile{0U, 20'000U, 0U, 0U, 0U, 0U, 0U, 0U}, 11U);
+    const std::uint32_t roughUntil = packet + 1'000U;
+    for (; packet < roughUntil; ++packet) {
+        jitterSource.offer(packet, now, packetPeriodMicroseconds);
+        for (const auto& arrival : jitterSource.drainUntil(now)) {
+            receiver.submit(arrival.sequence, asPayload(block), arrival.arrivalMicroseconds);
+        }
+        now += packetPeriodMicroseconds;
+        static_cast<void>(receiver.pull(output));
+    }
+
+    const auto afterGap = receiver.telemetry();
+    EXPECT_TRUE(afterGap.targetDepthFrames > calm.targetDepthFrames);
+    // And the estimate itself is alive, not merely a target that moved once.
+    EXPECT_TRUE(afterGap.jitterMicroseconds > 0U);
+    std::cout << "    adaptation survives a " << gap << "-packet gap: target depth "
+              << (calm.targetDepthFrames * 1000U / sampleRate) << " ms -> "
+              << (afterGap.targetDepthFrames * 1000U / sampleRate) << " ms\n";
+}
+
 JAMLINK_TEST(receiver_holds_up_under_combined_impairment) {
     auto settings = defaultSettings();
     AudioStreamReceiver receiver(settings);

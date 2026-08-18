@@ -164,5 +164,41 @@ within a bounded number of callbacks.
 ### The fourth finding
 
 A fourth item was recorded alongside these three, and its content was not
-preserved anywhere in the repository. It is not adjudicated here, and claiming
-otherwise would be worse than leaving this note.
+preserved anywhere in the repository. It cannot be adjudicated, and inventing
+something plausible to close the ledger with would be worse than this note.
+
+What was done instead was a fresh review of this file, on the reasoning that a
+finding worth recording was probably about something still here. That review
+found the defect below, which is not claimed to be the missing item -- only to
+be a real one found where it would have been.
+
+### A gap of exactly half the ring froze the jitter estimate — a defect, fixed
+
+Two thresholds in `submit` are compared against different baselines. Resync
+rebases when the jump **from the highest sequence seen** exceeds half the ring.
+The jitter estimator skips a measurement when the step **from the last packet it
+timed** reaches half the ring. In the steady state those baselines are the same
+number, so the thresholds look interchangeable. They are not: a step of exactly
+half the ring is too small to resync and too large to measure, and it left the
+estimator's anchor behind permanently.
+
+From then on every arriving packet measured an ever-larger step from a sequence
+that never advanced again, so no measurement was ever taken. The jitter estimate
+froze at whatever it held before the gap and the buffer stopped adapting for the
+rest of the session. Nothing reports it. The only symptom is dropouts on a link
+that got worse, which is indistinguishable from the link simply being bad.
+
+The fix is to move the anchor across a gap without measuring over it. Nothing is
+measured across a span that wide -- the expected arrival time is meaningless
+there -- but the anchor advances, so the next packet is timed normally. A step
+of zero or less still moves nothing: that is a reordered or duplicated packet,
+and moving the anchor backwards would make the next packet measure a span that
+never happened.
+
+`a_wide_gap_does_not_freeze_the_jitter_estimate_forever` holds this. It was
+verified to fail without the fix, which mattered more than usual here: the first
+two versions of the test passed against the broken code. One was off by one, and
+the other used the jittered channel, whose reordering pushed the first arrival
+after the gap outside the band by accident. That is also why the defect survived
+every impairment profile already in the suite -- reaching this state needs one
+exact packet width, delivered in order.
