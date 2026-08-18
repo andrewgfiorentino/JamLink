@@ -75,6 +75,9 @@ struct SupportSnapshot final {
     std::string firewallState;
     bool udpBound{false};
     std::uint16_t localUdpPort{0U};
+    // Path finding, which is what a "we could never connect" report turns on.
+    std::uint64_t candidateProbesSent{0U};
+    std::uint32_t candidateRoundsExhausted{0U};
 
     // Link health.
     bool roundTripMeasured{false};

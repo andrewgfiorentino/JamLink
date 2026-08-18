@@ -18,9 +18,12 @@ imposes.
 - **Direct encrypted audio.** AES-256-GCM with per-direction keys, a replay
   window, and authenticated participant identity. Audio goes peer to peer.
 - **One code to connect.** The host creates an invite and sends it; nothing
-  else is exchanged. Port mapping is attempted automatically over UPnP, PCP,
-  and NAT-PMP, and Windows Firewall is detected and repairable from inside the
-  application.
+  else is exchanged. The invite names every address the host can be reached on
+  rather than one guess, and the guest probes all of them at once, keeping
+  whichever answers. Two people in the same building stay on the local network
+  instead of hairpinning through a router. Port mapping is still attempted
+  automatically over UPnP, PCP, and NAT-PMP, and Windows Firewall is detected
+  and repairable from inside the application.
 - **Guitar and voice as separate streams.** Each has its own jitter buffer,
   level, and mute, so a friend's guitar can be turned down without turning
   their voice down.
@@ -90,8 +93,10 @@ detection, the tuner, recording, and what your friend hears all continue.
 
 - **Windows only**, x64.
 - **Two people per room.** Larger sessions are not implemented.
-- **No relay.** If both ends are behind carrier-grade or symmetric NAT, a
-  direct connection may be impossible. JamLink says so rather than pretending,
+- **No relay, and no rendezvous yet.** The guest probes every address the
+  invite named, but the host cannot punch outward until it has heard from the
+  guest. If both ends are behind carrier-grade or symmetric NAT, a direct
+  connection may still be impossible. JamLink says so rather than pretending,
   and will suggest the other person host if they can.
 - **Around 320 kbit/s upstream** for two streams. Lower than it was, but still
   a real requirement on a thin uplink; there is no automatic bitrate adaptation

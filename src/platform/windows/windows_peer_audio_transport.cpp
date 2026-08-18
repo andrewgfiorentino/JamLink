@@ -19,6 +19,7 @@
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
+#include "jamlink/network/ice_agent.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
 #include "jamlink/network/peer_audio_codec.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
@@ -1096,19 +1097,38 @@ public:
                 ? ReachabilityAssessment::LikelyReachable
                 : ReachabilityAssessment::Unknown,
             std::memory_order_release);
-        std::string inviteAddress;
+        // Every address this machine could be reached on, rather than one
+        // guess. The LAN address is what wins when two musicians are in the
+        // same building, and dropping it -- which naming only the public
+        // address did -- meant that pair had to hairpin back through a router
+        // that often will not do it at all.
+        std::vector<IceCandidate> candidates;
+        const auto offer = [&candidates](
+            const std::string& address, std::uint16_t port, CandidateKind kind) {
+            if (address.empty() || port == 0U) {
+                return;
+            }
+            for (const auto& existing : candidates) {
+                if (existing.address == address && existing.port == port) {
+                    return;
+                }
+            }
+            candidates.push_back(IceCandidate{address, port, kind});
+        };
         if (publicEndpoint.succeeded) {
-            inviteAddress = publicEndpoint.address;
-        } else if (!mapping.externalAddress.empty()) {
-            inviteAddress = mapping.externalAddress;
-        } else {
-            inviteAddress = localAddress;
+            // The port STUN saw, not the one we bound. On a symmetric router
+            // those differ, and the bound port is then simply the wrong answer.
+            offer(publicEndpoint.address, publicEndpoint.port,
+                CandidateKind::ServerReflexive);
         }
-        // UPnP requests the same external and internal UDP port. Keeping that
-        // port in the fallback invite also makes manual forwarding explicit
-        // and deterministic when automatic mapping is unavailable.
-        inviteCode_ = "JL1|" + inviteAddress + "|" + std::to_string(localPort_)
-            + "|" + hexEncode(secret_);
+        // UPnP requests the same external and internal UDP port, so keeping
+        // that port here also makes manual forwarding explicit and
+        // deterministic when automatic mapping is unavailable.
+        offer(mapping.externalAddress, localPort_, CandidateKind::ServerReflexive);
+        offer(localAddress, localPort_, CandidateKind::Host);
+        inviteCode_ = "JL2|" + encodeCandidates(candidates) + "|" + hexEncode(secret_);
+        JAMLINK_LOG("host", "offering " + std::to_string(candidates.size())
+            + " candidate address(es)");
         hostMode_ = true;
         JAMLINK_LOG("host", "waiting for a guest, invite "
             + jamlink::diagnostics::SessionLog::redactInvite(inviteCode_));
@@ -1119,20 +1139,23 @@ public:
 
     [[nodiscard]] bool join(const std::string& inviteCode) override {
         stop();
-        std::string address;
-        std::uint16_t port = 0U;
-        if (!parseInvite(inviteCode, address, port, secret_)) {
+        remoteCandidates_.clear();
+        if (!parseInviteCandidates(inviteCode, remoteCandidates_, secret_)) {
             state_.store(PeerConnectionState::InviteInvalid, std::memory_order_release);
             return false;
         }
+        const std::string address = remoteCandidates_.front().address;
+        const std::uint16_t port = remoteCandidates_.front().port;
         if (!winsock_.available() || !createBoundSocket(0U)) {
             state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
             return false;
         }
         udpBound_.store(true, std::memory_order_release);
-        JAMLINK_LOG("join", "joining " + address + ":" + std::to_string(port)
-            + " from local port " + std::to_string(localPort_));
+        JAMLINK_LOG("join", "joining " + std::to_string(remoteCandidates_.size())
+            + " candidate address(es), first " + address + ":" + std::to_string(port)
+            + ", from local port " + std::to_string(localPort_));
         remoteEndpointKnown_.store(true, std::memory_order_release);
+        beginCandidateChecks(GetTickCount64() * 1'000ULL);
         remoteAddress_ = {};
         remoteAddress_.sin_family = AF_INET;
         remoteAddress_.sin_port = htons(port);
@@ -1302,6 +1325,8 @@ public:
         snapshot.encodeFailures = encodeFailures_.load(std::memory_order_relaxed);
         snapshot.sessionsEstablished =
             sessionsEstablished_.load(std::memory_order_relaxed);
+        snapshot.candidateProbesSent = iceProbes_.load(std::memory_order_relaxed);
+        snapshot.candidateRoundsExhausted = iceRounds_.load(std::memory_order_relaxed);
         snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
         for (const auto* decoder : streamDecoders_) {
             if (decoder == nullptr) {
@@ -1416,6 +1441,136 @@ private:
         return true;
     }
 
+    [[nodiscard]] static char candidateKindLetter(CandidateKind kind) noexcept {
+        switch (kind) {
+        case CandidateKind::Host: return 'h';
+        case CandidateKind::ServerReflexive: return 's';
+        case CandidateKind::Relayed: return 'r';
+        }
+        return 'h';
+    }
+
+    [[nodiscard]] static bool candidateKindFromLetter(
+        char letter, CandidateKind& kind) noexcept {
+        switch (letter) {
+        case 'h': kind = CandidateKind::Host; return true;
+        case 's': kind = CandidateKind::ServerReflexive; return true;
+        case 'r': kind = CandidateKind::Relayed; return true;
+        default: return false;
+        }
+    }
+
+    // A machine has more than one address, and which of them a pair of routers
+    // will carry cannot be known in advance. An invite that names only one is
+    // a guess: naming the public address alone strands two musicians sitting in
+    // the same building, and naming the LAN address alone is useless between
+    // two homes.
+    [[nodiscard]] static std::string encodeCandidates(
+        const std::vector<IceCandidate>& candidates) {
+        std::string encoded;
+        for (const auto& candidate : candidates) {
+            if (!candidate.valid()) {
+                continue;
+            }
+            if (!encoded.empty()) {
+                encoded += ',';
+            }
+            encoded += candidateKindLetter(candidate.kind);
+            encoded += '=';
+            encoded += candidate.address;
+            encoded += ':';
+            encoded += std::to_string(candidate.port);
+        }
+        return encoded;
+    }
+
+    [[nodiscard]] static bool decodeCandidates(
+        const std::string& encoded, std::vector<IceCandidate>& candidates) {
+        std::size_t at = 0U;
+        while (at <= encoded.size()) {
+            const std::size_t end = encoded.find(',', at);
+            const std::string item = encoded.substr(
+                at, end == std::string::npos ? std::string::npos : end - at);
+            if (item.size() < 4U || item[1] != '=') {
+                return false;
+            }
+            IceCandidate candidate;
+            if (!candidateKindFromLetter(item[0], candidate.kind)) {
+                return false;
+            }
+            const std::size_t colon = item.rfind(':');
+            if (colon == std::string::npos || colon < 3U) {
+                return false;
+            }
+            candidate.address = item.substr(2U, colon - 2U);
+            unsigned long parsed = 0UL;
+            try {
+                std::size_t consumed = 0U;
+                parsed = std::stoul(item.substr(colon + 1U), &consumed);
+                if (consumed != item.size() - colon - 1U) {
+                    return false;
+                }
+            } catch (...) {
+                return false;
+            }
+            if (parsed == 0UL || parsed > 65'535UL) {
+                return false;
+            }
+            candidate.port = static_cast<std::uint16_t>(parsed);
+            // An address that will not parse cannot be probed, and accepting it
+            // would put a name lookup on the media path.
+            sockaddr_in probe{};
+            if (inet_pton(AF_INET, candidate.address.c_str(), &probe.sin_addr) != 1) {
+                return false;
+            }
+            candidates.push_back(candidate);
+            if (end == std::string::npos) {
+                break;
+            }
+            at = end + 1U;
+        }
+        return !candidates.empty();
+    }
+
+    // Accepts both invite forms. JL1 names one address and is what earlier
+    // builds emit; JL2 names every address this machine could be reached on.
+    [[nodiscard]] static bool parseInviteCandidates(
+        const std::string& invite,
+        std::vector<IceCandidate>& candidates,
+        std::array<std::uint8_t, 32U>& secret) {
+        if (invite.rfind("JL2|", 0U) == 0U) {
+            const auto listEnd = invite.find('|', 4U);
+            if (listEnd == std::string::npos) {
+                return false;
+            }
+            if (!hexDecode(invite.substr(listEnd + 1U), secret)) {
+                return false;
+            }
+            return decodeCandidates(invite.substr(4U, listEnd - 4U), candidates);
+        }
+        std::string address;
+        std::uint16_t port = 0U;
+        if (!parseInvite(invite, address, port, secret)) {
+            return false;
+        }
+        candidates.push_back(IceCandidate{address, port, CandidateKind::Host});
+        return true;
+    }
+
+    [[nodiscard]] static sockaddr_in candidateAddress(const IceCandidate& candidate) noexcept {
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(candidate.port);
+        static_cast<void>(inet_pton(AF_INET, candidate.address.c_str(), &address.sin_addr));
+        return address;
+    }
+
+    [[nodiscard]] static IceCandidate candidateFromAddress(const sockaddr_in& address) {
+        char text[INET_ADDRSTRLEN]{};
+        static_cast<void>(inet_ntop(AF_INET, &address.sin_addr, text, sizeof(text)));
+        return IceCandidate{std::string(text), ntohs(address.sin_port), CandidateKind::Host};
+    }
+
     [[nodiscard]] static bool parseInvite(
         const std::string& invite,
         std::string& address,
@@ -1488,6 +1643,8 @@ private:
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
         sessionsEstablished_.store(0U, std::memory_order_relaxed);
+        iceRounds_.store(0U, std::memory_order_relaxed);
+        iceProbes_.store(0U, std::memory_order_relaxed);
         roundTripMicroseconds_.store(0U, std::memory_order_relaxed);
         roundTripMeasured_.store(false, std::memory_order_relaxed);
         for (auto& peak : remotePeak_) {
@@ -1552,7 +1709,11 @@ private:
         std::uint32_t sampleRate,
         std::uint16_t frameCount,
         std::span<const std::uint8_t> plaintext,
-        AudioStreamId stream = AudioStreamId::Instrument) noexcept {
+        AudioStreamId stream = AudioStreamId::Instrument,
+        // Where to send, when it is not the peer we have settled on. Probing
+        // several candidate addresses is the only way to find out which one a
+        // pair of routers will actually carry.
+        const sockaddr_in* destination = nullptr) noexcept {
         std::array<std::uint8_t, maximumDatagramBytes> packet{};
         // Media sequences are per stream so each receive buffer sees a
         // contiguous run. Replay protection uses the nonce counter, which is
@@ -1577,12 +1738,62 @@ private:
         const int sent = sendto(
             socket_.get(), reinterpret_cast<const char*>(packet.data()),
             static_cast<int>(bytes), 0,
-            reinterpret_cast<const sockaddr*>(&remoteAddress_), sizeof(remoteAddress_));
+            reinterpret_cast<const sockaddr*>(
+                destination == nullptr ? &remoteAddress_ : destination),
+            sizeof(remoteAddress_));
         if (sent == static_cast<int>(bytes)) {
             packetsSent_.fetch_add(1U, std::memory_order_relaxed);
             return true;
         }
         return false;
+    }
+
+    // Sends the handshake to whichever candidate the agent says is due.
+    //
+    // The Hello is the probe. It is already authenticated with the room key and
+    // already answered with a HelloAck, so a reply is proof of an authenticated
+    // two-way path rather than merely of a packet arriving -- which is stronger
+    // evidence than a bare ping, and needs no second packet type on the wire.
+    void probeCandidates(
+        AesGcmCipher& cipher,
+        std::span<const std::uint8_t> encodedParticipant,
+        ULONGLONG now) noexcept {
+        const std::uint64_t nowMicroseconds = static_cast<std::uint64_t>(now) * 1'000ULL;
+        // A router that refuses at one moment can cooperate at the next, and a
+        // musician is still sitting there waiting. Exhausting the pairs starts
+        // a fresh round rather than giving up, and each round is recorded so a
+        // support bundle can show how many it took.
+        if (ice_.exhausted(nowMicroseconds)) {
+            iceRounds_.fetch_add(1U, std::memory_order_relaxed);
+            JAMLINK_LOG("ice", "no candidate answered in this round; starting another");
+            beginCandidateChecks(nowMicroseconds);
+        }
+        // Bounded so a long stall cannot turn into a burst that looks like a
+        // flood to a router already inclined to drop us.
+        for (std::size_t attempt = 0U; attempt < 4U; ++attempt) {
+            const IceAction action = ice_.nextAction(nowMicroseconds);
+            if (!action.sendProbe) {
+                return;
+            }
+            const sockaddr_in destination = candidateAddress(action.to);
+            static_cast<void>(sendPacket(
+                cipher, PacketType::Hello, 0U, 0U, encodedParticipant,
+                AudioStreamId::Instrument, &destination));
+            iceProbes_.fetch_add(1U, std::memory_order_relaxed);
+        }
+    }
+
+    void beginCandidateChecks(std::uint64_t nowMicroseconds) {
+        ice_.reset();
+        // The address does not decide where a probe is sent from -- the bound
+        // socket does -- but it does decide how pairs are ranked, and a pair
+        // that never leaves the building should always be tried first.
+        ice_.addLocalCandidate(
+            IceCandidate{localIpv4Address(), localPort_, CandidateKind::Host});
+        for (const auto& candidate : remoteCandidates_) {
+            ice_.addRemoteCandidate(candidate);
+        }
+        ice_.beginChecks(nowMicroseconds);
     }
 
     void servicePendingChat(
@@ -1770,11 +1981,8 @@ private:
                 const ULONGLONG now = GetTickCount64();
                 const bool versionMismatch = state_.load(std::memory_order_acquire)
                     == PeerConnectionState::VersionMismatch;
-                if (!hostMode_ && !connected && !versionMismatch
-                    && now - lastHello >= 250U) {
-                    static_cast<void>(sendPacket(
-                        sendCipher, PacketType::Hello, 0U, 0U, encodedParticipant));
-                    lastHello = now;
+                if (!hostMode_ && !connected && !versionMismatch) {
+                    probeCandidates(sendCipher, encodedParticipant, now);
                 }
                 // The host punches toward the guest as soon as it knows where
                 // the guest is. Without this the host's router never opens a
@@ -2017,7 +2225,16 @@ private:
         }
         const PacketType type = static_cast<PacketType>(packet[5U]);
         const std::uint32_t sequence = readU32(packet.data() + 8U);
-        if (type != PacketType::Hello && !sameEndpoint(source, remoteAddress_)) {
+        // While a guest is still finding a path, the answer legitimately comes
+        // back from an address it has not settled on: a router may rewrite the
+        // source, and several candidates are in flight at once. The packet has
+        // already been authenticated with the room key above and the replay
+        // window still applies, so accepting it grants nothing the invite did
+        // not already grant. Once connected the strict check returns.
+        const bool negotiatingCandidates =
+            !hostMode_ && !connected && type == PacketType::HelloAck;
+        if (type != PacketType::Hello && !negotiatingCandidates
+            && !sameEndpoint(source, remoteAddress_)) {
             return false;
         }
         const auto payload = std::span<const std::uint8_t>(
@@ -2092,6 +2309,16 @@ private:
             PeerParticipantInfo participant;
             if (!decodeParticipant(payload, participant)) {
                 return false;
+            }
+            // An answer is the only proof a path carries traffic both ways. A
+            // packet that left proves nothing, because the far router may
+            // still be dropping it. Whichever candidate answered is the one
+            // audio goes to from here.
+            ice_.onProbeResponse(candidateFromAddress(source), GetTickCount64() * 1'000ULL);
+            if (!sameEndpoint(source, remoteAddress_)) {
+                JAMLINK_LOG("ice", "path answered from a different address than probed;"
+                    " adopting it");
+                remoteAddress_ = source;
             }
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
@@ -2251,6 +2478,12 @@ private:
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
     std::atomic<std::uint64_t> packetsSent_{0U};
     std::atomic<std::uint64_t> sessionsEstablished_{0U};
+    // Candidate negotiation. Both are written in join() before the worker
+    // starts and afterwards touched only by the worker thread.
+    std::vector<IceCandidate> remoteCandidates_;
+    IceAgent ice_;
+    std::atomic<std::uint32_t> iceRounds_{0U};
+    std::atomic<std::uint64_t> iceProbes_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};
     std::atomic<std::uint64_t> packetsRejected_{0U};
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};

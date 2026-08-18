@@ -166,6 +166,13 @@ struct PeerTransportTelemetry final {
     // commonest report there is and nothing in a support bundle could
     // previously confirm or contradict it.
     std::uint64_t sessionsEstablished{0U};
+
+    // Path finding. A guest probes every address the invite named until one
+    // answers. Both figures matter in a failure report: probes prove packets
+    // actually left, and a round that exhausted every candidate without an
+    // answer is the signature of two routers that will not carry the path.
+    std::uint64_t candidateProbesSent{0U};
+    std::uint32_t candidateRoundsExhausted{0U};
 };
 
 // Realtime side of the transport. These calls only touch bounded lock-free

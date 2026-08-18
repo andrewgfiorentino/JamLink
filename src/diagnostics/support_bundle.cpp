@@ -164,6 +164,9 @@ std::string renderSupportBundle(const SupportSnapshot& snapshot) {
     writeField(out, "firewall", snapshot.firewallState);
     writeField(out, "udp bound", snapshot.udpBound);
     writeField(out, "local udp port", static_cast<std::uint64_t>(snapshot.localUdpPort));
+    writeField(out, "candidate probes sent", snapshot.candidateProbesSent);
+    writeField(out, "candidate rounds exhausted",
+        static_cast<std::uint64_t>(snapshot.candidateRoundsExhausted));
 
     out << "\nLink\n";
     writeField(out, "round trip measured", snapshot.roundTripMeasured);
@@ -247,6 +250,8 @@ std::string renderSupportBundleJson(const SupportSnapshot& snapshot) {
     text("firewallState", snapshot.firewallState);
     flag("udpBound", snapshot.udpBound);
     number("localUdpPort", snapshot.localUdpPort);
+    number("candidateProbesSent", snapshot.candidateProbesSent);
+    number("candidateRoundsExhausted", snapshot.candidateRoundsExhausted);
     flag("roundTripMeasured", snapshot.roundTripMeasured);
     number("roundTripMilliseconds", snapshot.roundTripMilliseconds);
     number("receiveBufferMilliseconds", snapshot.receiveBufferMilliseconds);

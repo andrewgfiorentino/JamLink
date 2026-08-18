@@ -57,12 +57,41 @@ bool waitForConnected(IPeerAudioTransport& first, IPeerAudioTransport& second) {
     return false;
 }
 
+// The port the host bound, whichever invite form it produced.
+std::uint16_t invitePort(const std::string& invite) {
+    const auto colon = invite.rfind(':');
+    const auto pipe = invite.find('|', 4U);
+    if (invite.rfind("JL2|", 0U) == 0U && colon != std::string::npos) {
+        const auto end = invite.find_first_not_of("0123456789", colon + 1U);
+        return static_cast<std::uint16_t>(std::stoul(invite.substr(
+            colon + 1U, end == std::string::npos ? std::string::npos : end - colon - 1U)));
+    }
+    if (pipe == std::string::npos) {
+        return 0U;
+    }
+    const auto portEnd = invite.find('|', pipe + 1U);
+    if (portEnd == std::string::npos) {
+        return 0U;
+    }
+    return static_cast<std::uint16_t>(
+        std::stoul(invite.substr(pipe + 1U, portEnd - pipe - 1U)));
+}
+
 std::string rewriteInviteEndpoint(
     const std::string& invite,
     const std::string& address,
     std::uint16_t port) {
     const auto addressEnd = invite.find('|', 4U);
-    if (invite.rfind("JL1|", 0U) != 0U || addressEnd == std::string::npos) {
+    if (addressEnd == std::string::npos) {
+        return invite;
+    }
+    // A JL2 invite names every address the host can be reached on. Replacing
+    // the whole list with one loopback candidate is what makes these tests a
+    // test of the transport rather than of whatever network the machine is on.
+    if (invite.rfind("JL2|", 0U) == 0U) {
+        return "JL2|h=" + address + ":" + std::to_string(port) + invite.substr(addressEnd);
+    }
+    if (invite.rfind("JL1|", 0U) != 0U) {
         return invite;
     }
     const auto portEnd = invite.find('|', addressEnd + 1U);
@@ -73,15 +102,26 @@ std::string rewriteInviteEndpoint(
 }
 
 std::string forceLoopback(const std::string& invite) {
-    const auto addressEnd = invite.find('|', 4U);
-    const auto portEnd = addressEnd == std::string::npos
-        ? std::string::npos : invite.find('|', addressEnd + 1U);
-    if (portEnd == std::string::npos) {
+    const std::uint16_t port = invitePort(invite);
+    if (port == 0U) {
         return invite;
     }
-    const std::string port = invite.substr(addressEnd + 1U, portEnd - addressEnd - 1U);
-    return rewriteInviteEndpoint(
-        invite, "127.0.0.1", static_cast<std::uint16_t>(std::stoul(port)));
+    return rewriteInviteEndpoint(invite, "127.0.0.1", port);
+}
+
+// Candidates a router will never carry, ahead of the one that works. This is
+// the shape of every real two-home attempt: a LAN address the other house
+// cannot reach, and a public address whose router may or may not cooperate.
+std::string withDeadCandidatesFirst(const std::string& invite) {
+    const auto addressEnd = invite.find('|', 4U);
+    const std::uint16_t port = invitePort(invite);
+    if (invite.rfind("JL2|", 0U) != 0U || addressEnd == std::string::npos || port == 0U) {
+        return invite;
+    }
+    // 192.0.2.0/24 is reserved for documentation and is routed nowhere.
+    return "JL2|h=192.0.2.10:" + std::to_string(port)
+        + ",s=192.0.2.11:9" + ",h=127.0.0.1:" + std::to_string(port)
+        + invite.substr(addressEnd);
 }
 
 std::array<float, 128U> makeTone(double increment, double amplitude) {
@@ -356,7 +396,7 @@ void exchangesEncryptedAudioOnLoopback() {
         return;
     }
     const std::string hostInvite = host->host(0U, false);
-    const std::string portField = "|" + std::to_string(host->localPort()) + "|";
+    const std::string portField = ":" + std::to_string(host->localPort());
     const bool started = !hostInvite.empty()
         && hostInvite.find(portField) != std::string::npos
         && guest->join(forceLoopback(hostInvite))
@@ -882,6 +922,59 @@ void additionalGuestCannotDisplaceActivePerformer() {
     guest->stop();
 }
 
+// One address in an invite is a guess. Field testing kept producing the same
+// failure: a public address discovered, an invite that looked correct, and no
+// connection -- because the only address named was the one the routers would
+// not carry. Naming every address and probing all of them is the fix.
+void connectsThroughACandidateThatIsNotTheFirstOffered() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !guest) {
+        check(false, "candidate probing harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    guest->setLocalParticipant(participant("profile-guest", "Mike"));
+    const std::string offered = host->host(0U, false);
+    check(offered.rfind("JL2|", 0U) == 0U, "the host offers a candidate list");
+
+    const std::string invite = withDeadCandidatesFirst(offered);
+    const bool connected = guest->join(invite) && waitForConnected(*host, *guest);
+    // Two unroutable candidates come first. Anything that stops at the first
+    // address, or that treats a packet leaving as proof the path works, never
+    // gets here.
+    check(connected, "an unreachable first candidate does not prevent connection");
+    if (connected) {
+        check(exchangeAudio(*host, *guest),
+              "audio flows on the candidate that actually answered");
+    }
+    host->stop();
+    guest->stop();
+}
+
+void keepsProbingAfterAnEarlyRoundFindsNothing() {
+    // A router that refuses now can cooperate later, and a musician is still
+    // sitting there. Exhausting the candidates must start another round rather
+    // than leaving a dead session that looks identical to a working one.
+    auto guest = jamlink::network::createPlatformPeerAudioTransport();
+    if (!guest) {
+        check(false, "probe persistence harness setup");
+        return;
+    }
+    guest->setLocalParticipant(participant("profile-guest", "Mike"));
+    const bool joined = guest->join(
+        "JL2|h=192.0.2.10:41234,s=192.0.2.11:41234|"
+        "0000000000000000000000000000000000000000000000000000000000000000");
+    check(joined, "a join to unreachable candidates still starts");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const auto telemetry = guest->telemetry();
+    check(telemetry.state != PeerConnectionState::Connected,
+          "nothing answered, so nothing is reported as connected");
+    check(telemetry.packetsSent > 0U,
+          "probes are actually sent to candidates that will never answer");
+    guest->stop();
+}
+
 } // namespace
 
 int main() {
@@ -892,6 +985,8 @@ int main() {
     }
 
     rejectsMalformedInvites();
+    connectsThroughACandidateThatIsNotTheFirstOffered();
+    keepsProbingAfterAnEarlyRoundFindsNothing();
     reportsDeterministicOfflineHostPreflight();
     reportsRoundTripOnlyOnceMeasured();
     exchangesEncryptedAudioOnLoopback();
