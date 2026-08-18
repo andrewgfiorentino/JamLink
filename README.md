@@ -5,7 +5,7 @@ open-source Windows application for private two-person sessions: guitar and
 voice travel as separate encrypted streams over a direct connection, with no
 server in the middle and no account to create.
 
-> Status: **0.4.2-test**. Under active development and validated in two-home
+> Status: **0.4.3-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -112,7 +112,9 @@ detection, the tuner, recording, and what your friend hears all continue.
   local originals of its own sources, but they are not yet sent to the other
   person, so your copy of your friend's audio is still whatever arrived.
 - **Both people must run the same version.** The wire protocol is
-  version-checked, and it changed in 0.4.1.
+  version-checked, and it changed in 0.4.1. The invite format changed in 0.4.3:
+  a 0.4.3 host's invite names several addresses and an older build cannot read
+  it, though 0.4.3 still joins an older host's invite.
 
 ## Building
 
