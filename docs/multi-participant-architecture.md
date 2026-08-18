@@ -195,16 +195,32 @@ Two things it gets right and one thing it does not do:
 - **It does not yet distribute.** The creator knows everyone; nobody is told
   about anybody else.
 
-**What is left, and why it is not a small change.** The worker loop is written
+**What is left, and why it is not a small change.** The worker loop was written
 around exactly one peer: one handshake, one connected flag, one timeout, one
-probe schedule, one cipher pair. Making it multi-slot means incoming packets
-have to be routed to a peer rather than assumed to be from *the* peer, a new
-slot has to be opened when the roster says so, and every per-session timer
-becomes per-peer. That is a rewrite of the connection management rather than an
-addition to it, and it is the point at which a second peer genuinely exists.
+probe schedule, one cipher pair.
 
-It should be started fresh rather than appended to a long session, because a
-half-converted worker is the one failure mode that cannot be shipped at all.
+**The session state has moved.** `connected`, the receive deadline, and the
+hello and ping clocks were locals in the worker. They are per-peer now, which
+is the part of the conversion that could be done mechanically and proved by the
+compiler: the locals were deleted, so anything still expecting them fails to
+build rather than quietly sharing one musician’s connection state with another.
+
+It matters more than it looks. A single connected flag cannot describe a room
+where one musician is present and another has dropped, and a single receive
+deadline would time the whole room out on the silence of whoever left.
+
+**Two things remain, and neither is mechanical:**
+
+- **Routing.** An arriving packet is still assumed to be from *the* peer. It
+  has to be attributed to one — by source address once a session holds, and by
+  slot allocation when a stranger sends a join request.
+- **Fan-out and lifecycle.** The worker services one session per pass. It has
+  to service each live slot, open one when the roster says to, and let one peer
+  time out without disturbing the others.
+
+Those are judgement rather than substitution, which is why they are separated
+from the move above: a half-converted worker is the one failure mode that
+cannot be shipped at all.
 
 **4. Mixing, and the interface.** Each remote participant needs its own level,
 mute, meter, and jitter buffer — the per-stream controls that exist for one

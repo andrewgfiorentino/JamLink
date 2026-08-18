@@ -1083,6 +1083,20 @@ struct PeerSlot final {
     // that is exactly what makes a per-pair key derivable without a round trip.
     std::array<std::uint8_t, noncePrefixBytes> remoteNoncePrefix{};
     bool remotePrefixKnown{false};
+    // Whether this peer is in session, and the clocks that decide when to
+    // give up on it or prod it.
+    //
+    // These were locals in the worker, which is correct while there is one
+    // peer and wrong the moment there are two: a single peer().connected flag cannot
+    // describe a room where one musician is present and another has dropped,
+    // and a single receive deadline would time the whole room out on the
+    // silence of whichever peer left.
+    bool connected{false};
+    bool publishedCandidates{false};
+    ULONGLONG lastReceive{0U};
+    ULONGLONG lastHello{0U};
+    ULONGLONG lastPing{0U};
+
     // Keys belonging to this pair rather than to the room. Absent until the
     // other end has said something, which is why the join request itself is
     // still sealed with the room key and nothing else is.
@@ -1978,9 +1992,8 @@ private:
 
     void servicePendingChat(
         AesGcmCipher& cipher,
-        bool connected,
         ULONGLONG now) noexcept {
-        if (!connected) {
+        if (!peer().connected) {
             return;
         }
         const std::scoped_lock lock(controlMutex_);
@@ -2162,13 +2175,13 @@ private:
             std::array<std::uint8_t, 9U + audioStreamCount> controlPayload{};
             std::array<std::uint64_t, audioStreamCount> lastAccepted{};
             std::array<std::uint64_t, audioStreamCount> lastConcealed{};
-            ULONGLONG lastHello = 0U;
-            ULONGLONG lastPing = 0U;
-            ULONGLONG lastReceive = GetTickCount64();
             ULONGLONG lastSummary = GetTickCount64();
-            bool connected = false;
             bool loggedConnected = false;
-            bool publishedCandidates = false;
+            peer().connected = false;
+            peer().publishedCandidates = false;
+            peer().lastHello = 0U;
+            peer().lastPing = 0U;
+            peer().lastReceive = GetTickCount64();
             JAMLINK_LOG("session", hostMode_ ? "worker started as host"
                                              : "worker started as guest");
 
@@ -2176,7 +2189,7 @@ private:
                 const ULONGLONG now = GetTickCount64();
                 const bool versionMismatch = state_.load(std::memory_order_acquire)
                     == PeerConnectionState::VersionMismatch;
-                if (!hostMode_ && !connected && !versionMismatch) {
+                if (!hostMode_ && !peer().connected && !versionMismatch) {
                     probeCandidates(sendCipher, encodedParticipant, now);
                 }
                 // The host punches toward the guest as soon as it knows where
@@ -2184,16 +2197,16 @@ private:
                 // mapping for the guest and drops every Hello, which is exactly
                 // how a direct connection fails with both public addresses
                 // discovered and both invites looking correct.
-                if (hostMode_ && !connected && !versionMismatch
+                if (hostMode_ && !peer().connected && !versionMismatch
                     && peer().remoteEndpointKnown.load(std::memory_order_acquire)
-                    && now - lastHello >= 250U) {
+                    && now - peer().lastHello >= 250U) {
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Punch, 0U, 0U, {}));
-                    lastHello = now;
+                    peer().lastHello = now;
                 }
-                if (connected && !loggedConnected) {
+                if (peer().connected && !loggedConnected) {
                     loggedConnected = true;
-                    JAMLINK_LOG("session", "connected");
+                    JAMLINK_LOG("session", "peer().connected");
                 }
                 // Every five seconds while unconnected, record what has and has
                 // not arrived. A stalled connection otherwise leaves no trace of
@@ -2207,9 +2220,9 @@ private:
                         packetsRejected_.load(std::memory_order_relaxed);
                     const std::uint64_t sent =
                         packetsSent_.load(std::memory_order_relaxed);
-                    if (!connected) {
-                        JAMLINK_LOG("stalled", "not connected after "
-                            + std::to_string((now - lastReceive) / 1000U) + "s: sent "
+                    if (!peer().connected) {
+                        JAMLINK_LOG("stalled", "not peer().connected after "
+                            + std::to_string((now - peer().lastReceive) / 1000U) + "s: sent "
                             + std::to_string(sent) + ", received " + std::to_string(received)
                             + ", rejected " + std::to_string(rejected)
                             + (received == 0U
@@ -2243,7 +2256,7 @@ private:
                 // not change while a session holds, and a session that drops
                 // and re-forms sends it again because this resets with the
                 // rest of the connection state.
-                if (connected && !publishedCandidates) {
+                if (peer().connected && !peer().publishedCandidates) {
                     std::array<std::uint8_t, 512U> rosterPayload{};
                     const std::size_t rosterBytes = encodeCandidateReport(
                         localParticipant, rosterPayload);
@@ -2252,10 +2265,10 @@ private:
                             sendCipher, PacketType::Candidates, 0U, 0U,
                             std::span<const std::uint8_t>(
                                 rosterPayload.data(), rosterBytes))) {
-                        publishedCandidates = true;
+                        peer().publishedCandidates = true;
                     }
                 }
-                if (connected && now - lastPing >= 500U) {
+                if (peer().connected && now - peer().lastPing >= 500U) {
                     const std::uint64_t stamp = nowMicroseconds();
                     std::memcpy(controlPayload.data(), &stamp, sizeof(stamp));
                     std::uint8_t muteMask = 0U;
@@ -2285,13 +2298,13 @@ private:
                     }
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Ping, 0U, 0U, controlPayload));
-                    lastPing = now;
+                    peer().lastPing = now;
                 }
 
                 drainOutgoingAudio(
                     sendCipher, outgoingPacers, outgoingEncoders, outgoingRates,
-                    localScratch, networkFloat, networkPcm, connected);
-                servicePendingChat(sendCipher, connected, now);
+                    localScratch, networkFloat, networkPcm);
+                servicePendingChat(sendCipher, now);
 
                 fd_set readSet;
                 FD_ZERO(&readSet);
@@ -2328,7 +2341,7 @@ private:
                                 PeerConnectionState::SocketFailed, std::memory_order_release);
                             return;
                         }
-                        if (connected && peer().remoteAddress.sin_port != 0U
+                        if (peer().connected && peer().remoteAddress.sin_port != 0U
                             && !sameEndpoint(source, peer().remoteAddress)) {
                             packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
                             continue;
@@ -2337,17 +2350,17 @@ private:
                                 sendCipher, receiveCipher,
                                 std::span<const std::uint8_t>(receivedPacket.data(),
                                     static_cast<std::size_t>(bytes)),
-                                decrypted, source, localParticipant, encodedParticipant,
-                                connected, lastReceive)) {
+                                decrypted, source, localParticipant,
+                                encodedParticipant)) {
                             packetsReceived_.fetch_add(1U, std::memory_order_relaxed);
                         } else {
                             packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
                         }
                     }
                 }
-                if (connected && GetTickCount64() - lastReceive > 5'000U) {
-                    connected = false;
-                    publishedCandidates = false;
+                if (peer().connected && GetTickCount64() - peer().lastReceive > 5'000U) {
+                    peer().connected = false;
+                    peer().publishedCandidates = false;
                     appendControlEvent(RoomControlEvent{
                         RoomControlEventType::PeerLeft, 0U, systemTimeMilliseconds(),
                         remoteParticipant(), "Connection lost"});
@@ -2372,9 +2385,8 @@ private:
         std::array<std::uint32_t, audioStreamCount>& configuredRates,
         std::array<float, 1'024U>& localScratch,
         std::array<float, networkPacketFrames>& networkFloat,
-        std::array<std::uint8_t, maximumAudioPayloadBytes>& networkPcm,
-        bool connected) noexcept {
-        if (!connected) {
+        std::array<std::uint8_t, maximumAudioPayloadBytes>& networkPcm) noexcept {
+        if (!peer().connected) {
             return;
         }
         const std::uint64_t nowMicros = nowMicroseconds();
@@ -2524,9 +2536,7 @@ private:
         std::array<std::uint8_t, maximumPlaintextBytes>& plaintext,
         const sockaddr_in& source,
         const PeerParticipantInfo& localParticipant,
-        std::span<const std::uint8_t> encodedLocalParticipant,
-        bool& connected,
-        ULONGLONG& lastReceive) noexcept {
+        std::span<const std::uint8_t> encodedLocalParticipant) noexcept {
         if (packet.size() < headerBytes + tagBytes
             || readU32(packet.data()) != protocolMagic
             || packet[4U] != protocolVersion
@@ -2596,9 +2606,9 @@ private:
         // source, and several candidates are in flight at once. The packet has
         // already been authenticated with the room key above and the replay
         // window still applies, so accepting it grants nothing the invite did
-        // not already grant. Once connected the strict check returns.
+        // not already grant. Once peer().connected the strict check returns.
         const bool negotiatingCandidates =
-            !hostMode_ && !connected && type == PacketType::HelloAck;
+            !hostMode_ && !peer().connected && type == PacketType::HelloAck;
         if (type != PacketType::Hello && !negotiatingCandidates
             && !sameEndpoint(source, peer().remoteAddress)) {
             return false;
@@ -2613,7 +2623,7 @@ private:
         if (type == PacketType::Hello && hostMode_) {
             PeerParticipantInfo proposedParticipant;
             if (!decodeParticipant(payload, proposedParticipant)
-                || (connected && peer().remoteAddress.sin_port != 0U
+                || (peer().connected && peer().remoteAddress.sin_port != 0U
                     && !sameEndpoint(source, peer().remoteAddress))) {
                 return false;
             }
@@ -2632,7 +2642,7 @@ private:
         if (!peer().replayWindow.accept(readU32(packet.data() + 20U + noncePrefixBytes))) {
             return false;
         }
-        lastReceive = GetTickCount64();
+        peer().lastReceive = GetTickCount64();
 
         if (type == PacketType::Hello && hostMode_) {
             PeerParticipantInfo participant;
@@ -2646,7 +2656,7 @@ private:
             peer().remoteEndpointKnown.store(true, std::memory_order_release);
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
-                connected = false;
+                peer().connected = false;
                 state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::VersionMismatch, 0U,
@@ -2657,8 +2667,8 @@ private:
                     encodedLocalParticipant));
                 return true;
             }
-            const bool wasConnected = connected;
-            connected = true;
+            const bool wasConnected = peer().connected;
+            peer().connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             static_cast<void>(sendPacket(
                 sendCipher, PacketType::HelloAck, 0U, 0U,
@@ -2688,7 +2698,7 @@ private:
             }
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
-                connected = false;
+                peer().connected = false;
                 state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::VersionMismatch, 0U,
@@ -2696,8 +2706,8 @@ private:
                     "This room requires the exact same JamLink build"});
                 return true;
             }
-            const bool wasConnected = connected;
-            connected = true;
+            const bool wasConnected = peer().connected;
+            peer().connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             if (!wasConnected) {
                 peer().sessionsEstablished.fetch_add(1U, std::memory_order_relaxed);
@@ -2713,7 +2723,7 @@ private:
                 return false;
             }
             setRemoteParticipant(participant);
-            connected = false;
+            peer().connected = false;
             state_.store(PeerConnectionState::VersionMismatch, std::memory_order_release);
             appendControlEvent(RoomControlEvent{
                 RoomControlEventType::VersionMismatch, 0U,
@@ -2767,7 +2777,7 @@ private:
             }
             return true;
         }
-        if (type == PacketType::Candidates && connected) {
+        if (type == PacketType::Candidates && peer().connected) {
             RosterMember member;
             if (!decodeCandidateReport(payload, member)) {
                 return false;
@@ -2782,15 +2792,15 @@ private:
             static_cast<void>(roster_.remember(member));
             return true;
         }
-        if (type == PacketType::Chat && connected) {
+        if (type == PacketType::Chat && peer().connected) {
             return receiveChatMessage(sendCipher, payload);
         }
-        if (type == PacketType::ChatAck && connected
+        if (type == PacketType::ChatAck && peer().connected
             && payloadBytes == sizeof(std::uint64_t)) {
             receiveChatAcknowledgement(readU64(plaintext.data()));
             return true;
         }
-        if (type != PacketType::Audio || !connected) {
+        if (type != PacketType::Audio || !peer().connected) {
             return false;
         }
         // Audio is always full 48 kHz packets of a fixed size. The sender
