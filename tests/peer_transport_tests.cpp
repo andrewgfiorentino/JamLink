@@ -1027,6 +1027,296 @@ void aGuestTellsTheRoomWhereItCanBeReached() {
     guest->stop();
 }
 
+// Drives a whole room against the wall clock, and returns what each musician
+// heard.
+//
+// Not two pumps side by side. The send path captures, limits and encodes once
+// and seals the result separately for each recipient, so the way it fails is
+// one musician hearing everything and everybody after them hearing silence.
+// Only a pump that drives the whole room at once can see that.
+std::vector<float> pumpRoom(
+    const std::vector<IPeerAudioTransport*>& room,
+    std::chrono::milliseconds duration,
+    std::chrono::milliseconds measureLast) {
+    using jamlink::network::AudioStreamId;
+    using Clock = std::chrono::steady_clock;
+
+    // A tone each, so a transport that crossed two musicians' audio would not
+    // be able to pass by accident.
+    std::vector<std::array<float, 128U>> tones;
+    tones.reserve(room.size());
+    for (std::size_t index = 0U; index < room.size(); ++index) {
+        tones.push_back(makeTone(0.07 + 0.05 * static_cast<double>(index), 0.4));
+    }
+    std::vector<float> peaks(room.size(), 0.0F);
+
+    const auto start = Clock::now();
+    const auto finish = start + duration;
+    const auto measureFrom = finish - measureLast;
+    std::size_t pushedFrames = 0U;
+    std::size_t pulledFrames = 0U;
+    std::array<float, 240U> block{};
+
+    while (Clock::now() < finish) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now() - start).count();
+        const auto dueFrames = static_cast<std::size_t>(
+            std::max<std::int64_t>(elapsed, 0) * 48 / 1'000);
+        while (pushedFrames + 128U <= dueFrames) {
+            for (std::size_t index = 0U; index < room.size(); ++index) {
+                room[index]->pushLocalAudio(
+                    AudioStreamId::Instrument, tones[index], 48'000U);
+                room[index]->pushLocalAudio(AudioStreamId::Voice, tones[index], 48'000U);
+            }
+            pushedFrames += 128U;
+        }
+        const bool measuring = Clock::now() >= measureFrom;
+        while (pulledFrames + block.size() <= dueFrames) {
+            for (std::size_t index = 0U; index < room.size(); ++index) {
+                static_cast<void>(
+                    room[index]->pullRemote48k(AudioStreamId::Instrument, block));
+                if (measuring) {
+                    peaks[index] = std::max(peaks[index], peakOf(block));
+                }
+                static_cast<void>(room[index]->pullRemote48k(AudioStreamId::Voice, block));
+            }
+            pulledFrames += block.size();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return peaks;
+}
+
+bool waitForPeerCount(
+    IPeerAudioTransport& transport,
+    std::uint32_t peers,
+    std::chrono::milliseconds patience) {
+    const auto deadline = std::chrono::steady_clock::now() + patience;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (transport.telemetry().connectedPeers == peers) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
+
+bool waitForState(
+    IPeerAudioTransport& transport,
+    PeerConnectionState state,
+    std::chrono::milliseconds patience) {
+    const auto deadline = std::chrono::steady_clock::now() + patience;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (transport.telemetry().state == state) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
+
+// A third musician arrives at a room that is already playing, and everybody
+// ends up hearing everybody they should.
+//
+// This is the test the two-person suite could not be: with one peer, servicing
+// one slot and servicing every slot are the same code path, and so are
+// draining the send pacer once and draining it per recipient. Both only come
+// apart when somebody else is in the room.
+void admitsASecondMusicianAndSendsToBoth() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto first = jamlink::network::createPlatformPeerAudioTransport();
+    auto second = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !first || !second) {
+        check(false, "three-musician harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    first->setLocalParticipant(participant("profile-first", "Mike"));
+    second->setLocalParticipant(participant("profile-second", "Sam"));
+
+    const std::string invite = forceLoopback(host->host(0U, false));
+    const bool firstConnected = !invite.empty() && first->join(invite)
+        && waitForConnected(*host, *first);
+    check(firstConnected, "the first musician connects");
+    if (!firstConnected) {
+        return;
+    }
+    const std::uint64_t firstReceivedBefore = first->telemetry().packetsReceived;
+
+    // Mid-session, which is the case that matters. A join request from an
+    // endpoint nothing is expecting has to find a slot of its own rather than
+    // being rejected as not-the-peer or handed the established one.
+    check(second->join(invite), "a second musician can attempt the room");
+    check(waitForPeerCount(*host, 2U, std::chrono::milliseconds(6'000)),
+          "the host gives the arriving musician a slot of their own");
+    check(waitForConnected(*host, *second), "the second musician connects");
+    check(first->telemetry().state == PeerConnectionState::Connected,
+          "the arrival never disturbs the session already running");
+
+    const auto peaks = pumpRoom(
+        {host.get(), first.get(), second.get()},
+        std::chrono::milliseconds(1'500), std::chrono::milliseconds(600));
+    check(peaks[0] > audibleThreshold, "the host hears the room");
+    check(peaks[1] > audibleThreshold, "the first musician hears the host");
+    // THE ONE THAT MATTERS, and the reason this test exists. The send pacer
+    // releases one packet on a schedule. Draining it once per recipient hands
+    // the first musician every packet and everybody after them silence, and it
+    // is invisible in every two-person test there is.
+    check(peaks[2] > audibleThreshold,
+          "the second musician hears the host too, so the pacer is not drained per peer");
+
+    const auto hostView = host->telemetry();
+    check(hostView.peers[0].connected && hostView.peers[1].connected,
+          "the host reports two separate links rather than one");
+    check(first->telemetry().packetsReceived > firstReceivedBefore,
+          "the first musician kept receiving across the second one arriving");
+    // Each link is measured on its own. One number for the room would be a
+    // different musician's connection every time it moved.
+    check(hostView.peers[0].roundTripMeasured && hostView.peers[1].roundTripMeasured,
+          "each link is timed separately");
+
+    second->stop();
+    first->stop();
+    host->stop();
+}
+
+// One musician leaves. The rest keep playing, and the room says so accurately.
+//
+// A single connected flag could not describe this, and a single receive
+// deadline would have timed the whole room out on the silence of whoever left.
+// It is also where "connected" and "complete" visibly stop being the same
+// question: two people can still play, and the room is no longer whole.
+void oneMusicianLeavingLeavesTheRestPlaying() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    auto staying = jamlink::network::createPlatformPeerAudioTransport();
+    auto leaving = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host || !staying || !leaving) {
+        check(false, "departure harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    staying->setLocalParticipant(participant("profile-staying", "Mike"));
+    leaving->setLocalParticipant(participant("profile-leaving", "Sam"));
+
+    const std::string invite = forceLoopback(host->host(0U, false));
+    const bool ready = !invite.empty() && staying->join(invite) && leaving->join(invite)
+        && waitForPeerCount(*host, 2U, std::chrono::milliseconds(6'000));
+    check(ready, "a room of three forms");
+    if (!ready) {
+        return;
+    }
+    // Both guests report where they can be reached once their session is up,
+    // so the room knows how many people it is expecting.
+    const auto whole = [&host] {
+        for (int attempt = 0; attempt < 300; ++attempt) {
+            if (host->telemetry().roomComplete) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    }();
+    check(whole, "a room with everybody in it reports itself whole");
+
+    leaving->stop();
+    // Past the receive deadline for the musician who left, while the room
+    // keeps playing. A shared deadline would take everybody down here.
+    const auto peaks = pumpRoom(
+        {host.get(), staying.get()},
+        std::chrono::milliseconds(7'000), std::chrono::milliseconds(800));
+
+    const auto hostView = host->telemetry();
+    check(hostView.state == PeerConnectionState::Connected,
+          "a room somebody left is still a room the rest can play in");
+    check(hostView.connectedPeers == 1U, "only the musician who left is reported gone");
+    // The whole point of naming the two questions separately: still connected,
+    // no longer whole. One flag cannot say both.
+    check(!hostView.roomComplete,
+          "the room is no longer whole, which is a different answer to still being connected");
+    check(peaks[0] > audibleThreshold && peaks[1] > audibleThreshold,
+          "audio keeps flowing between the musicians who stayed");
+    check(staying->telemetry().state == PeerConnectionState::Connected,
+          "the musician who stayed was never disconnected");
+
+    staying->stop();
+    host->stop();
+}
+
+// A room that cannot carry another musician says so.
+//
+// Silence would be indistinguishable from a network that never carried them:
+// somebody watching a spinner has no way to tell "the room is full" from
+// "JamLink is broken", and the second is what they would conclude.
+void aRefusedMusicianIsToldRatherThanLeftWaiting() {
+    auto host = jamlink::network::createPlatformPeerAudioTransport();
+    if (!host) {
+        check(false, "capacity harness setup");
+        return;
+    }
+    host->setLocalParticipant(participant("profile-host", "Andrew"));
+    const std::string invite = forceLoopback(host->host(0U, false));
+    if (invite.empty()) {
+        check(false, "capacity harness host start");
+        return;
+    }
+
+    // As many as a direct session is built for. Past this the number of paths
+    // grows faster than anybody's connection does, which is the capacity
+    // guard's rule rather than a second one invented at the door.
+    std::vector<std::unique_ptr<IPeerAudioTransport>> admitted;
+    bool allJoined = true;
+    for (std::size_t index = 0U; index < jamlink::network::maximumRoomPeers; ++index) {
+        auto guest = jamlink::network::createPlatformPeerAudioTransport();
+        if (!guest) {
+            allJoined = false;
+            break;
+        }
+        guest->setLocalParticipant(participant(
+            "profile-guest-" + std::to_string(index), "Musician " + std::to_string(index)));
+        allJoined = allJoined && guest->join(invite);
+        admitted.push_back(std::move(guest));
+    }
+    check(allJoined, "a full room of musicians attempts to join");
+    const bool full = waitForPeerCount(
+        *host, static_cast<std::uint32_t>(jamlink::network::maximumRoomPeers),
+        std::chrono::milliseconds(15'000));
+    check(full, "the room fills to what a mesh is built for");
+    if (!full) {
+        for (auto& guest : admitted) {
+            guest->stop();
+        }
+        host->stop();
+        return;
+    }
+
+    auto refused = jamlink::network::createPlatformPeerAudioTransport();
+    if (!refused) {
+        check(false, "refused musician harness setup");
+        return;
+    }
+    refused->setLocalParticipant(participant("profile-refused", "Late"));
+    check(refused->join(invite), "one more musician attempts the room");
+    check(waitForState(*refused, PeerConnectionState::RoomFull,
+                       std::chrono::milliseconds(6'000)),
+          "the refused musician is told the room is full rather than left waiting");
+
+    bool toldInWords = false;
+    for (const auto& event : refused->takeControlEvents()) {
+        toldInWords = toldInWords
+            || event.type == jamlink::network::RoomControlEventType::RoomFull;
+    }
+    check(toldInWords, "the refusal reaches the interface as something to show somebody");
+    check(host->telemetry().connectedPeers
+              == static_cast<std::uint32_t>(jamlink::network::maximumRoomPeers),
+          "a refused musician never displaces one who is already in the room");
+
+    refused->stop();
+    for (auto& guest : admitted) {
+        guest->stop();
+    }
+    host->stop();
+}
+
 } // namespace
 
 int main() {
@@ -1053,6 +1343,9 @@ int main() {
     negotiatesExactBuildAndExchangesReliableChat();
     rejectsIncompatibleApplicationBuild();
     additionalGuestCannotDisplaceActivePerformer();
+    admitsASecondMusicianAndSendsToBoth();
+    oneMusicianLeavingLeavesTheRestPlaying();
+    aRefusedMusicianIsToldRatherThanLeftWaiting();
 
     static_cast<void>(WSACleanup());
     std::cout << (failures == 0U ? "all peer transport checks passed\n"

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "jamlink/control/room_capacity.hpp"
 #include "jamlink/network/connection_preflight.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
 #include "jamlink/network/room_roster.hpp"
@@ -27,7 +28,12 @@ enum class PeerConnectionState : std::uint8_t {
     VersionMismatch,
     SocketFailed,
     EncryptionFailed,
-    ConnectionLost
+    ConnectionLost,
+    // The room answered, and it cannot carry another musician. Distinct from
+    // every failure above it: nothing is broken, there is simply no seat.
+    // Silence would have been indistinguishable from a network that never
+    // carried them.
+    RoomFull
 };
 
 // 3 frames every audio payload with the codec that produced it, so a
@@ -61,7 +67,8 @@ enum class RoomControlEventType : std::uint8_t {
     PeerLeft,
     ChatMessage,
     ChatDeliveryFailed,
-    VersionMismatch
+    VersionMismatch,
+    RoomFull
 };
 
 struct RoomControlEvent final {
@@ -122,6 +129,39 @@ struct RemoteStreamTelemetry final {
     std::uint32_t bufferedFrames{0U};
     std::uint32_t targetFrames{0U};
     bool playing{false};
+};
+
+// One slot per other musician. A mesh needs one fewer than the room holds,
+// because nobody sends to themselves. Taken from the capacity guard rather
+// than written down a second time, so the ceiling has one definition.
+inline constexpr std::size_t maximumRoomPeers =
+    jamlink::control::maximumMeshParticipants - 1U;
+
+// One musician's link, as opposed to the room's.
+//
+// A room is several links and they fail separately. Aggregating them into one
+// round trip and one buffer depth is cheaper and leaves a support bundle
+// unable to say which musician the trouble was with -- which is the only
+// reason anybody reads one.
+//
+// Indexed by slot, and slots are stable for as long as somebody holds one.
+// Pair with peerParticipants(), which is indexed the same way, to put a name
+// against a link.
+struct PeerLinkTelemetry final {
+    // A slot keeps its addresses while its musician is away, so that a
+    // reconnect can reuse the endpoint instead of needing a fresh invite.
+    // Holding a slot and being in session are therefore different questions
+    // and are reported separately.
+    bool inUse{false};
+    bool connected{false};
+    std::uint64_t roundTripMicroseconds{0U};
+    bool roundTripMeasured{false};
+    // What this end is sending to this peer. Per peer because the far end's
+    // loss reports are what lower it, and only one musician's link may be
+    // struggling.
+    std::uint32_t audioBitsPerSecond{0U};
+    std::uint32_t bitrateReductions{0U};
+    std::array<RemoteStreamTelemetry, audioStreamCount> streams{};
 };
 
 struct PeerTransportTelemetry final {
@@ -188,6 +228,36 @@ struct PeerTransportTelemetry final {
     NatMappingBehaviour natBehaviour{NatMappingBehaviour::NotProbed};
     std::uint64_t candidateProbesSent{0U};
     std::uint32_t candidateRoundsExhausted{0U};
+
+    // What "the room is connected" means, answered once here rather than
+    // three times over in the interface.
+    //
+    // With one friend a single flag said it all. With several there are two
+    // honest answers and three consumers -- the session conductor gating
+    // "ready to play", the room screen showing presence, and the recording
+    // gate -- which do not obviously want the same one. Deciding
+    // independently in three places is how a room reports itself ready while
+    // somebody in it cannot hear anyone.
+    //
+    // So: `state == Connected` means AT LEAST ONE other musician is in
+    // session. That is the answer to "can I play at all", and it is what all
+    // three read, because a room where one of three has dropped is still a
+    // room the other two can play in -- refusing to record it, or calling it
+    // disconnected, would be describing the wrong thing.
+    //
+    // `roomComplete` is the other answer -- everybody the roster names is in
+    // session -- and exists so the interface can say the room is still
+    // filling up without any consumer having to reconstruct that from counts.
+    std::uint32_t connectedPeers{0U};
+    // How many the roster expects, which is zero until anybody has reported
+    // in. Never presented as a promise that they are coming.
+    std::uint32_t expectedPeers{0U};
+    bool roomComplete{false};
+
+    // Per musician, so a bundle can name which link was the trouble. The flat
+    // fields above stay the first connected peer's, which is what every
+    // existing reader already meant by them.
+    std::array<PeerLinkTelemetry, maximumRoomPeers> peers{};
 };
 
 // Realtime side of the transport. These calls only touch bounded lock-free
@@ -236,7 +306,17 @@ public:
     // deduplication independently of the non-retransmitted music packets.
     [[nodiscard]] virtual bool sendChatMessage(const std::string& plainText) = 0;
     [[nodiscard]] virtual std::vector<RoomControlEvent> takeControlEvents() = 0;
+    // The first musician in session, which is the whole room for a duo. A
+    // room with several is read through peerParticipants() and roomMembers()
+    // instead; this stays because everything that shows one friend means it.
     [[nodiscard]] virtual PeerParticipantInfo remoteParticipant() const = 0;
+
+    // Who holds each slot, indexed to match telemetry().peers, with empty
+    // entries for slots nobody has taken. Separate from telemetry() because
+    // identities carry strings and telemetry() is noexcept.
+    [[nodiscard]] virtual std::vector<PeerParticipantInfo> peerParticipants() const {
+        return {};
+    }
 
     // Mutes everything this peer sends, which is the room mute control.
     virtual void setSendMuted(bool muted) noexcept = 0;

@@ -2242,7 +2242,17 @@ bool AppController::roomActive() const noexcept {
     return peerTransport_ != nullptr || roomDirectory_.active() || visualRoomFixture_;
 }
 bool AppController::peerConnected() const noexcept {
+    // At least one other musician is in session. A room where one of three
+    // has dropped is still a room the other two can play in, so this stays
+    // true -- and everything gated on being able to play reads it.
     return peerTelemetry_.state == jamlink::network::PeerConnectionState::Connected;
+}
+bool AppController::roomComplete() const noexcept {
+    return visualRoomFixture_ || peerTelemetry_.roomComplete;
+}
+int AppController::connectedPeerCount() const noexcept {
+    return visualRoomFixture_
+        ? 1 : static_cast<int>(peerTelemetry_.connectedPeers);
 }
 QString AppController::roomStatus() const {
     if (visualRoomFixture_) {
@@ -2255,6 +2265,14 @@ QString AppController::roomStatus() const {
         return QStringLiteral("No room session");
     }
     if (peerConnected()) {
+        // Connected and whole are different answers, and a room that is one
+        // musician short should say so rather than report itself finished.
+        if (!roomComplete() && peerTelemetry_.expectedPeers > 1U) {
+            return QStringLiteral("Connected · %1 of %2 here · %3")
+                .arg(peerTelemetry_.connectedPeers)
+                .arg(peerTelemetry_.expectedPeers)
+                .arg(connectionQuality());
+        }
         return QStringLiteral("Connected · encrypted direct audio · %1")
             .arg(connectionQuality());
     }
@@ -3303,6 +3321,15 @@ void AppController::processRoomControlEvents() {
             updateManager_.checkNow();
             roomUpdated = true;
             break;
+        case jamlink::network::RoomControlEventType::RoomFull:
+            // Said in terms of the room rather than the connection. Nothing
+            // failed, and telling somebody to check their network when the
+            // answer is "there is no seat" sends them to fix the wrong thing.
+            setupMessage_ = QStringLiteral(
+                "That room is already full — everyone in it sends their audio to "
+                "everyone else, so it can only hold so many people");
+            roomUpdated = true;
+            break;
         }
     }
     if (roomUpdated) {
@@ -3935,6 +3962,10 @@ QString AppController::peerStateText(jamlink::network::PeerConnectionState state
         return QStringLiteral("Secure room encryption could not start");
     case State::ConnectionLost:
         return QStringLiteral("Connection lost · retrying direct audio");
+    case State::RoomFull:
+        // Not a failure, and it must not read like one: nothing is broken and
+        // there is nothing to retry. There is simply no seat.
+        return QStringLiteral("This room is full");
     }
     return QStringLiteral("Room status unavailable");
 }

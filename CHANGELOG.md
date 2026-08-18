@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- A room can now hold more than two musicians. The transport keeps a slot per person instead of one set of "the peer" state, and the network worker services every slot each pass: each musician gets their own handshake, their own keys and nonce sequence, their own probe schedule, their own receive buffers and their own timeout. Playback mixes them, and each person's level, mute and meter apply to their own contribution rather than to the sum.
+- Your audio is captured, limited and encoded once, then sealed separately for each person it goes to. Doing that per person instead would have handed the first musician every packet and everybody after them silence — and no two-person test could ever have shown it, so a test deliberately reproduces the fault and was confirmed to fail on it.
+- A room that cannot take another musician now says so. Someone refused is told the room is full instead of watching a spinner that is indistinguishable from a network that never carried them, and the answer comes from the same capacity guard the rest of JamLink uses, so measured strain still outranks arithmetic. Nobody already in the room is displaced by somebody arriving.
+- One person dropping out no longer speaks for the room. "Connected" now means at least one other musician is in session, which is the honest answer to whether you can play at all, and whether everybody expected is present is reported separately — so a room with one person missing keeps playing and still says it is a person short. Their slot and addresses are kept so they can come back without a fresh invite.
+- Chat is delivered to everybody in the room and is not finished until each of them has acknowledged it. Fixed message identifiers colliding between senders: everyone numbers their own messages from one, so a second person's message could be dropped as a duplicate of the first without anything saying so.
+- Round trip, buffer depth, jitter and concealment are now measured per musician rather than averaged into one figure, so a support bundle can say which connection was the trouble.
+
 ## 0.4.2-test — 2026-08-17
 
 - Recording now keeps pristine local originals of your own guitar and voice, taken in the capture callback at the capture device's own rate, before the monitor converter and before anything the network could do to them. The four aligned tracks remain what was heard; the originals are what was played, and a dropout cannot touch them. Each original keeps its capture device's own sample rate rather than being resampled to the timeline, because a resampled original is no longer an original.
