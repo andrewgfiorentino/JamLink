@@ -1695,6 +1695,8 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.firewallState = firewallMessage().toStdString();
     snapshot.udpBound = peerTelemetry_.udpBound;
     snapshot.localUdpPort = static_cast<std::uint16_t>(roomPort());
+    snapshot.natBehaviour =
+        std::string(jamlink::network::natBehaviourName(peerTelemetry_.natBehaviour));
     snapshot.candidateProbesSent = peerTelemetry_.candidateProbesSent;
     snapshot.candidateRoundsExhausted = peerTelemetry_.candidateRoundsExhausted;
 

@@ -111,6 +111,7 @@ add_library(jamlink_core STATIC
     src/network/audio_stream_receiver.cpp
     src/network/connection_preflight.cpp
     src/network/ice_agent.cpp
+    src/network/nat_behaviour.cpp
     src/network/peer_audio_codec.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp

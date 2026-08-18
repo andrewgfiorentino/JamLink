@@ -20,6 +20,7 @@
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
 #include "jamlink/network/ice_agent.hpp"
+#include "jamlink/network/nat_behaviour.hpp"
 #include "jamlink/network/outgoing_audio_pacer.hpp"
 #include "jamlink/network/peer_audio_codec.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
@@ -862,13 +863,24 @@ struct StunEndpoint final {
     std::uint16_t port{0U};
 };
 
-[[nodiscard]] StunEndpoint queryStun(SOCKET socket) {
+// Two servers on purpose. Asking one server twice measures nothing: a
+// symmetric router keeps the same port for the same destination, so it would
+// look endpoint-independent every time.
+inline constexpr const char* primaryStunHost = "stun.cloudflare.com";
+inline constexpr const char* secondaryStunHost = "stun.l.google.com";
+inline constexpr const char* primaryStunPort = "3478";
+inline constexpr const char* secondaryStunPort = "19302";
+
+[[nodiscard]] StunEndpoint queryStun(
+    SOCKET socket,
+    const char* stunHost = primaryStunHost,
+    const char* stunPort = primaryStunPort) {
     StunEndpoint result;
     addrinfo hints{};
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
     addrinfo* addresses = nullptr;
-    if (getaddrinfo("stun.cloudflare.com", "3478", &hints, &addresses) != 0) {
+    if (getaddrinfo(stunHost, stunPort, &hints, &addresses) != 0) {
         return result;
     }
     std::array<std::uint8_t, 20U> request{};
@@ -933,6 +945,25 @@ struct StunEndpoint final {
         offset = valueOffset + ((static_cast<std::size_t>(length) + 3U) & ~3U);
     }
     return result;
+}
+
+// Whether this machine can be reached by an invite it creates.
+//
+// The preflight has always had honest wording for a router that cannot be
+// hosted from, and nothing could ever detect one, so the branch was dead and
+// the musician got a spinner. Two observations from two servers is the whole
+// measurement.
+[[nodiscard]] NatAssessment probeNatBehaviour(SOCKET socket, const StunEndpoint& primary) {
+    if (!primary.succeeded) {
+        // Without a first observation there is nothing to compare against, and
+        // a second probe would only cost a second of startup.
+        return classifyNatBehaviour(ObservedMapping{}, ObservedMapping{});
+    }
+    const StunEndpoint secondary =
+        queryStun(socket, secondaryStunHost, secondaryStunPort);
+    return classifyNatBehaviour(
+        ObservedMapping{true, primary.address, primary.port},
+        ObservedMapping{secondary.succeeded, secondary.address, secondary.port});
 }
 
 [[nodiscard]] bool sameEndpoint(
@@ -1089,13 +1120,30 @@ public:
                         + ", which means this router is symmetric and a direct"
                           " invite cannot work)")
             : std::string("STUN public address discovery failed"));
+        // Measured only when the host is trying to be reachable. A second
+        // probe costs a second of startup and answers nothing offline.
+        const NatAssessment nat = discoverPublicAddress
+            ? probeNatBehaviour(socket_.get(), publicEndpoint)
+            : NatAssessment{};
+        natBehaviour_.store(nat.behaviour, std::memory_order_release);
+        JAMLINK_LOG("host", std::string("router mapping behaviour ")
+            + std::string(natBehaviourName(nat.behaviour))
+            + (nat.canHostDirectly()
+                ? ""
+                : ", so an invite made here names an endpoint nobody can reach"));
         const bool usableAutomaticMapping = mapping.mapped
             && (publicEndpoint.succeeded || !mapping.externalAddress.empty());
         automaticPortMapping_.store(usableAutomaticMapping, std::memory_order_relaxed);
+        // A router that hands out a fresh port per destination outranks a
+        // granted mapping: the mapping is real and the invite still leads
+        // nowhere, which is exactly the combination that produced a discovered
+        // public address, a correct-looking invite, and no connection.
         reachability_.store(
-            usableAutomaticMapping
-                ? ReachabilityAssessment::LikelyReachable
-                : ReachabilityAssessment::Unknown,
+            !nat.canHostDirectly()
+                ? ReachabilityAssessment::RelayRequired
+                : (usableAutomaticMapping
+                    ? ReachabilityAssessment::LikelyReachable
+                    : ReachabilityAssessment::Unknown),
             std::memory_order_release);
         // Every address this machine could be reached on, rather than one
         // guess. The LAN address is what wins when two musicians are in the
@@ -1325,6 +1373,7 @@ public:
         snapshot.encodeFailures = encodeFailures_.load(std::memory_order_relaxed);
         snapshot.sessionsEstablished =
             sessionsEstablished_.load(std::memory_order_relaxed);
+        snapshot.natBehaviour = natBehaviour_.load(std::memory_order_acquire);
         snapshot.candidateProbesSent = iceProbes_.load(std::memory_order_relaxed);
         snapshot.candidateRoundsExhausted = iceRounds_.load(std::memory_order_relaxed);
         snapshot.audioBitsPerSecond = outgoingBitsPerSecond;
@@ -2494,6 +2543,7 @@ private:
     // to report. Empty when none of them did.
     const char* gatewayMappingProtocol_{""};
     std::atomic<bool> udpBound_{false};
+    std::atomic<NatMappingBehaviour> natBehaviour_{NatMappingBehaviour::NotProbed};
     std::atomic<PublicAddressDiscoveryState> publicAddressDiscovery_{
         PublicAddressDiscoveryState::NotAttempted};
     std::atomic<PortMappingState> portMapping_{PortMappingState::NotRequested};

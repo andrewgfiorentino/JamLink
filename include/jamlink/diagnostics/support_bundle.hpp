@@ -75,6 +75,10 @@ struct SupportSnapshot final {
     std::string firewallState;
     bool udpBound{false};
     std::uint16_t localUdpPort{0U};
+    // What the router does to this machine on the way out. Named rather than
+    // inferred from a failure, because "an invite from here cannot work" and
+    // "nobody tried yet" produce the same silence.
+    std::string natBehaviour;
     // Path finding, which is what a "we could never connect" report turns on.
     std::uint64_t candidateProbesSent{0U};
     std::uint32_t candidateRoundsExhausted{0U};

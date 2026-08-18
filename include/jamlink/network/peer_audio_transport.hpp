@@ -4,6 +4,7 @@
 #pragma once
 
 #include "jamlink/network/connection_preflight.hpp"
+#include "jamlink/network/nat_behaviour.hpp"
 
 #include <array>
 #include <cstddef>
@@ -171,6 +172,9 @@ struct PeerTransportTelemetry final {
     // answers. Both figures matter in a failure report: probes prove packets
     // actually left, and a round that exhausted every candidate without an
     // answer is the signature of two routers that will not carry the path.
+    // What this machine's router does to it on the way out, which decides
+    // whether an invite made here leads anywhere at all.
+    NatMappingBehaviour natBehaviour{NatMappingBehaviour::NotProbed};
     std::uint64_t candidateProbesSent{0U};
     std::uint32_t candidateRoundsExhausted{0U};
 };

@@ -91,6 +91,16 @@ add_test(NAME jamlink_ice_agent_tests COMMAND jamlink_ice_agent_tests)
 set_tests_properties(jamlink_ice_agent_tests PROPERTIES
     TIMEOUT 30 LABELS "network;traversal")
 
+add_executable(jamlink_nat_behaviour_tests nat_behaviour_tests.cpp)
+target_link_libraries(jamlink_nat_behaviour_tests PRIVATE JamLink::Core)
+target_compile_features(jamlink_nat_behaviour_tests PRIVATE cxx_std_20)
+set_target_properties(jamlink_nat_behaviour_tests PROPERTIES CXX_EXTENSIONS OFF)
+jamlink_set_warnings(jamlink_nat_behaviour_tests)
+
+add_test(NAME jamlink_nat_behaviour_tests COMMAND jamlink_nat_behaviour_tests)
+set_tests_properties(jamlink_nat_behaviour_tests PROPERTIES
+    TIMEOUT 30 LABELS "network;traversal")
+
 add_executable(jamlink_audio_topology_tests audio_topology_tests.cpp)
 target_link_libraries(jamlink_audio_topology_tests PRIVATE JamLink::Core)
 target_compile_features(jamlink_audio_topology_tests PRIVATE cxx_std_20)
