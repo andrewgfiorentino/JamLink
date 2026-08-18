@@ -100,6 +100,7 @@ add_library(jamlink_core STATIC
     src/audio/audio_route_graph.cpp
     src/audio/audio_topology.cpp
     src/audio/send_limiter.cpp
+    src/audio/metronome.cpp
     src/audio/instrument_tuner.cpp
     src/audio/opus_stream_codec.cpp
     src/audio/private_soundcheck_processor.cpp
