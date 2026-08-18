@@ -40,6 +40,10 @@ imposes.
   of your friend's streams, and — separately — local originals of your own
   sources taken before the monitor converter and before the network could touch
   them. The live tracks are what was heard; the originals are what was played.
+- **A take that opens.** Every finished take writes a session file beside the
+  WAVs that lays each track on one timeline, named by who played it and whether
+  it was heard, played, or received — so a recording is not six files to drag
+  into place and hope.
 - **Recordings that admit what they are.** A take carries a manifest saying what
   the files are, whose they are, and whether it actually finished. An
   interrupted take is never presented as clean.

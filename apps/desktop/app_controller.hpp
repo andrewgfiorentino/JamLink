@@ -9,6 +9,7 @@
 #include "jamlink/control/readiness_tracker.hpp"
 #include "jamlink/control/session_conductor.hpp"
 #include "jamlink/diagnostics/support_bundle.hpp"
+#include "jamlink/record/daw_project.hpp"
 #include "jamlink/record/take_manifest.hpp"
 #include "jamlink/network/peer_audio_transport.hpp"
 #include "jamlink/preferences/preferences_store.hpp"
@@ -623,6 +624,8 @@ private:
     void beginTake(const std::filesystem::path& takeDirectory, const QString& name);
     void finaliseTake();
     void recoverInterruptedTakes();
+    // Writes a session beside the take so it opens on one timeline.
+    void writeTakeProjectFile();
     std::unique_ptr<jamlink::audio::ISoundcheckAudioService> audioService_;
     jamlink::audio::SoundcheckAudioTelemetry audioTelemetry_;
     std::unique_ptr<jamlink::network::IPeerAudioTransport> peerTransport_;
