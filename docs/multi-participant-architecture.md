@@ -70,12 +70,26 @@ appearing untested alongside the transport work. Its rules:
 Each of these is a real piece of work, and the order is not arbitrary — every
 step depends on the one above it.
 
-**1. A peer becomes a slot rather than the peer.** Every piece of per-peer
-state in the Windows transport is currently a single object: `remoteAddress_`,
-the send and receive ciphers, the replay window, the nonce counter, the
-participant identity, the receive buffers, the decoders. These become an array
-indexed by peer. Nothing about the wire format changes yet, and the two-person
-case must stay bit-identical through it — this step should be invisible.
+**1. A peer becomes a slot rather than the peer. — done.** Every piece of
+per-peer state in the Windows transport was a single object: the remote
+address, the replay window, the nonce prefix and counter, the send sequences,
+the participant identity, the receive buffers, the decoders, the remote gains
+and meters, the per-peer bitrate controllers, and the candidate negotiation.
+They now live in a `PeerSlot`, held as an array of which only slot zero is
+created, and every use goes through `peer()`.
+
+The old members were **deleted** rather than left alongside the new ones, so a
+missed conversion is a compile error rather than a second copy of the truth
+that silently disagrees with the first. Eighty-eight call sites moved; the wire
+format did not change and neither did any test.
+
+What deliberately stayed shared: the socket, the capture rings, the send
+pacers, the send limiters and the local mute state all belong to this machine
+rather than to any one peer. A mesh encodes a packet once and seals it
+separately per recipient, so everything on the near side of the encoder is
+common. The room secret stayed shared too, because per-peer key material is
+step 2 and has to be — reusing a nonce across two peers under one key would be
+a serious defect rather than an optimisation.
 
 **2. Encode once, encrypt per peer.** The codec payload for a packet is the
 same for everybody, so it is encoded once. The encryption is not: every peer

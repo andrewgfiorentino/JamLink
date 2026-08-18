@@ -20,6 +20,7 @@
 #include "jamlink/audio/realtime_atomic.hpp"
 #include "jamlink/audio/spsc_audio_ring.hpp"
 #include "jamlink/network/audio_stream_receiver.hpp"
+#include "jamlink/control/room_capacity.hpp"
 #include "jamlink/network/bitrate_controller.hpp"
 #include "jamlink/network/ice_agent.hpp"
 #include "jamlink/network/nat_behaviour.hpp"
@@ -1025,17 +1026,87 @@ inline constexpr const char* secondaryStunPort = "19302";
     return settings;
 }
 
+// Everything JamLink holds about one other musician.
+//
+// This was a single set of members on the transport, which is exactly the right
+// shape for a duo and exactly the shape a mesh has to grow out of. Gathering it
+// here while there is still only ever one of them keeps the change that
+// introduces a second peer from also being the change that has to discover
+// which state was per-peer all along -- and that discovery, made in the middle
+// of a working transport, is where the subtle faults would come from.
+//
+// Deliberately not everything. The socket, the capture rings, the send pacers,
+// the send limiters and the local mute state belong to this machine rather than
+// to any one peer: a mesh encodes a packet once and seals it separately for
+// each recipient, so anything on the near side of the encoder stays shared.
+//
+// The room secret is still shared too. Per-peer key material is the next step
+// and has to be, because reusing a nonce across two peers under one key would
+// be a serious defect rather than an optimisation.
+struct PeerSlot final {
+    PeerSlot()
+        : receivers{
+              AudioStreamReceiver(
+                  receiverSettings(), makeStreamDecoder(streamDecoders[0])),
+              AudioStreamReceiver(
+                  receiverSettings(), makeStreamDecoder(streamDecoders[1]))} {}
+
+    // Declared before the receivers so it is initialised first; their
+    // constructor fills it in.
+    std::array<JamLinkStreamDecoder*, audioStreamCount> streamDecoders{};
+    std::array<AudioStreamReceiver, audioStreamCount> receivers;
+    std::array<audio::GainStage, audioStreamCount> remoteGain{
+        audio::GainStage(1.0F), audio::GainStage(1.0F)};
+    std::array<audio::RealtimeAtomicFloat, audioStreamCount> remotePeak{
+        audio::RealtimeAtomicFloat(0.0F), audio::RealtimeAtomicFloat(0.0F)};
+
+    // Where this peer is, and how packets to it are sealed and checked.
+    sockaddr_in remoteAddress{};
+    std::atomic<bool> remoteEndpointKnown{false};
+    Direction sendDirection{Direction::HostToGuest};
+    Direction receiveDirection{Direction::GuestToHost};
+    ReplayWindow replayWindow;
+    std::array<std::uint8_t, noncePrefixBytes> noncePrefix{};
+    std::uint32_t nonceCounter{0U};
+    bool nonceExhausted{false};
+    std::array<std::uint32_t, audioStreamCount> sendSequence{};
+
+    // Who they are, and what they say about what they are sending.
+    PeerParticipantInfo remoteParticipant;
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteSourceClipped{};
+    // What this peer says they are deliberately not sending.
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteStreamMutedByPeer{};
+    std::atomic<std::uint64_t> sessionsEstablished{0U};
+
+    // Touched only by the network worker; the rate it decides crosses to the
+    // send loop through the atomics beside it.
+    std::array<BitrateController, audioStreamCount> bitrateControllers{};
+    std::array<std::atomic<std::uint32_t>, audioStreamCount> pendingBitrate{};
+
+    // Path finding to this peer. Written before the worker starts and
+    // afterwards touched only by the worker thread.
+    std::vector<IceCandidate> remoteCandidates;
+    IceAgent ice;
+};
+
+
 class WindowsPeerAudioTransport final : public IPeerAudioTransport {
 public:
     WindowsPeerAudioTransport()
         : localAudio_{
               audio::SpscAudioRing(32'768U, 1U),
-              audio::SpscAudioRing(32'768U, 1U)},
-          receivers_{
-              AudioStreamReceiver(
-                  receiverSettings(), makeStreamDecoder(streamDecoders_[0])),
-              AudioStreamReceiver(
-                  receiverSettings(), makeStreamDecoder(streamDecoders_[1]))} {}
+              audio::SpscAudioRing(32'768U, 1U)} {
+        // One slot today. Everything that follows addresses it by index rather
+        // than by being the only thing there is.
+        peers_[0] = std::make_unique<PeerSlot>();
+    }
+
+    [[nodiscard]] PeerSlot& peer(std::size_t index = 0U) noexcept {
+        return *peers_[index];
+    }
+    [[nodiscard]] const PeerSlot& peer(std::size_t index = 0U) const noexcept {
+        return *peers_[index];
+    }
     ~WindowsPeerAudioTransport() override { stop(); }
 
     [[nodiscard]] std::string host(
@@ -1189,27 +1260,27 @@ public:
 
     [[nodiscard]] bool join(const std::string& inviteCode) override {
         stop();
-        remoteCandidates_.clear();
-        if (!parseInviteCandidates(inviteCode, remoteCandidates_, secret_)) {
+        peer().remoteCandidates.clear();
+        if (!parseInviteCandidates(inviteCode, peer().remoteCandidates, secret_)) {
             state_.store(PeerConnectionState::InviteInvalid, std::memory_order_release);
             return false;
         }
-        const std::string address = remoteCandidates_.front().address;
-        const std::uint16_t port = remoteCandidates_.front().port;
+        const std::string address = peer().remoteCandidates.front().address;
+        const std::uint16_t port = peer().remoteCandidates.front().port;
         if (!winsock_.available() || !createBoundSocket(0U)) {
             state_.store(PeerConnectionState::SocketFailed, std::memory_order_release);
             return false;
         }
         udpBound_.store(true, std::memory_order_release);
-        JAMLINK_LOG("join", "joining " + std::to_string(remoteCandidates_.size())
+        JAMLINK_LOG("join", "joining " + std::to_string(peer().remoteCandidates.size())
             + " candidate address(es), first " + address + ":" + std::to_string(port)
             + ", from local port " + std::to_string(localPort_));
-        remoteEndpointKnown_.store(true, std::memory_order_release);
+        peer().remoteEndpointKnown.store(true, std::memory_order_release);
         beginCandidateChecks(GetTickCount64() * 1'000ULL);
-        remoteAddress_ = {};
-        remoteAddress_.sin_family = AF_INET;
-        remoteAddress_.sin_port = htons(port);
-        if (inet_pton(AF_INET, address.c_str(), &remoteAddress_.sin_addr) != 1) {
+        peer().remoteAddress = {};
+        peer().remoteAddress.sin_family = AF_INET;
+        peer().remoteAddress.sin_port = htons(port);
+        if (inet_pton(AF_INET, address.c_str(), &peer().remoteAddress.sin_addr) != 1) {
             state_.store(PeerConnectionState::InviteInvalid, std::memory_order_release);
             socket_.reset();
             localPort_ = 0U;
@@ -1245,7 +1316,7 @@ public:
             const std::scoped_lock lock(controlMutex_);
             pendingChat_.clear();
             controlEvents_.clear();
-            remoteParticipant_ = {};
+            peer().remoteParticipant = {};
             outboundChatTimes_.clear();
         }
         receivedChatIds_.fill(0U);
@@ -1254,9 +1325,9 @@ public:
         inboundChatTimes_.clear();
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
             localAudio_[index].clear();
-            receivers_[index].reset();
-            remotePeak_[index].store(0.0F);
-            sendSequence_[index] = 0U;
+            peer().receivers[index].reset();
+            peer().remotePeak[index].store(0.0F);
+            peer().sendSequence[index] = 0U;
         }
         state_.store(PeerConnectionState::Idle, std::memory_order_release);
     }
@@ -1305,7 +1376,7 @@ public:
 
     [[nodiscard]] PeerParticipantInfo remoteParticipant() const override {
         const std::scoped_lock lock(controlMutex_);
-        return remoteParticipant_;
+        return peer().remoteParticipant;
     }
 
     void setSendMuted(bool muted) noexcept override {
@@ -1323,11 +1394,11 @@ public:
     }
 
     void setRemoteStreamGain(AudioStreamId stream, float gain) noexcept override {
-        remoteGain_[streamIndex(stream)].setLinearGain(gain);
+        peer().remoteGain[streamIndex(stream)].setLinearGain(gain);
     }
 
     void setRemoteStreamMuted(AudioStreamId stream, bool muted) noexcept override {
-        remoteGain_[streamIndex(stream)].setMuted(muted);
+        peer().remoteGain[streamIndex(stream)].setMuted(muted);
     }
 
     void setLatencyPreference(LatencyPreference preference) noexcept override {
@@ -1346,7 +1417,7 @@ public:
             maximumPackets = 48U;
             safety = 3.5;
         }
-        for (auto& receiver : receivers_) {
+        for (auto& receiver : peer().receivers) {
             receiver.configureDepth(minimumPackets, maximumPackets, safety);
         }
     }
@@ -1374,7 +1445,7 @@ public:
         snapshot.reachability = reachability_.load(std::memory_order_acquire);
         snapshot.encodeFailures = encodeFailures_.load(std::memory_order_relaxed);
         snapshot.sessionsEstablished =
-            sessionsEstablished_.load(std::memory_order_relaxed);
+            peer().sessionsEstablished.load(std::memory_order_relaxed);
         snapshot.natBehaviour = natBehaviour_.load(std::memory_order_acquire);
         for (const auto& limiter : sendLimiters_) {
             snapshot.limitedSendSamples += limiter.limitedSamples();
@@ -1385,10 +1456,10 @@ public:
         // at. Reporting the constant while the link had quietly halved it
         // is the same class of untruth as the fields this bundle already
         // had to have fixed.
-        snapshot.audioBitsPerSecond = bitrateControllers_[0].bitsPerSecond();
-        snapshot.bitrateReductions = bitrateControllers_[0].reductions();
-        snapshot.uplinkExhausted = bitrateControllers_[0].exhausted();
-        for (const auto* decoder : streamDecoders_) {
+        snapshot.audioBitsPerSecond = peer().bitrateControllers[0].bitsPerSecond();
+        snapshot.bitrateReductions = peer().bitrateControllers[0].reductions();
+        snapshot.uplinkExhausted = peer().bitrateControllers[0].exhausted();
+        for (const auto* decoder : peer().streamDecoders) {
             if (decoder == nullptr) {
                 continue;
             }
@@ -1398,13 +1469,13 @@ public:
         }
         for (std::size_t index = 0U; index < audioStreamCount; ++index) {
             snapshot.localAudioDrops += localAudio_[index].overrunCount();
-            const auto receiver = receivers_[index].telemetry();
+            const auto receiver = peer().receivers[index].telemetry();
             RemoteStreamTelemetry& stream = snapshot.streams[index];
-            stream.peak = remotePeak_[index].load();
+            stream.peak = peer().remotePeak[index].load();
             stream.sourceClipped =
-                remoteSourceClipped_[index].load(std::memory_order_acquire) != 0U;
+                peer().remoteSourceClipped[index].load(std::memory_order_acquire) != 0U;
             stream.mutedByPeer =
-                remoteStreamMutedByPeer_[index].load(std::memory_order_acquire) != 0U;
+                peer().remoteStreamMutedByPeer[index].load(std::memory_order_acquire) != 0U;
             stream.packetsAccepted = receiver.packetsAccepted;
         stream.packetsConcealed = receiver.packetsConcealed;
             stream.packetsLate = receiver.packetsLate;
@@ -1442,14 +1513,14 @@ public:
             std::fill(monoSamples.begin(), monoSamples.end(), 0.0F);
             return 0U;
         }
-        const std::size_t live = receivers_[index].pull(monoSamples);
-        remoteGain_[index].process(
+        const std::size_t live = peer().receivers[index].pull(monoSamples);
+        peer().remoteGain[index].process(
             audio::InterleavedAudioBlock{monoSamples, 1U});
         float peak = 0.0F;
         for (const float sample : monoSamples) {
             peak = std::max(peak, std::abs(sample));
         }
-        remotePeak_[index].store(std::clamp(peak, 0.0F, 1.0F));
+        peer().remotePeak[index].store(std::clamp(peak, 0.0F, 1.0F));
         return live;
     }
 
@@ -1477,7 +1548,7 @@ private:
 
     void setRemoteParticipant(const PeerParticipantInfo& participant) {
         const std::scoped_lock lock(controlMutex_);
-        remoteParticipant_ = participant;
+        peer().remoteParticipant = participant;
     }
 
     void appendControlEvent(RoomControlEvent event) {
@@ -1703,26 +1774,26 @@ private:
         for (auto& limiter : sendLimiters_) {
             limiter.prepare(networkSampleRate);
         }
-        for (auto& controller : bitrateControllers_) {
+        for (auto& controller : peer().bitrateControllers) {
             controller.reset();
         }
-        for (auto& pending : pendingBitrate_) {
+        for (auto& pending : peer().pendingBitrate) {
             pending.store(0U, std::memory_order_relaxed);
         }
         packetsReceived_.store(0U, std::memory_order_relaxed);
         packetsRejected_.store(0U, std::memory_order_relaxed);
-        sessionsEstablished_.store(0U, std::memory_order_relaxed);
+        peer().sessionsEstablished.store(0U, std::memory_order_relaxed);
         iceRounds_.store(0U, std::memory_order_relaxed);
         iceProbes_.store(0U, std::memory_order_relaxed);
         roundTripMicroseconds_.store(0U, std::memory_order_relaxed);
         roundTripMeasured_.store(false, std::memory_order_relaxed);
-        for (auto& peak : remotePeak_) {
+        for (auto& peak : peer().remotePeak) {
             peak.store(0.0F);
         }
-        for (auto& muted : remoteStreamMutedByPeer_) {
+        for (auto& muted : peer().remoteStreamMutedByPeer) {
             muted.store(0U, std::memory_order_release);
         }
-        for (auto& clipped : remoteSourceClipped_) {
+        for (auto& clipped : peer().remoteSourceClipped) {
             clipped.store(0U, std::memory_order_relaxed);
         }
         worker_ = std::thread([this] { run(); });
@@ -1747,19 +1818,19 @@ private:
         writeU32(destination.data() + 8U, sequence);
         writeU32(destination.data() + 12U, sampleRate);
         writeU16(destination.data() + 16U, frameCount);
-        destination[18U] = static_cast<std::uint8_t>(sendDirection_);
+        destination[18U] = static_cast<std::uint8_t>(peer().sendDirection);
         destination[19U] = stream;
-        std::memcpy(destination.data() + 20U, noncePrefix_.data(), noncePrefixBytes);
-        if (nonceExhausted_) {
+        std::memcpy(destination.data() + 20U, peer().noncePrefix.data(), noncePrefixBytes);
+        if (peer().nonceExhausted) {
             return 0U;
         }
-        const std::uint32_t nonceCounter = ++nonceCounter_;
+        const std::uint32_t nonceCounter = ++peer().nonceCounter;
         if (nonceCounter >= maximumNonceCounter) {
             // Never reuse a nonce. Refusing to send is the only safe response,
             // and it has to latch: without the flag the counter keeps climbing
             // on every refused attempt, wraps past 2^32, and starts handing out
             // nonces that have already been used under this key.
-            nonceExhausted_ = true;
+            peer().nonceExhausted = true;
             return 0U;
         }
         writeU32(destination.data() + 20U + noncePrefixBytes, nonceCounter);
@@ -1788,7 +1859,7 @@ private:
         // contiguous run. Replay protection uses the nonce counter, which is
         // unique across every packet in this direction.
         const std::uint32_t sequence = type == PacketType::Audio
-            ? ++sendSequence_[streamIndex(stream)]
+            ? ++peer().sendSequence[streamIndex(stream)]
             : 0U;
         const std::size_t streamPosition = streamIndex(stream);
         const std::uint8_t streamField = type == PacketType::Audio
@@ -1808,8 +1879,8 @@ private:
             socket_.get(), reinterpret_cast<const char*>(packet.data()),
             static_cast<int>(bytes), 0,
             reinterpret_cast<const sockaddr*>(
-                destination == nullptr ? &remoteAddress_ : destination),
-            sizeof(remoteAddress_));
+                destination == nullptr ? &peer().remoteAddress : destination),
+            sizeof(peer().remoteAddress));
         if (sent == static_cast<int>(bytes)) {
             packetsSent_.fetch_add(1U, std::memory_order_relaxed);
             return true;
@@ -1832,7 +1903,7 @@ private:
         // musician is still sitting there waiting. Exhausting the pairs starts
         // a fresh round rather than giving up, and each round is recorded so a
         // support bundle can show how many it took.
-        if (ice_.exhausted(nowMicroseconds)) {
+        if (peer().ice.exhausted(nowMicroseconds)) {
             iceRounds_.fetch_add(1U, std::memory_order_relaxed);
             JAMLINK_LOG("ice", "no candidate answered in this round; starting another");
             beginCandidateChecks(nowMicroseconds);
@@ -1840,7 +1911,7 @@ private:
         // Bounded so a long stall cannot turn into a burst that looks like a
         // flood to a router already inclined to drop us.
         for (std::size_t attempt = 0U; attempt < 4U; ++attempt) {
-            const IceAction action = ice_.nextAction(nowMicroseconds);
+            const IceAction action = peer().ice.nextAction(nowMicroseconds);
             if (!action.sendProbe) {
                 return;
             }
@@ -1853,16 +1924,16 @@ private:
     }
 
     void beginCandidateChecks(std::uint64_t nowMicroseconds) {
-        ice_.reset();
+        peer().ice.reset();
         // The address does not decide where a probe is sent from -- the bound
         // socket does -- but it does decide how pairs are ranked, and a pair
         // that never leaves the building should always be tried first.
-        ice_.addLocalCandidate(
+        peer().ice.addLocalCandidate(
             IceCandidate{localIpv4Address(), localPort_, CandidateKind::Host});
-        for (const auto& candidate : remoteCandidates_) {
-            ice_.addRemoteCandidate(candidate);
+        for (const auto& candidate : peer().remoteCandidates) {
+            peer().ice.addRemoteCandidate(candidate);
         }
-        ice_.beginChecks(nowMicroseconds);
+        peer().ice.beginChecks(nowMicroseconds);
     }
 
     void servicePendingChat(
@@ -1972,12 +2043,12 @@ private:
 
     void run() noexcept {
         try {
-            sendDirection_ = hostMode_ ? Direction::HostToGuest : Direction::GuestToHost;
-            receiveDirection_ = hostMode_ ? Direction::GuestToHost : Direction::HostToGuest;
+            peer().sendDirection = hostMode_ ? Direction::HostToGuest : Direction::GuestToHost;
+            peer().receiveDirection = hostMode_ ? Direction::GuestToHost : Direction::HostToGuest;
             std::array<std::uint8_t, 32U> sendKey{};
             std::array<std::uint8_t, 32U> receiveKey{};
-            if (!deriveDirectionKey(secret_, sendDirection_, sendKey)
-                || !deriveDirectionKey(secret_, receiveDirection_, receiveKey)) {
+            if (!deriveDirectionKey(secret_, peer().sendDirection, sendKey)
+                || !deriveDirectionKey(secret_, peer().receiveDirection, receiveKey)) {
                 state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
                 return;
             }
@@ -1985,12 +2056,12 @@ private:
             AesGcmCipher receiveCipher(receiveKey);
             SecureZeroMemory(sendKey.data(), sendKey.size());
             SecureZeroMemory(receiveKey.data(), receiveKey.size());
-            replayWindow_.reset();
-            nonceCounter_ = 0U;
-            nonceExhausted_ = false;
+            peer().replayWindow.reset();
+            peer().nonceCounter = 0U;
+            peer().nonceExhausted = false;
             if (!sendCipher.valid() || !receiveCipher.valid()
                 || !BCRYPT_SUCCESS(BCryptGenRandom(
-                    nullptr, noncePrefix_.data(), static_cast<ULONG>(noncePrefix_.size()),
+                    nullptr, peer().noncePrefix.data(), static_cast<ULONG>(peer().noncePrefix.size()),
                     BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
                 state_.store(PeerConnectionState::EncryptionFailed, std::memory_order_release);
                 return;
@@ -2067,7 +2138,7 @@ private:
                 // how a direct connection fails with both public addresses
                 // discovered and both invites looking correct.
                 if (hostMode_ && !connected && !versionMismatch
-                    && remoteEndpointKnown_.load(std::memory_order_acquire)
+                    && peer().remoteEndpointKnown.load(std::memory_order_acquire)
                     && now - lastHello >= 250U) {
                     static_cast<void>(sendPacket(
                         sendCipher, PacketType::Punch, 0U, 0U, {}));
@@ -2105,9 +2176,9 @@ private:
                         // and a stream that never reaches the wire at all, and
                         // the combined figure cannot tell those apart.
                         const auto instrument =
-                            receivers_[streamIndex(AudioStreamId::Instrument)].telemetry();
+                            peer().receivers[streamIndex(AudioStreamId::Instrument)].telemetry();
                         const auto voice =
-                            receivers_[streamIndex(AudioStreamId::Voice)].telemetry();
+                            peer().receivers[streamIndex(AudioStreamId::Voice)].telemetry();
                         JAMLINK_LOG("session", "sent " + std::to_string(sent)
                             + ", received " + std::to_string(received)
                             + ", rejected " + std::to_string(rejected)
@@ -2117,8 +2188,8 @@ private:
                             + "ms; voice in " + std::to_string(voice.packetsAccepted)
                             + " concealed " + std::to_string(voice.packetsConcealed)
                             + " buffer " + std::to_string(voice.currentDepthFrames / 48U)
-                            + "ms; out instrument " + std::to_string(sendSequence_[0])
-                            + " voice " + std::to_string(sendSequence_[1]));
+                            + "ms; out instrument " + std::to_string(peer().sendSequence[0])
+                            + " voice " + std::to_string(peer().sendSequence[1]));
                     }
                 }
                 if (connected && now - lastPing >= 500U) {
@@ -2133,7 +2204,7 @@ private:
                     }
                     controlPayload[sizeof(stamp)] = muteMask;
                     for (std::size_t index = 0U; index < audioStreamCount; ++index) {
-                        const auto stream = receivers_[index].telemetry();
+                        const auto stream = peer().receivers[index].telemetry();
                         const std::uint64_t accepted =
                             stream.packetsAccepted - lastAccepted[index];
                         const std::uint64_t concealed =
@@ -2194,8 +2265,8 @@ private:
                                 PeerConnectionState::SocketFailed, std::memory_order_release);
                             return;
                         }
-                        if (connected && remoteAddress_.sin_port != 0U
-                            && !sameEndpoint(source, remoteAddress_)) {
+                        if (connected && peer().remoteAddress.sin_port != 0U
+                            && !sameEndpoint(source, peer().remoteAddress)) {
                             packetsRejected_.fetch_add(1U, std::memory_order_relaxed);
                             continue;
                         }
@@ -2264,7 +2335,7 @@ private:
             // the encoder belongs to this loop and reconfiguring it from
             // the packet handler would be a second thread touching it.
             const std::uint32_t requestedBitrate =
-                pendingBitrate_[index].exchange(0U, std::memory_order_acquire);
+                peer().pendingBitrate[index].exchange(0U, std::memory_order_acquire);
             if (requestedBitrate != 0U) {
                 static_cast<void>(encoders[index].setBitsPerSecond(requestedBitrate));
                 JAMLINK_LOG("codec", "stream " + std::to_string(index)
@@ -2316,7 +2387,7 @@ private:
             // Reject a peer's own traffic reflected back before spending any
             // work on it. The per-direction key makes this authoritative, but
             // checking the field first keeps the rejection cheap.
-            || packet[18U] != static_cast<std::uint8_t>(receiveDirection_)
+            || packet[18U] != static_cast<std::uint8_t>(peer().receiveDirection)
             || (packet[19U] & streamIndexMask) >= audioStreamCount) {
             return false;
         }
@@ -2344,7 +2415,7 @@ private:
         const bool negotiatingCandidates =
             !hostMode_ && !connected && type == PacketType::HelloAck;
         if (type != PacketType::Hello && !negotiatingCandidates
-            && !sameEndpoint(source, remoteAddress_)) {
+            && !sameEndpoint(source, peer().remoteAddress)) {
             return false;
         }
         const auto payload = std::span<const std::uint8_t>(
@@ -2357,8 +2428,8 @@ private:
         if (type == PacketType::Hello && hostMode_) {
             PeerParticipantInfo proposedParticipant;
             if (!decodeParticipant(payload, proposedParticipant)
-                || (connected && remoteAddress_.sin_port != 0U
-                    && !sameEndpoint(source, remoteAddress_))) {
+                || (connected && peer().remoteAddress.sin_port != 0U
+                    && !sameEndpoint(source, peer().remoteAddress))) {
                 return false;
             }
         }
@@ -2368,12 +2439,12 @@ private:
         // them would be rejected forever. An authenticated Hello from the
         // current endpoint (or a replacement after timeout) re-arms the window.
         if (type == PacketType::Hello && hostMode_) {
-            replayWindow_.reset();
+            peer().replayWindow.reset();
         }
         // The nonce counter is unique for every packet in this direction, so it
         // is the right anti-replay identity. Media sequences restart per stream
         // and cannot serve that purpose.
-        if (!replayWindow_.accept(readU32(packet.data() + 20U + noncePrefixBytes))) {
+        if (!peer().replayWindow.accept(readU32(packet.data() + 20U + noncePrefixBytes))) {
             return false;
         }
         lastReceive = GetTickCount64();
@@ -2383,11 +2454,11 @@ private:
             if (!decodeParticipant(payload, participant)) {
                 return false;
             }
-            remoteAddress_ = source;
+            peer().remoteAddress = source;
             // Once the guest's endpoint is known, keep it: if the session drops
             // and the guest's router lets its mapping expire, punching from
             // this side reopens the path without a new invite.
-            remoteEndpointKnown_.store(true, std::memory_order_release);
+            peer().remoteEndpointKnown.store(true, std::memory_order_release);
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
                 connected = false;
@@ -2408,7 +2479,7 @@ private:
                 sendCipher, PacketType::HelloAck, 0U, 0U,
                 encodedLocalParticipant));
             if (!wasConnected) {
-                sessionsEstablished_.fetch_add(1U, std::memory_order_relaxed);
+                peer().sessionsEstablished.fetch_add(1U, std::memory_order_relaxed);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::PeerJoined, 0U,
                     systemTimeMilliseconds(), participant, "joined"});
@@ -2424,11 +2495,11 @@ private:
             // packet that left proves nothing, because the far router may
             // still be dropping it. Whichever candidate answered is the one
             // audio goes to from here.
-            ice_.onProbeResponse(candidateFromAddress(source), GetTickCount64() * 1'000ULL);
-            if (!sameEndpoint(source, remoteAddress_)) {
+            peer().ice.onProbeResponse(candidateFromAddress(source), GetTickCount64() * 1'000ULL);
+            if (!sameEndpoint(source, peer().remoteAddress)) {
                 JAMLINK_LOG("ice", "path answered from a different address than probed;"
                     " adopting it");
-                remoteAddress_ = source;
+                peer().remoteAddress = source;
             }
             setRemoteParticipant(participant);
             if (!compatibleParticipants(localParticipant, participant)) {
@@ -2444,7 +2515,7 @@ private:
             connected = true;
             state_.store(PeerConnectionState::Connected, std::memory_order_release);
             if (!wasConnected) {
-                sessionsEstablished_.fetch_add(1U, std::memory_order_relaxed);
+                peer().sessionsEstablished.fetch_add(1U, std::memory_order_relaxed);
                 appendControlEvent(RoomControlEvent{
                     RoomControlEventType::PeerJoined, 0U,
                     systemTimeMilliseconds(), participant, "joined"});
@@ -2477,9 +2548,9 @@ private:
                 for (std::size_t index = 0U; index < audioStreamCount; ++index) {
                     const std::uint8_t loss =
                         plaintext[sizeof(std::uint64_t) + 1U + index];
-                    if (bitrateControllers_[index].observe(loss)) {
-                        pendingBitrate_[index].store(
-                            bitrateControllers_[index].bitsPerSecond(),
+                    if (peer().bitrateControllers[index].observe(loss)) {
+                        peer().pendingBitrate[index].store(
+                            peer().bitrateControllers[index].bitsPerSecond(),
                             std::memory_order_release);
                     }
                 }
@@ -2487,7 +2558,7 @@ private:
             if (payloadBytes >= sizeof(std::uint64_t) + 1U) {
                 const std::uint8_t muteMask = plaintext[sizeof(std::uint64_t)];
                 for (std::size_t index = 0U; index < audioStreamCount; ++index) {
-                    remoteStreamMutedByPeer_[index].store(
+                    peer().remoteStreamMutedByPeer[index].store(
                         (muteMask & (1U << index)) != 0U ? 1U : 0U,
                         std::memory_order_release);
                 }
@@ -2538,13 +2609,13 @@ private:
             || stream >= audioStreamCount) {
             return false;
         }
-        remoteSourceClipped_[stream].store(
+        peer().remoteSourceClipped[stream].store(
             (packet[19U] & sourceClipFlag) != 0U ? 1U : 0U,
             std::memory_order_release);
         // Handed over exactly as it arrived, codec tag included, and decoded
         // at playout in sequence order. Decoding here would order a predictive
         // codec's state by arrival instead, which reordering would corrupt.
-        receivers_[stream].submit(
+        peer().receivers[stream].submit(
             sequence,
             std::span<const std::uint8_t>(plaintext.data(), payloadBytes),
             nowMicroseconds());
@@ -2555,25 +2626,19 @@ private:
     SocketHandle socket_;
     std::thread worker_;
     std::array<audio::SpscAudioRing, audioStreamCount> localAudio_;
-    // Declared before receivers_ so it is initialised first; the receivers'
-    // constructor fills it in.
-    std::array<JamLinkStreamDecoder*, audioStreamCount> streamDecoders_{};
-    std::array<AudioStreamReceiver, audioStreamCount> receivers_;
-    std::array<audio::GainStage, audioStreamCount> remoteGain_{
-        audio::GainStage(1.0F), audio::GainStage(1.0F)};
+    // One per other musician. A mesh needs one fewer than the room
+    // holds, since nobody sends to themselves. Only slot zero is
+    // created today, and every use goes through peer() so that
+    // growing the room is a change to this file rather than to every
+    // line that touches a peer.
+    static constexpr std::size_t maximumPeerSlots =
+        jamlink::control::maximumMeshParticipants - 1U;
+    std::array<std::unique_ptr<PeerSlot>, maximumPeerSlots> peers_{};
     std::array<std::uint8_t, 32U> secret_{};
-    std::array<std::uint8_t, noncePrefixBytes> noncePrefix_{};
-    sockaddr_in remoteAddress_{};
     std::string inviteCode_;
     std::uint16_t localPort_{0U};
     bool hostMode_{false};
     bool mappedPort_{false};
-    Direction sendDirection_{Direction::HostToGuest};
-    Direction receiveDirection_{Direction::GuestToHost};
-    ReplayWindow replayWindow_;
-    std::uint32_t nonceCounter_{0U};
-    bool nonceExhausted_{false};
-    std::array<std::uint32_t, audioStreamCount> sendSequence_{};
     std::atomic<std::uint32_t> preferredCodec_{
         static_cast<std::uint32_t>(PeerAudioCodec::Opus)};
     std::atomic<std::uint64_t> encodeFailures_{0U};
@@ -2581,7 +2646,6 @@ private:
     PeerParticipantInfo localParticipant_{
         "local-development", "", "Musician", "avatar:guitar-electric",
         "Guitar", "development", "development", "test"};
-    PeerParticipantInfo remoteParticipant_;
     std::deque<PendingChat> pendingChat_;
     std::deque<RoomControlEvent> controlEvents_;
     std::deque<ULONGLONG> outboundChatTimes_;
@@ -2595,25 +2659,13 @@ private:
     std::atomic<std::uint32_t> sendMuted_{0U};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localStreamMuted_{};
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSourceClipped_{};
-    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteSourceClipped_{};
-    // What the friend says they are deliberately not sending.
-    std::array<std::atomic<std::uint32_t>, audioStreamCount> remoteStreamMutedByPeer_{};
     // Each capture device has its own rate: an ASIO interface for the guitar
     // and a USB microphone for the voice need not agree, and forcing one rate
     // on both would resample whichever was wrong.
     std::array<std::atomic<std::uint32_t>, audioStreamCount> localSampleRate_{};
     std::atomic<std::uint64_t> packetsSent_{0U};
-    std::atomic<std::uint64_t> sessionsEstablished_{0U};
     // Owned by the network worker, which is the only thread that encodes.
     std::array<jamlink::audio::SendLimiter, audioStreamCount> sendLimiters_{};
-    // Touched only by the network worker; the rate it decides crosses to
-    // the send loop through the atomics below.
-    std::array<BitrateController, audioStreamCount> bitrateControllers_{};
-    std::array<std::atomic<std::uint32_t>, audioStreamCount> pendingBitrate_{};
-    // Candidate negotiation. Both are written in join() before the worker
-    // starts and afterwards touched only by the worker thread.
-    std::vector<IceCandidate> remoteCandidates_;
-    IceAgent ice_;
     std::atomic<std::uint32_t> iceRounds_{0U};
     std::atomic<std::uint64_t> iceProbes_{0U};
     std::atomic<std::uint64_t> packetsReceived_{0U};
@@ -2621,7 +2673,6 @@ private:
     std::atomic<std::uint64_t> roundTripMicroseconds_{0U};
     std::atomic<bool> roundTripMeasured_{false};
     std::atomic<bool> automaticPortMapping_{false};
-    std::atomic<bool> remoteEndpointKnown_{false};
     // Which of the three mapping protocols opened the port, for the preflight
     // to report. Empty when none of them did.
     const char* gatewayMappingProtocol_{""};
@@ -2631,8 +2682,6 @@ private:
         PublicAddressDiscoveryState::NotAttempted};
     std::atomic<PortMappingState> portMapping_{PortMappingState::NotRequested};
     std::atomic<ReachabilityAssessment> reachability_{ReachabilityAssessment::Unknown};
-    std::array<audio::RealtimeAtomicFloat, audioStreamCount> remotePeak_{
-        audio::RealtimeAtomicFloat(0.0F), audio::RealtimeAtomicFloat(0.0F)};
 };
 
 } // namespace
