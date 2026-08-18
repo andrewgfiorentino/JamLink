@@ -39,6 +39,9 @@ imposes.
 - **Recordings that admit what they are.** A take carries a manifest saying what
   the files are, whose they are, and whether it actually finished. An
   interrupted take is never presented as clean.
+- **A mute you cannot forget.** One press stops sending your guitar and voice,
+  and while it is on the room says so plainly rather than leaving you to
+  wonder whether your friend can hear you.
 - **Private text chat** over the same authenticated connection.
 - **Opus, tuned for playing rather than listening.** Restricted low-delay mode
   adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the

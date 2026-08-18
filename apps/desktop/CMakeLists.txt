@@ -321,6 +321,17 @@ if(BUILD_TESTING)
             --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-clipping.png"
     )
     add_test(
+        NAME jamlink_desktop_visual_send_muted
+        COMMAND jamlink_desktop
+            --visual-fixture
+            --expect-restored
+            --page room
+            --width 532
+            --height 728
+            --preferences "${_jamlink_visual_preferences}"
+            --screenshot "${CMAKE_CURRENT_BINARY_DIR}/visual-smoke-send-muted.png"
+    )
+    add_test(
         NAME jamlink_desktop_visual_audio_conflict
         COMMAND jamlink_desktop
             --visual-fixture
@@ -382,6 +393,7 @@ if(BUILD_TESTING)
         jamlink_desktop_visual_four_musician_room_wide
         jamlink_desktop_visual_high_dpi
         jamlink_desktop_visual_clipping
+        jamlink_desktop_visual_send_muted
         jamlink_desktop_visual_audio_conflict
         jamlink_desktop_visual_update_prompt
         jamlink_desktop_visual_200_percent
@@ -454,6 +466,12 @@ if(BUILD_TESTING)
     # likely thing here to overflow unnoticed. It keeps its own preferences
     # file: the selection it holds is one JamLink would never make, and it must
     # not reach any other capture.
+    set_tests_properties(
+        jamlink_desktop_visual_send_muted
+        PROPERTIES DEPENDS jamlink_desktop_visual_room)
+    set_property(
+        TEST jamlink_desktop_visual_send_muted APPEND PROPERTY
+        ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_SEND_MUTED=set:1")
     set_property(
         TEST jamlink_desktop_visual_audio_conflict APPEND PROPERTY
         ENVIRONMENT_MODIFICATION "JAMLINK_VISUAL_AUDIO_CONFLICT=set:1")

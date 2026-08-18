@@ -121,7 +121,10 @@ AppController::AppController(
           ? qEnvironmentVariable("JAMLINK_VISUAL_PRIVATE_ROOM") : QString()),
       visualRecordingFixture_(visualFixture
           && qEnvironmentVariableIsSet("JAMLINK_VISUAL_RECORDING")),
-      audioService_(std::move(audioService)) {
+      audioService_(std::move(audioService)),
+      // The layout a musician sees only when they cannot be heard, rendered
+      // offscreen with every other screen rather than trusted to look right.
+      sendMuted_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_SEND_MUTED")) {
     connect(&updateManager_, &UpdateManager::changed, this, &AppController::updateChanged);
     connect(&roomDirectory_, &PrivateRoomDirectory::changed,
         this, &AppController::roomChanged);

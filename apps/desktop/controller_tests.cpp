@@ -909,6 +909,23 @@ int main(int argc, char* argv[]) {
                         "the guitar fix selects the interface's first input") && passed;
     }
 
+    // Same rule as the setup banner: the muted layout's screenshot proves
+    // nothing unless the fixture is genuinely in the state that shows it.
+    // A room fixture that is still waiting hides the entire action row.
+    {
+        qputenv("JAMLINK_VISUAL_SEND_MUTED", QByteArrayLiteral("1"));
+        jamlink::desktop::AppController muted(
+            directory / "send-muted.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        passed = expect(muted.sendMuted() && muted.roomActive()
+                            && !muted.privateRoomWaiting(),
+                        "the muted fixture is in a room that actually shows the control")
+            && passed;
+        muted.setSendMuted(false);
+        passed = expect(!muted.sendMuted(), "the on-screen control can clear the mute")
+            && passed;
+        qunsetenv("JAMLINK_VISUAL_SEND_MUTED");
+    }
+
     // The offscreen render of the impossible setup is only worth anything if
     // the fixture actually is impossible. Asserted here so the banner can
     // never quietly stop appearing while its screenshot test keeps passing.
