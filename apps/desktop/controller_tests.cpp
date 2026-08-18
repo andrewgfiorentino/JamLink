@@ -3,6 +3,8 @@
 
 #include "app_controller.hpp"
 
+#include "jamlink/audio/audio_topology.hpp"
+
 #include <QCoreApplication>
 #include <QColor>
 #include <QImage>
@@ -38,7 +40,7 @@ public:
     }
 };
 
-class DeterministicAudioService final : public jamlink::audio::ISoundcheckAudioService {
+class DeterministicAudioService : public jamlink::audio::ISoundcheckAudioService {
 public:
     [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
         const jamlink::audio::SoundcheckEndpointOption asioInput{
@@ -195,6 +197,65 @@ public:
     std::size_t clearHealthCount{0U};
     std::size_t selfTestHealthCount{0U};
     bool injectInstrumentClipOnStart{false};
+};
+
+// The hardware from the two-home field test, as Windows actually presented it.
+// One interface offering its own low-latency driver and a plain Windows output
+// of its own, plus a USB microphone that will never speak the interface's
+// driver. Every device here works; two of the combinations they can be put
+// into do not.
+class FieldTestAudioService final : public DeterministicAudioService {
+public:
+    [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
+        const jamlink::audio::SoundcheckEndpointOption guitarInput{
+            "asio:Focusrite USB ASIO", "Focusrite USB ASIO Input 1", 0U, 0U, false,
+            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Focusrite USB ASIO"};
+        const jamlink::audio::SoundcheckEndpointOption lineInput{
+            "asio:Focusrite USB ASIO", "Focusrite USB ASIO Input 2", 1U, 0U, false,
+            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Focusrite USB ASIO"};
+        const jamlink::audio::SoundcheckEndpointOption yeti{
+            "wasapi:yeti", "Yeti Stereo Microphone", 0U, 0U, false,
+            48'000U, {128U, 256U}};
+        // Listed before the main pair on purpose: a fix that simply took the
+        // first output on the right interface would send a musician's
+        // headphones to a socket nothing is plugged into.
+        const jamlink::audio::SoundcheckEndpointOption spareOutputs{
+            "asio:Focusrite USB ASIO", "Focusrite USB ASIO Outputs 3-4", 2U, 3U, true,
+            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Focusrite USB ASIO"};
+        const jamlink::audio::SoundcheckEndpointOption mainOutputs{
+            "asio:Focusrite USB ASIO", "Focusrite USB ASIO Outputs 1-2", 0U, 1U, true,
+            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            "Focusrite USB ASIO"};
+        const jamlink::audio::SoundcheckEndpointOption windowsOutput{
+            "wasapi:focusrite", "Speakers (Focusrite USB Audio)", 0U, 1U, true,
+            48'000U, {240U, 480U}};
+        return {{guitarInput, lineInput, yeti},
+                {spareOutputs, mainOutputs, windowsOutput}};
+    }
+
+    [[nodiscard]] bool start(
+        const jamlink::audio::SoundcheckAudioConfiguration& configuration) override {
+        // The real dispatcher refuses an impossible graph before touching a
+        // device. A fixture that started anyway would hide exactly the defect
+        // these tests exist to hold down.
+        const auto endpoint = [](const jamlink::audio::SoundcheckEndpointOption& option) {
+            return jamlink::audio::AudioTopologyEndpoint{
+                option.backend, option.endpointId, option.displayName};
+        };
+        const jamlink::audio::AudioTopology topology{
+            endpoint(configuration.instrument),
+            endpoint(configuration.voice),
+            endpoint(configuration.output)};
+        if (!jamlink::audio::evaluateAudioTopology(topology).supported) {
+            current = {};
+            current.state = jamlink::audio::SoundcheckAudioState::UnsupportedFormat;
+            return false;
+        }
+        return DeterministicAudioService::start(configuration);
+    }
 };
 
 bool near(double left, double right) {
@@ -684,9 +745,18 @@ int main(int argc, char* argv[]) {
         passed = expect(preview.contains(QStringLiteral("JamLink support bundle"))
                             && preview.contains(QStringLiteral("no room secrets")),
                         "the bundle says what it is and what it withholds") && passed;
-        // The facts a bad-audio report turns on.
+        // The facts a bad-audio report turns on. Each endpoint names its own
+        // audio system: a single "backend" line stood for all three until a
+        // field test was diagnosed from one that described the output while
+        // the guitar was somewhere else entirely.
         passed = expect(preview.contains(QStringLiteral("codec"))
-                            && preview.contains(QStringLiteral("backend"))
+                            && preview.contains(QStringLiteral("instrument audio system"))
+                            && preview.contains(QStringLiteral("voice audio system"))
+                            && preview.contains(QStringLiteral("output audio system"))
+                            && preview.contains(QStringLiteral("can run together"))
+                            && preview.contains(QStringLiteral("topology"))
+                            && preview.contains(QStringLiteral("engine running"))
+                            && preview.contains(QStringLiteral("reconnects"))
                             && preview.contains(QStringLiteral("Session lifecycle")),
                         "the bundle carries the facts worth having") && passed;
         // Nothing that looks like a room secret or an invite may appear.
@@ -758,6 +828,118 @@ int main(int argc, char* argv[]) {
                             QStringLiteral("Currently")),
                         "choosing a size by hand replaces the automatic wording")
             && passed;
+    }
+
+    // The configuration that lost a two-home field test an evening. Every
+    // device was real, two of them were the same interface, and JamLink
+    // reported "unsupported Windows format" and started nothing. The graph
+    // genuinely cannot run -- an interface's own driver owns the whole box --
+    // so the fix is to say which device to change, and to change it.
+    {
+        auto fieldService = std::make_unique<FieldTestAudioService>();
+        jamlink::desktop::AppController field(
+            directory / "field-topology.jlpf", false,
+            QStringLiteral("soundcheck"), 0U, 0U, nullptr, std::move(fieldService));
+        passed = expect(field.devicesAvailable(), "field fixture exposes real selections")
+            && passed;
+        passed = expect(!field.audioSetupBlocked(),
+                        "a setup JamLink chose for itself is never reported as impossible")
+            && passed;
+
+        const int windowsOutput = field.outputDevices().indexOf(
+            QStringLiteral("Speakers (Focusrite USB Audio)"));
+        const int voiceBefore = field.voiceDeviceIndex();
+        const int instrumentBefore = field.instrumentDeviceIndex();
+        passed = expect(windowsOutput >= 0, "the interface's plain Windows output is offered")
+            && passed;
+        field.setOutputDeviceIndex(windowsOutput);
+
+        passed = expect(field.audioSetupBlocked(),
+                        "the field configuration is recognised before anything is started")
+            && passed;
+        // The wrong cause is worse than no cause: it sends a musician to
+        // change a device that was never the problem.
+        passed = expect(!field.audioStatus().contains(QStringLiteral("format")),
+                        "the status no longer blames a device format") && passed;
+        const QString advice = field.audioSetupAdvice();
+        passed = expect(!advice.isEmpty()
+                            && !advice.contains(QStringLiteral("ASIO"))
+                            && !advice.contains(QStringLiteral("WASAPI"))
+                            && !advice.contains(QStringLiteral("backend")),
+                        "the advice is about devices, not about audio systems") && passed;
+        passed = expect(field.audioSetupFixAvailable()
+                            && field.audioSetupFixLabel()
+                                == QStringLiteral("Use Focusrite USB ASIO for headphones"),
+                        "one action is offered, named after the interface on the desk")
+            && passed;
+        passed = expect(field.audioSetupFixDetail().contains(
+                            QStringLiteral("Focusrite USB ASIO Outputs 1-2")),
+                        "the action says exactly which device it will select") && passed;
+
+        field.applyAudioSetupFix();
+        passed = expect(!field.audioSetupBlocked(),
+                        "the offered action actually resolves the configuration") && passed;
+        passed = expect(field.outputDevices().value(field.outputDeviceIndex())
+                            == QStringLiteral("Focusrite USB ASIO Outputs 1-2"),
+                        "the fix selects the interface's main outputs, not its first ones")
+            && passed;
+        passed = expect(field.voiceDeviceIndex() == voiceBefore
+                            && field.instrumentDeviceIndex() == instrumentBefore,
+                        "the fix changes one device and leaves the other two alone")
+            && passed;
+        passed = expect(field.audioSetupAdvice().isEmpty()
+                            && field.audioSetupFixLabel().isEmpty(),
+                        "a workable setup offers no advice and no button") && passed;
+
+        // The mirror image: headphones on the interface, guitar through
+        // Windows. The same one action, pointed at the other selector.
+        const int windowsInput = field.instrumentDevices().indexOf(
+            QStringLiteral("Yeti Stereo Microphone"));
+        passed = expect(windowsInput >= 0, "a Windows input is offered for the mirror case")
+            && passed;
+        field.setInstrumentDeviceIndex(windowsInput);
+        passed = expect(field.audioSetupBlocked()
+                            && field.audioSetupFixLabel()
+                                == QStringLiteral("Use Focusrite USB ASIO for guitar"),
+                        "the mirror image is diagnosed against the guitar input") && passed;
+        field.applyAudioSetupFix();
+        passed = expect(!field.audioSetupBlocked()
+                            && field.instrumentDevices().value(field.instrumentDeviceIndex())
+                                == QStringLiteral("Focusrite USB ASIO Input 1"),
+                        "the guitar fix selects the interface's first input") && passed;
+    }
+
+    // Same rule as the setup banner: the muted layout's screenshot proves
+    // nothing unless the fixture is genuinely in the state that shows it.
+    // A room fixture that is still waiting hides the entire action row.
+    {
+        qputenv("JAMLINK_VISUAL_SEND_MUTED", QByteArrayLiteral("1"));
+        jamlink::desktop::AppController muted(
+            directory / "send-muted.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        passed = expect(muted.sendMuted() && muted.roomActive()
+                            && !muted.privateRoomWaiting(),
+                        "the muted fixture is in a room that actually shows the control")
+            && passed;
+        muted.setSendMuted(false);
+        passed = expect(!muted.sendMuted(), "the on-screen control can clear the mute")
+            && passed;
+        qunsetenv("JAMLINK_VISUAL_SEND_MUTED");
+    }
+
+    // The offscreen render of the impossible setup is only worth anything if
+    // the fixture actually is impossible. Asserted here so the banner can
+    // never quietly stop appearing while its screenshot test keeps passing.
+    {
+        qputenv("JAMLINK_VISUAL_AUDIO_CONFLICT", QByteArrayLiteral("1"));
+        jamlink::desktop::AppController conflict(
+            directory / "audio-conflict.jlpf", true,
+            QStringLiteral("settings"), 0U, 0U);
+        passed = expect(conflict.audioSetupBlocked()
+                            && conflict.audioSetupFixAvailable()
+                            && !conflict.audioSetupAdvice().isEmpty()
+                            && !conflict.audioSetupFixLabel().isEmpty(),
+                        "the visual fixture really does render a blocked setup") && passed;
+        qunsetenv("JAMLINK_VISUAL_AUDIO_CONFLICT");
     }
 
     qputenv("JAMLINK_VISUAL_PRIVATE_ROOM", QByteArrayLiteral("host-drawer"));

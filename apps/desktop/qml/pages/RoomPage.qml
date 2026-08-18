@@ -361,13 +361,73 @@ Item {
                 }
             }
 
+            // Being muted is a state you have to be unable to forget. The
+            // shortcut alone left no way to tell from the screen whether your
+            // friend could hear you, which is the one thing a musician needs
+            // to know before they say anything.
+            Rectangle {
+                visible: root.controller.sendMuted && !root.controller.privateRoomWaiting
+                width: parent.width
+                height: visible ? 44 : 0
+                radius: Theme.radiusControl
+                color: "#2a1116"
+                border.color: "#8d2b3c"
+
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 8
+                    spacing: 10
+                    JamIcon {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 17
+                        height: 17
+                        source: Qt.resolvedUrl("../../assets/mic.svg")
+                        color: "#ef6b7f"
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 17 - unmuteButton.width - 30
+                        text: "Muted. Your friend cannot hear you."
+                        color: "#f3c3cb"
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        font.weight: Font.Medium
+                    }
+                    JamButton {
+                        id: unmuteButton
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 88
+                        height: 30
+                        primary: true
+                        text: "Unmute"
+                        Accessible.name: "Let your friend hear you again"
+                        onClicked: root.controller.sendMuted = false
+                    }
+                }
+            }
+
             Row {
                 visible: !root.controller.privateRoomWaiting
                 width: parent.width
                 height: visible ? 44 : 0
                 spacing: 9
                 JamButton {
-                    width: (parent.width - 27) / 4
+                    width: (parent.width - 36) / 5
+                    height: parent.height
+                    // Muting is one press and never buried, because the reason
+                    // to reach for it is usually already happening.
+                    text: root.controller.sendMuted ? "Unmute" : "Mute"
+                    iconSource: Qt.resolvedUrl("../../assets/mic.svg")
+                    enabled: root.controller.roomActive
+                    Accessible.name: root.controller.sendMuted
+                        ? "Let your friend hear you again"
+                        : "Stop sending your guitar and voice"
+                    onClicked: root.controller.sendMuted = !root.controller.sendMuted
+                }
+                JamButton {
+                    width: (parent.width - 36) / 5
                     height: parent.height
                     text: "Tuner"
                     iconSource: Qt.resolvedUrl("../../assets/tune.svg")
@@ -377,7 +437,7 @@ Item {
                     }
                 }
                 JamButton {
-                    width: (parent.width - 27) / 4
+                    width: (parent.width - 36) / 5
                     height: parent.height
                     text: root.controller.recording ? "Stop " + root.controller.recordingElapsed : "Record"
                     iconSource: Qt.resolvedUrl("../../assets/music_note.svg")
@@ -385,7 +445,7 @@ Item {
                     onClicked: root.controller.toggleRecording()
                 }
                 JamButton {
-                    width: (parent.width - 27) / 4
+                    width: (parent.width - 36) / 5
                     height: parent.height
                     text: root.controller.unreadChatCount > 0
                         ? "Chat " + root.controller.unreadChatCount : "Chat"
@@ -400,7 +460,7 @@ Item {
                 // changing once you can hear the result, and leaving the room
                 // to change it was the only way to reach it.
                 JamButton {
-                    width: (parent.width - 27) / 4
+                    width: (parent.width - 36) / 5
                     height: parent.height
                     text: "Audio"
                     iconSource: Qt.resolvedUrl("../../assets/settings.svg")

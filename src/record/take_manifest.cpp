@@ -94,6 +94,9 @@ std::string serialiseTake(const TakeManifest& manifest) {
     writeField(out, "mediaFormat", manifest.mediaFormat);
     writeField(out, "state", takeStateName(manifest.state));
     writeField(out, "droppedFrames", manifest.droppedFrames);
+    for (const auto& excluded : manifest.excludedSources) {
+        writeField(out, "excluded_source", excluded);
+    }
     for (const auto& interruption : manifest.interruptions) {
         writeField(out, "interruption", interruption);
     }
@@ -156,6 +159,8 @@ std::optional<TakeManifest> parseTake(std::string_view text) {
                 takeStateFromName(value).value_or(TakeState::RecoveredNeedsReview);
         } else if (key == "droppedFrames") {
             manifest.droppedFrames = parseNumber(value);
+        } else if (key == "excluded_source") {
+            manifest.excludedSources.push_back(value);
         } else if (key == "interruption") {
             manifest.interruptions.push_back(value);
         } else if (!manifest.sources.empty()) {

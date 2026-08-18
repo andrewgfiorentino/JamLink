@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     JamLink
-    VERSION 0.4.2
+    VERSION 0.4.3
     DESCRIPTION "Low-latency remote music collaboration"
     HOMEPAGE_URL "https://github.com/andrewgfiorentino/JamLink"
     LANGUAGES CXX
@@ -98,6 +98,7 @@ include(JamLinkWarnings)
 
 add_library(jamlink_core STATIC
     src/audio/audio_route_graph.cpp
+    src/audio/audio_topology.cpp
     src/audio/instrument_tuner.cpp
     src/audio/opus_stream_codec.cpp
     src/audio/private_soundcheck_processor.cpp
@@ -109,6 +110,8 @@ add_library(jamlink_core STATIC
     src/diagnostics/support_bundle.cpp
     src/network/audio_stream_receiver.cpp
     src/network/connection_preflight.cpp
+    src/network/ice_agent.cpp
+    src/network/nat_behaviour.cpp
     src/network/peer_audio_codec.cpp
     src/preferences/preferences_store.cpp
     src/record/session_recorder.cpp
@@ -216,6 +219,13 @@ if(JAMLINK_BUILD_TESTS)
     add_subdirectory(tests)
     find_package(Python3 3.11 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME jamlink_signalling_tests
+            COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_signalling.py
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/services/signalling"
+        )
+        set_tests_properties(jamlink_signalling_tests PROPERTIES
+            TIMEOUT 30 LABELS "service;signalling")
         add_test(
             NAME jamlink_directory_tests
             COMMAND "${Python3_EXECUTABLE}" -m unittest -v test_directory.py

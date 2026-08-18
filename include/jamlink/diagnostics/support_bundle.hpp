@@ -39,10 +39,26 @@ struct SupportSnapshot final {
     std::uint64_t encodeFailures{0U};
 
     // Audio path. Device identities are names, never file paths.
-    std::string audioBackend;
+    //
+    // Each endpoint carries its own audio system. A single "backend" line used
+    // to stand for all three, and it was judged from the output alone: a field
+    // failure whose guitar was on an interface driver while its headphones went
+    // through Windows was reported as a plain Windows setup, which is what hid
+    // the fault. Three endpoints that can differ need three answers.
     std::string instrumentDevice;
+    std::string instrumentBackend;
     std::string voiceDevice;
+    std::string voiceBackend;
     std::string outputDevice;
+    std::string outputBackend;
+    // Whether those three can run together at all, and the named reason. This
+    // is the verdict the audio service itself acts on, not a re-derivation.
+    bool audioTopologySupported{false};
+    std::string audioTopologyReason;
+    // Whether the engine is actually running. Without it a sample rate of 0
+    // and a buffer of 0 read as measurements of a running device rather than
+    // as the absence of one.
+    bool audioRunning{false};
     std::uint32_t sampleRate{0U};
     std::uint32_t requestedBufferFrames{0U};
     std::uint32_t runningBufferFrames{0U};
@@ -59,6 +75,13 @@ struct SupportSnapshot final {
     std::string firewallState;
     bool udpBound{false};
     std::uint16_t localUdpPort{0U};
+    // What the router does to this machine on the way out. Named rather than
+    // inferred from a failure, because "an invite from here cannot work" and
+    // "nobody tried yet" produce the same silence.
+    std::string natBehaviour;
+    // Path finding, which is what a "we could never connect" report turns on.
+    std::uint64_t candidateProbesSent{0U};
+    std::uint32_t candidateRoundsExhausted{0U};
 
     // Link health.
     bool roundTripMeasured{false};

@@ -159,6 +159,10 @@ bool parse(std::istream& input, UserPreferences& preferences) {
     // are still rejected.
     int tunerMutes = preferences.tunerMutesInstrument ? 1 : 0;
     int automaticMapping = preferences.automaticPortMapping ? 1 : 0;
+    int recordLocalInstrument = preferences.recordLocalInstrument ? 1 : 0;
+    int recordLocalVoice = preferences.recordLocalVoice ? 1 : 0;
+    int recordRemoteInstrument = preferences.recordRemoteInstrument ? 1 : 0;
+    int recordRemoteVoice = preferences.recordRemoteVoice ? 1 : 0;
     int shareInstrument = preferences.profile.shareInstrument ? 1 : 0;
     int shareGenres = preferences.profile.shareGenres ? 1 : 0;
     int shareBio = preferences.profile.shareBio ? 1 : 0;
@@ -180,6 +184,14 @@ bool parse(std::istream& input, UserPreferences& preferences) {
             read = static_cast<bool>(line >> tunerMutes);
         } else if (key == "record.directory") {
             read = readQuotedValue(line, preferences.recordingDirectory);
+        } else if (key == "record.local_instrument") {
+            read = static_cast<bool>(line >> recordLocalInstrument);
+        } else if (key == "record.local_voice") {
+            read = static_cast<bool>(line >> recordLocalVoice);
+        } else if (key == "record.remote_instrument") {
+            read = static_cast<bool>(line >> recordRemoteInstrument);
+        } else if (key == "record.remote_voice") {
+            read = static_cast<bool>(line >> recordRemoteVoice);
         } else if (key == "network.port") {
             read = static_cast<bool>(line >> preferences.preferredUdpPort);
         } else if (key == "network.automatic_mapping") {
@@ -222,9 +234,17 @@ bool parse(std::istream& input, UserPreferences& preferences) {
         || (shareInstrument != 0 && shareInstrument != 1)
         || (shareGenres != 0 && shareGenres != 1)
         || (shareBio != 0 && shareBio != 1)
-        || (shareRegion != 0 && shareRegion != 1)) {
+        || (shareRegion != 0 && shareRegion != 1)
+        || (recordLocalInstrument != 0 && recordLocalInstrument != 1)
+        || (recordLocalVoice != 0 && recordLocalVoice != 1)
+        || (recordRemoteInstrument != 0 && recordRemoteInstrument != 1)
+        || (recordRemoteVoice != 0 && recordRemoteVoice != 1)) {
         return false;
     }
+    preferences.recordLocalInstrument = recordLocalInstrument == 1;
+    preferences.recordLocalVoice = recordLocalVoice == 1;
+    preferences.recordRemoteInstrument = recordRemoteInstrument == 1;
+    preferences.recordRemoteVoice = recordRemoteVoice == 1;
     preferences.tunerMutesInstrument = tunerMutes == 1;
     preferences.automaticPortMapping = automaticMapping == 1;
     preferences.profile.shareInstrument = shareInstrument == 1;
@@ -267,6 +287,14 @@ void write(std::ostream& output, const UserPreferences& preferences) {
            << "tuner.mutes_instrument "
            << static_cast<int>(preferences.tunerMutesInstrument) << '\n'
            << "record.directory " << std::quoted(preferences.recordingDirectory) << '\n'
+           << "record.local_instrument "
+           << static_cast<int>(preferences.recordLocalInstrument) << '\n'
+           << "record.local_voice "
+           << static_cast<int>(preferences.recordLocalVoice) << '\n'
+           << "record.remote_instrument "
+           << static_cast<int>(preferences.recordRemoteInstrument) << '\n'
+           << "record.remote_voice "
+           << static_cast<int>(preferences.recordRemoteVoice) << '\n'
            << "network.port " << preferences.preferredUdpPort << '\n'
            << "network.automatic_mapping "
            << static_cast<int>(preferences.automaticPortMapping) << '\n'

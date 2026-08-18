@@ -398,6 +398,74 @@ JAMLINK_TEST(local_originals_keep_their_own_capture_rate) {
     }
 }
 
+JAMLINK_TEST(an_excluded_track_leaves_no_file_at_all) {
+    // "Record it and delete it afterwards" is a different promise from "never
+    // record it". A musician who turns off talkback is asking for the second.
+    const auto root = scratchRoot();
+    SessionRecorder recorder;
+    jamlink::record::RecordTrackSelection selection;
+    selection.exclude(RecordTrack::LocalVoice);
+    selection.exclude(RecordTrack::LocalVoiceOriginal);
+    EXPECT_TRUE(recorder.start(root, "excluded", 48'000U, 0U, 0U, selection));
+
+    constexpr std::size_t frames = 2'400U;
+    const auto block = ramp(frames, 0.0001F);
+    for (std::size_t index = 0U; index < jamlink::record::recordTrackCount; ++index) {
+        recorder.write(static_cast<RecordTrack>(index), block);
+    }
+    waitForFrames(recorder, frames);
+    recorder.stop();
+
+    const auto session = root / "excluded";
+    // No file, rather than an empty one. An empty WAV is exactly what a track
+    // that failed leaves behind, and a take that cannot tell a choice from a
+    // fault is a take that lies about itself.
+    EXPECT_TRUE(!std::filesystem::exists(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalVoice)));
+    EXPECT_TRUE(!std::filesystem::exists(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalVoiceOriginal)));
+    // Everything still selected is written in full and stays sample-aligned.
+    const auto guitar = readWav(
+        session / SessionRecorder::trackFileName(RecordTrack::LocalInstrument));
+    const auto remote = readWav(
+        session / SessionRecorder::trackFileName(RecordTrack::RemoteVoice));
+    EXPECT_TRUE(guitar.valid && remote.valid);
+    EXPECT_TRUE(guitar.samples.size() == frames);
+    EXPECT_TRUE(remote.samples.size() == frames);
+}
+
+JAMLINK_TEST(frames_for_an_excluded_track_are_not_counted_as_lost) {
+    // Nobody asked for them, so they are not missing from anything. Counting
+    // them as drops would mark every take with talkback off as damaged.
+    const auto root = scratchRoot();
+    SessionRecorder recorder;
+    jamlink::record::RecordTrackSelection selection;
+    selection.exclude(RecordTrack::RemoteVoice);
+    EXPECT_TRUE(recorder.start(root, "not-lost", 48'000U, 0U, 0U, selection));
+
+    const auto block = ramp(4'800U, 0.0001F);
+    for (std::size_t pass = 0U; pass < 40U; ++pass) {
+        recorder.write(RecordTrack::RemoteVoice, block);
+    }
+    recorder.write(RecordTrack::LocalInstrument, block);
+    waitForFrames(recorder, 4'800U);
+    recorder.stop();
+    EXPECT_TRUE(recorder.telemetry().droppedFrames == 0U);
+}
+
+JAMLINK_TEST(a_take_of_nothing_is_refused_rather_than_created) {
+    const auto root = scratchRoot();
+    SessionRecorder recorder;
+    jamlink::record::RecordTrackSelection selection;
+    for (std::size_t index = 0U; index < jamlink::record::recordTrackCount; ++index) {
+        selection.exclude(static_cast<RecordTrack>(index));
+    }
+    // A directory of nothing is indistinguishable from a take that failed, and
+    // was never what pressing record meant.
+    EXPECT_TRUE(!recorder.start(root, "empty", 48'000U, 0U, 0U, selection));
+    EXPECT_TRUE(!recorder.recording());
+}
+
 int main() {
     std::size_t failures = 0U;
     for (const auto& test : tests()) {

@@ -128,13 +128,29 @@ std::string renderSupportBundle(const SupportSnapshot& snapshot) {
     writeField(out, "encode failures", snapshot.encodeFailures);
 
     out << "\nAudio\n";
-    writeField(out, "backend", snapshot.audioBackend);
+    // Device and audio system together, per endpoint. They can differ, and
+    // when they do that is usually the whole answer.
     writeField(out, "instrument", snapshot.instrumentDevice);
+    writeField(out, "instrument audio system", snapshot.instrumentBackend);
     writeField(out, "voice", snapshot.voiceDevice);
+    writeField(out, "voice audio system", snapshot.voiceBackend);
     writeField(out, "output", snapshot.outputDevice);
-    writeField(out, "sample rate", static_cast<std::uint64_t>(snapshot.sampleRate));
+    writeField(out, "output audio system", snapshot.outputBackend);
+    writeField(out, "can run together", snapshot.audioTopologySupported);
+    writeField(out, "topology", snapshot.audioTopologyReason);
+    writeField(out, "engine running", snapshot.audioRunning);
+    // A rate of zero is not a measurement of a device running slowly. Saying
+    // so separates "it ran at nothing" from "it never opened", which is the
+    // distinction a field bundle failed to make and lost an evening to.
+    if (snapshot.audioRunning) {
+        writeField(out, "sample rate", static_cast<std::uint64_t>(snapshot.sampleRate));
+        writeField(out, "running buffer",
+            static_cast<std::uint64_t>(snapshot.runningBufferFrames));
+    } else {
+        out << "  sample rate: (engine never started)\n";
+        out << "  running buffer: (engine never started)\n";
+    }
     writeField(out, "requested buffer", static_cast<std::uint64_t>(snapshot.requestedBufferFrames));
-    writeField(out, "running buffer", static_cast<std::uint64_t>(snapshot.runningBufferFrames));
     writeField(out, "automatic buffer", snapshot.automaticBufferSize);
     writeField(out, "sound check verified", snapshot.soundCheckVerified);
     writeField(out, "underruns", snapshot.underruns);
@@ -148,6 +164,10 @@ std::string renderSupportBundle(const SupportSnapshot& snapshot) {
     writeField(out, "firewall", snapshot.firewallState);
     writeField(out, "udp bound", snapshot.udpBound);
     writeField(out, "local udp port", static_cast<std::uint64_t>(snapshot.localUdpPort));
+    writeField(out, "router mapping", snapshot.natBehaviour);
+    writeField(out, "candidate probes sent", snapshot.candidateProbesSent);
+    writeField(out, "candidate rounds exhausted",
+        static_cast<std::uint64_t>(snapshot.candidateRoundsExhausted));
 
     out << "\nLink\n";
     writeField(out, "round trip measured", snapshot.roundTripMeasured);
@@ -208,10 +228,15 @@ std::string renderSupportBundleJson(const SupportSnapshot& snapshot) {
     number("pcmPacketsDecoded", snapshot.pcmPacketsDecoded);
     number("undecodablePackets", snapshot.undecodablePackets);
     number("encodeFailures", snapshot.encodeFailures);
-    text("audioBackend", snapshot.audioBackend);
     text("instrumentDevice", snapshot.instrumentDevice);
+    text("instrumentBackend", snapshot.instrumentBackend);
     text("voiceDevice", snapshot.voiceDevice);
+    text("voiceBackend", snapshot.voiceBackend);
     text("outputDevice", snapshot.outputDevice);
+    text("outputBackend", snapshot.outputBackend);
+    flag("audioTopologySupported", snapshot.audioTopologySupported);
+    text("audioTopologyReason", snapshot.audioTopologyReason);
+    flag("audioRunning", snapshot.audioRunning);
     number("sampleRate", snapshot.sampleRate);
     number("requestedBufferFrames", snapshot.requestedBufferFrames);
     number("runningBufferFrames", snapshot.runningBufferFrames);
@@ -226,6 +251,9 @@ std::string renderSupportBundleJson(const SupportSnapshot& snapshot) {
     text("firewallState", snapshot.firewallState);
     flag("udpBound", snapshot.udpBound);
     number("localUdpPort", snapshot.localUdpPort);
+    text("natBehaviour", snapshot.natBehaviour);
+    number("candidateProbesSent", snapshot.candidateProbesSent);
+    number("candidateRoundsExhausted", snapshot.candidateRoundsExhausted);
     flag("roundTripMeasured", snapshot.roundTripMeasured);
     number("roundTripMilliseconds", snapshot.roundTripMilliseconds);
     number("receiveBufferMilliseconds", snapshot.receiveBufferMilliseconds);

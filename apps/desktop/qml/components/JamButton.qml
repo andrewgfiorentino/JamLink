@@ -33,6 +33,7 @@ Button {
         spacing: 8
         anchors.centerIn: parent
         JamIcon {
+            id: buttonIcon
             visible: control.iconSource.toString().length > 0
             width: visible ? 17 : 0
             height: 17
@@ -41,6 +42,15 @@ Button {
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter
+            // Bounded to the button. A label that does not fit is trimmed
+            // rather than painted across whatever sits beside it, which is
+            // what happens when the text is a device name somebody else chose.
+            // Where there is room this is exactly implicitWidth, so nothing
+            // that fits today renders differently.
+            width: Math.min(
+                implicitWidth,
+                Math.max(0, control.width - 16 - (buttonIcon.visible ? 25 : 0)))
+            elide: Text.ElideRight
             text: control.text
             color: control.enabled ? "#f5f3f8" : "#737a80"
             font: control.font

@@ -75,6 +75,13 @@ struct UserPreferences final {
     bool tunerMutesInstrument{true};
     // Where takes are written. Empty means the platform music folder.
     std::string recordingDirectory;
+    // Which sources a take is allowed to contain. Talkback is the usual reason
+    // to turn one off: it belongs in the session and not in the recording.
+    // Excluding a source means it is never written, not written and discarded.
+    bool recordLocalInstrument{true};
+    bool recordLocalVoice{true};
+    bool recordRemoteInstrument{true};
+    bool recordRemoteVoice{true};
     // Zero asks the operating system for any free UDP port.
     std::uint32_t preferredUdpPort{0U};
     bool automaticPortMapping{true};

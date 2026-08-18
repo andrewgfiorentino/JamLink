@@ -41,6 +41,36 @@ enum class RecordTrack : std::uint8_t {
 
 inline constexpr std::size_t recordTrackCount = 6U;
 
+// Which tracks a take is allowed to contain.
+//
+// A musician who does not want talkback in the take must be able to leave it
+// out, and "record everything and delete it afterwards" is not the same
+// promise: the audio was still written to disk.
+//
+// An excluded track gets no file at all, rather than an empty one. An empty
+// WAV is exactly what a track that failed leaves behind, and a take that
+// cannot tell a deliberate omission from a fault is a take that lies about
+// itself.
+struct RecordTrackSelection final {
+    std::array<bool, recordTrackCount> included{
+        true, true, true, true, true, true};
+
+    [[nodiscard]] bool includes(RecordTrack track) const noexcept {
+        return included[static_cast<std::size_t>(track)];
+    }
+    void exclude(RecordTrack track) noexcept {
+        included[static_cast<std::size_t>(track)] = false;
+    }
+    [[nodiscard]] bool any() const noexcept {
+        for (const bool value : included) {
+            if (value) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
 [[nodiscard]] constexpr bool isLocalOriginal(RecordTrack track) noexcept {
     return track == RecordTrack::LocalInstrumentOriginal
         || track == RecordTrack::LocalVoiceOriginal;
@@ -96,6 +126,20 @@ public:
         std::uint32_t localInstrumentRate,
         std::uint32_t localVoiceRate);
 
+    // As above, but only the selected tracks are opened and written. Refuses a
+    // selection that excludes everything: a take of nothing is a mistake, not
+    // a request.
+    [[nodiscard]] bool start(
+        const std::filesystem::path& directory,
+        const std::string& sessionName,
+        std::uint32_t sampleRate,
+        std::uint32_t localInstrumentRate,
+        std::uint32_t localVoiceRate,
+        const RecordTrackSelection& selection);
+
+    // What the running take is actually capturing. Control thread.
+    [[nodiscard]] RecordTrackSelection selection() const noexcept { return selection_; }
+
     // Control thread. Drains what is queued and finalises every header.
     void stop() noexcept;
 
@@ -127,6 +171,7 @@ private:
 
     const std::size_t ringFrames_;
     std::array<Track, recordTrackCount> tracks_;
+    RecordTrackSelection selection_;
     std::vector<float> scratch_;
     std::filesystem::path sessionDirectory_;
     std::uint32_t sampleRate_{48'000U};

@@ -659,7 +659,13 @@ public:
         return recorder_.start(
             directory, sessionName, rate,
             instrumentCaptureRate_.load(std::memory_order_relaxed),
-            voiceCaptureRate_.load(std::memory_order_relaxed));
+            voiceCaptureRate_.load(std::memory_order_relaxed),
+            recordSelection_);
+    }
+
+    void setRecordTrackSelection(
+        const jamlink::record::RecordTrackSelection& selection) noexcept override {
+        recordSelection_ = selection;
     }
 
     void stopRecording() noexcept override { recorder_.stop(); }
@@ -1266,6 +1272,7 @@ private:
     std::atomic<std::uint32_t> voiceSourceClipped_{0U};
     InstrumentTuner tuner_;
     jamlink::record::SessionRecorder recorder_;
+    jamlink::record::RecordTrackSelection recordSelection_{};
     jamlink::network::IPeerAudioExchange* peerExchange_{nullptr};
 };
 

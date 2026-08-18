@@ -115,11 +115,16 @@ AppController::AppController(
       currentPage_(std::move(initialPage)),
       visualFixture_(visualFixture),
       visualClipFixture_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_CLIP")),
+      visualAudioConflictFixture_(visualFixture
+          && qEnvironmentVariableIsSet("JAMLINK_VISUAL_AUDIO_CONFLICT")),
       visualPrivateRoomFixture_(visualFixture
           ? qEnvironmentVariable("JAMLINK_VISUAL_PRIVATE_ROOM") : QString()),
       visualRecordingFixture_(visualFixture
           && qEnvironmentVariableIsSet("JAMLINK_VISUAL_RECORDING")),
-      audioService_(std::move(audioService)) {
+      audioService_(std::move(audioService)),
+      // The layout a musician sees only when they cannot be heard, rendered
+      // offscreen with every other screen rather than trusted to look right.
+      sendMuted_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_SEND_MUTED")) {
     connect(&updateManager_, &UpdateManager::changed, this, &AppController::updateChanged);
     connect(&roomDirectory_, &PrivateRoomDirectory::changed,
         this, &AppController::roomChanged);
@@ -154,6 +159,45 @@ AppController::AppController(
              QStringLiteral("Focusrite Scarlett 2i2 — Output 1–2"),
              QStringLiteral("output:1"), QStringLiteral("output:2")}};
         devicesAvailable_ = true;
+        if (visualAudioConflictFixture_) {
+            // The two-home field test, reproduced exactly: the interface's own
+            // input for guitar, a USB microphone, and the same interface's
+            // plain Windows output. Real endpoints are given here rather than
+            // a flag, so the banner is rendered from the same rule the audio
+            // service enforces instead of from a picture of it.
+            const auto asio = [](const char* channel) {
+                jamlink::audio::SoundcheckEndpointOption option;
+                option.endpointId = "asio:Focusrite USB ASIO";
+                option.displayName = std::string("Focusrite USB ASIO ") + channel;
+                option.backend = jamlink::audio::SoundcheckBackend::Asio;
+                option.backendId = "Focusrite USB ASIO";
+                return option;
+            };
+            const auto windows = [](const char* id, const char* name) {
+                jamlink::audio::SoundcheckEndpointOption option;
+                option.endpointId = id;
+                option.displayName = name;
+                return option;
+            };
+            instrumentOptions_ = {
+                {QStringLiteral("fixture:interface"),
+                 QStringLiteral("Focusrite USB ASIO · Input 1"),
+                 QStringLiteral("input:1"), {}, asio("Input 1")}};
+            voiceOptions_ = {
+                {QStringLiteral("fixture:yeti"),
+                 QStringLiteral("Yeti Stereo Microphone"),
+                 QStringLiteral("capture:1"), {},
+                 windows("wasapi:yeti", "Yeti Stereo Microphone")}};
+            outputOptions_ = {
+                {QStringLiteral("fixture:speakers"),
+                 QStringLiteral("Speakers (Focusrite USB Audio)"),
+                 QStringLiteral("output:1"), QStringLiteral("output:2"),
+                 windows("wasapi:focusrite", "Speakers (Focusrite USB Audio)")},
+                {QStringLiteral("fixture:interface:asio"),
+                 QStringLiteral("Focusrite USB ASIO · Outputs 1–2"),
+                 QStringLiteral("output:1"), QStringLiteral("output:2"),
+                 asio("Outputs 1-2")}};
+        }
     } else {
         if (!audioService_) {
             audioService_ = jamlink::audio::createPlatformSoundcheckAudioService();
@@ -332,6 +376,108 @@ void AppController::applyLocalSendMutes() {
             || (tunerActive_ && preferences_.tunerMutesInstrument));
     peerTransport_->setLocalStreamMuted(
         jamlink::network::AudioStreamId::Voice, voiceSendMuted_);
+}
+
+bool AppController::recordLocalInstrument() const noexcept {
+    return preferences_.recordLocalInstrument;
+}
+bool AppController::recordLocalVoice() const noexcept {
+    return preferences_.recordLocalVoice;
+}
+bool AppController::recordRemoteInstrument() const noexcept {
+    return preferences_.recordRemoteInstrument;
+}
+bool AppController::recordRemoteVoice() const noexcept {
+    return preferences_.recordRemoteVoice;
+}
+
+// Excluding a source means it is never written, not written and deleted. The
+// local original follows its live track: a musician who says "do not record my
+// microphone" has not asked for a pristine copy of it somewhere else.
+jamlink::record::RecordTrackSelection AppController::recordSelection() const {
+    using jamlink::record::RecordTrack;
+    jamlink::record::RecordTrackSelection selection;
+    if (!preferences_.recordLocalInstrument) {
+        selection.exclude(RecordTrack::LocalInstrument);
+        selection.exclude(RecordTrack::LocalInstrumentOriginal);
+    }
+    if (!preferences_.recordLocalVoice) {
+        selection.exclude(RecordTrack::LocalVoice);
+        selection.exclude(RecordTrack::LocalVoiceOriginal);
+    }
+    if (!preferences_.recordRemoteInstrument) {
+        selection.exclude(RecordTrack::RemoteInstrument);
+    }
+    if (!preferences_.recordRemoteVoice) {
+        selection.exclude(RecordTrack::RemoteVoice);
+    }
+    return selection;
+}
+
+void AppController::applyRecordSelection() {
+    if (audioService_) {
+        audioService_->setRecordTrackSelection(recordSelection());
+    }
+    scheduleSave();
+    emit settingsChanged();
+}
+
+void AppController::setRecordLocalInstrument(bool included) {
+    if (preferences_.recordLocalInstrument == included) {
+        return;
+    }
+    preferences_.recordLocalInstrument = included;
+    applyRecordSelection();
+}
+void AppController::setRecordLocalVoice(bool included) {
+    if (preferences_.recordLocalVoice == included) {
+        return;
+    }
+    preferences_.recordLocalVoice = included;
+    applyRecordSelection();
+}
+void AppController::setRecordRemoteInstrument(bool included) {
+    if (preferences_.recordRemoteInstrument == included) {
+        return;
+    }
+    preferences_.recordRemoteInstrument = included;
+    applyRecordSelection();
+}
+void AppController::setRecordRemoteVoice(bool included) {
+    if (preferences_.recordRemoteVoice == included) {
+        return;
+    }
+    preferences_.recordRemoteVoice = included;
+    applyRecordSelection();
+}
+
+// Says what a take will actually contain, because four switches are easy to
+// leave in a state nobody remembers choosing.
+QString AppController::recordSelectionSummary() const {
+    QStringList kept;
+    if (preferences_.recordLocalInstrument) {
+        kept.push_back(QStringLiteral("your guitar"));
+    }
+    if (preferences_.recordLocalVoice) {
+        kept.push_back(QStringLiteral("your voice"));
+    }
+    if (preferences_.recordRemoteInstrument) {
+        kept.push_back(QStringLiteral("their guitar"));
+    }
+    if (preferences_.recordRemoteVoice) {
+        kept.push_back(QStringLiteral("their voice"));
+    }
+    if (kept.isEmpty()) {
+        return QStringLiteral(
+            "Nothing is selected, so there is nothing to record. Turn at least "
+            "one source back on.");
+    }
+    if (kept.size() == 4) {
+        return QStringLiteral(
+            "Takes contain all four sources, plus pristine originals of your own.");
+    }
+    return QStringLiteral("Takes will contain %1. The rest is never written to disk.")
+        .arg(kept.join(QStringLiteral(", ")));
 }
 
 QString AppController::recordingDirectory() const {
@@ -973,6 +1119,9 @@ void AppController::toggleRecording() {
     // A sortable, human-readable folder per take.
     const QString name = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyy-MM-dd HH-mm-ss"));
+    // Applied here rather than only when the switches change, so a take always
+    // reflects what the settings currently say.
+    audioService_->setRecordTrackSelection(recordSelection());
     if (!audioService_->startRecording(directory, name.toStdString())) {
         setupMessage_ = QStringLiteral("Recording could not be started");
         emit setupChanged();
@@ -1031,6 +1180,12 @@ QString AppController::audioStatus() const {
             .arg(audioTelemetry_.outputBufferFrames)
             .arg(audioTelemetry_.secondaryVoiceActive
                 ? QString() : QStringLiteral(" · microphone reconnecting"));
+    }
+    // "Unsupported Windows format" was what the field test reported, and it was
+    // true of nothing: every device was fine and the combination was not. A
+    // wrong cause sends a musician to change the wrong thing.
+    if (audioSetupBlocked()) {
+        return QStringLiteral("These devices cannot run together");
     }
     const QString state = audioStateText(audioTelemetry_.state);
     return audioTelemetry_.nativeError == 0
@@ -1231,6 +1386,179 @@ bool AppController::asioActive() const noexcept {
         == jamlink::audio::SoundcheckBackend::Asio;
 }
 
+// The rule lives in core and is asked here rather than restated. Asking it of
+// the current selections rather than of the audio service means the diagnosis
+// appears the moment an impossible combination is chosen, instead of only
+// after a start attempt has already failed and left the musician with a
+// sample rate of zero and nothing to read.
+jamlink::audio::AudioTopologyResult AppController::currentTopology() const {
+    const auto endpoint = [](const std::vector<DeviceOption>& options, int index) {
+        jamlink::audio::AudioTopologyEndpoint result;
+        if (!validIndex(index, options.size())) {
+            return result;
+        }
+        const auto& option = options[static_cast<std::size_t>(index)].serviceOption;
+        result.backend = option.backend;
+        result.endpointId = option.endpointId;
+        result.displayName = option.displayName;
+        return result;
+    };
+    jamlink::audio::AudioTopology topology;
+    topology.instrument = endpoint(instrumentOptions_, instrumentIndex_);
+    topology.voice = endpoint(voiceOptions_, voiceIndex_);
+    topology.output = endpoint(outputOptions_, outputIndex_);
+    return jamlink::audio::evaluateAudioTopology(topology);
+}
+
+int AppController::topologyFixIndex(
+    const jamlink::audio::AudioTopologyResult& result) const {
+    if (result.supported || result.requiredEndpointId.empty()) {
+        return -1;
+    }
+    const std::vector<DeviceOption>* options = nullptr;
+    if (result.changeOutput) {
+        options = &outputOptions_;
+    } else if (result.changeInstrument) {
+        options = &instrumentOptions_;
+    } else if (result.changeVoice) {
+        options = &voiceOptions_;
+    }
+    if (options == nullptr) {
+        return -1;
+    }
+
+    const bool haveInstrument = validIndex(instrumentIndex_, instrumentOptions_.size());
+    int best = -1;
+    std::uint32_t bestChannel = 0U;
+    for (std::size_t index = 0U; index < options->size(); ++index) {
+        const auto& option = (*options)[index].serviceOption;
+        if (option.endpointId != result.requiredEndpointId) {
+            continue;
+        }
+        if (result.changeVoice && haveInstrument) {
+            // Moving the microphone onto the socket the guitar is already in
+            // would make one signal out of two and look like a fix.
+            const auto& instrument =
+                instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].serviceOption;
+            if (option.endpointId == instrument.endpointId
+                && option.primaryChannel == instrument.primaryChannel) {
+                continue;
+            }
+        }
+        // An interface's first pair of outputs is the headphone socket, and its
+        // first inputs are where an instrument is plugged in. Anything further
+        // along is a send or an extra channel nobody asked for.
+        if (best < 0 || option.primaryChannel < bestChannel) {
+            best = static_cast<int>(index);
+            bestChannel = option.primaryChannel;
+        }
+    }
+    return best;
+}
+
+bool AppController::audioSetupBlocked() const {
+    // The ordinary fixture invents its selections, and a machine with no
+    // endpoints is already told exactly that. Neither is a configuration a
+    // musician chose. The conflict fixture carries real endpoints and is
+    // judged by the same rule as real hardware.
+    if (visualFixture_ && !visualAudioConflictFixture_) {
+        return false;
+    }
+    if (!devicesAvailable_) {
+        return false;
+    }
+    return !currentTopology().supported;
+}
+
+QString AppController::audioSetupAdvice() const {
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const auto advice = currentTopology().advice();
+    return QString::fromUtf8(advice.data(), static_cast<qsizetype>(advice.size()));
+}
+
+bool AppController::audioSetupFixAvailable() const {
+    return audioSetupBlocked() && topologyFixIndex(currentTopology()) >= 0;
+}
+
+QString AppController::audioSetupFixLabel() const {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        return {};
+    }
+    // The driver name alone, not the channel, because this is a button and the
+    // musician recognises the box on their desk by its name.
+    const auto& option = (result.changeOutput
+        ? outputOptions_
+        : result.changeInstrument ? instrumentOptions_ : voiceOptions_)
+            [static_cast<std::size_t>(index)].serviceOption;
+    const QString interfaceName = option.backendId.empty()
+        ? QString::fromUtf8(option.displayName)
+        : QString::fromUtf8(option.backendId);
+    if (result.changeOutput) {
+        return QStringLiteral("Use %1 for headphones").arg(interfaceName);
+    }
+    if (result.changeInstrument) {
+        return QStringLiteral("Use %1 for guitar").arg(interfaceName);
+    }
+    return QStringLiteral("Use %1 for the microphone").arg(interfaceName);
+}
+
+QString AppController::audioSetupFixDetail() const {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        // Refusing without a way out is what the field test already did. If the
+        // interface JamLink needs is not in the list, say which one is missing
+        // rather than leaving a dead banner.
+        return QStringLiteral(
+            "The interface this needs is not in the list. Check that it is "
+            "plugged in and switched on, then retry audio.");
+    }
+    const auto& options = result.changeOutput
+        ? outputOptions_
+        : result.changeInstrument ? instrumentOptions_ : voiceOptions_;
+    return QStringLiteral("Selects %1. Nothing else changes.")
+        .arg(options[static_cast<std::size_t>(index)].displayName);
+}
+
+void AppController::applyAudioSetupFix() {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return;
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        return;
+    }
+    // Through the ordinary setters, so persistence, readiness invalidation and
+    // the audio restart behave exactly as they do when a musician picks the
+    // same device by hand. A one-click fix that took a private shortcut would
+    // be a second way of changing a device, and the two would drift.
+    if (result.changeOutput) {
+        setOutputDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Output moved to your interface. Your guitar and microphone are unchanged.");
+    } else if (result.changeInstrument) {
+        setInstrumentDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Guitar input moved to your interface. Your microphone is unchanged.");
+    } else {
+        setVoiceDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Microphone moved to your interface. Your guitar is unchanged.");
+    }
+    emit setupChanged();
+}
+
 // Gathers what each subsystem already knows and lets the conductor decide what
 // it means. Nothing is judged here; this is only collection.
 void AppController::refreshSessionGuidance() {
@@ -1300,7 +1628,15 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.mediaProtocolVersion = jamlink::network::currentMediaProtocolVersion;
     snapshot.controlProtocolVersion = jamlink::network::currentControlProtocolVersion;
 
-    snapshot.audioCodec = peerTelemetry_.opusPacketsDecoded > 0U ? "opus" : "pcm16";
+    // Named from what was actually decoded. Reporting "pcm16" whenever no
+    // Opus arrived turned "nothing crossed the wire at all" into a positive
+    // claim about which codec was carrying the session, which is how a field
+    // bundle came to name a codec for a session that never started.
+    const bool anyOpus = peerTelemetry_.opusPacketsDecoded > 0U;
+    const bool anyPcm = peerTelemetry_.pcmPacketsDecoded > 0U;
+    snapshot.audioCodec = anyOpus && anyPcm
+        ? "opus and uncompressed"
+        : anyOpus ? "opus" : (anyPcm ? "pcm16" : "nothing decoded");
     snapshot.codecBitsPerSecond = peerTelemetry_.audioBitsPerSecond;
     snapshot.codecFrameMilliseconds = 5U;
     snapshot.opusPacketsDecoded = peerTelemetry_.opusPacketsDecoded;
@@ -1308,15 +1644,36 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.undecodablePackets = peerTelemetry_.undecodablePackets;
     snapshot.encodeFailures = peerTelemetry_.encodeFailures;
 
-    snapshot.audioBackend = asioActive() ? "ASIO" : "WASAPI shared";
     // Device names, never the paths or identifiers they were resolved from.
     const auto deviceName = [](const std::vector<DeviceOption>& options, int index) {
         return validIndex(index, options.size())
             ? options[static_cast<std::size_t>(index)].displayName.toStdString() : std::string();
     };
+    // One backend line used to stand for all three endpoints and was read off
+    // the output alone. A field failure whose guitar was on an interface
+    // driver while its headphones went through Windows was reported as a plain
+    // Windows setup, and that single wrong line is what hid the fault.
+    const auto backendName = [](const std::vector<DeviceOption>& options, int index) {
+        if (!validIndex(index, options.size())) {
+            return std::string();
+        }
+        return options[static_cast<std::size_t>(index)].serviceOption.backend
+                == jamlink::audio::SoundcheckBackend::Asio
+            ? std::string("ASIO") : std::string("Windows shared");
+    };
     snapshot.instrumentDevice = deviceName(instrumentOptions_, instrumentIndex_);
+    snapshot.instrumentBackend = backendName(instrumentOptions_, instrumentIndex_);
     snapshot.voiceDevice = deviceName(voiceOptions_, voiceIndex_);
+    snapshot.voiceBackend = backendName(voiceOptions_, voiceIndex_);
     snapshot.outputDevice = deviceName(outputOptions_, outputIndex_);
+    snapshot.outputBackend = backendName(outputOptions_, outputIndex_);
+    // The verdict the audio service itself acts on, not a second derivation
+    // of the same rule that could disagree with it.
+    const auto topology = currentTopology();
+    snapshot.audioTopologySupported = topology.supported;
+    snapshot.audioTopologyReason =
+        std::string(jamlink::audio::topologyReasonName(topology.reason));
+    snapshot.audioRunning = audioActive();
     snapshot.sampleRate = audioTelemetry_.outputSampleRate;
     snapshot.requestedBufferFrames = effectiveBufferFrames();
     snapshot.runningBufferFrames = audioTelemetry_.outputBufferFrames;
@@ -1338,6 +1695,10 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.firewallState = firewallMessage().toStdString();
     snapshot.udpBound = peerTelemetry_.udpBound;
     snapshot.localUdpPort = static_cast<std::uint16_t>(roomPort());
+    snapshot.natBehaviour =
+        std::string(jamlink::network::natBehaviourName(peerTelemetry_.natBehaviour));
+    snapshot.candidateProbesSent = peerTelemetry_.candidateProbesSent;
+    snapshot.candidateRoundsExhausted = peerTelemetry_.candidateRoundsExhausted;
 
     snapshot.roundTripMeasured = peerTelemetry_.roundTripMeasured;
     snapshot.roundTripMilliseconds = static_cast<std::uint32_t>(roundTripMilliseconds());
@@ -1349,8 +1710,15 @@ jamlink::diagnostics::SupportSnapshot AppController::supportSnapshot() const {
     snapshot.packetsReceived = peerTelemetry_.packetsReceived;
     snapshot.packetsConcealed = instrument.packetsConcealed;
     snapshot.packetsLate = instrument.packetsLate;
+    // The first establishment is the join; anything beyond it is a reconnect.
+    // This was declared and printed from the day the field reports started
+    // arriving, and never assigned, so every bundle ever sent has claimed
+    // zero reconnects whatever actually happened.
+    snapshot.reconnectCount = peerTelemetry_.sessionsEstablished > 0U
+        ? peerTelemetry_.sessionsEstablished - 1U : 0U;
 
     snapshot.recording = recording();
+    snapshot.recorderDroppedFrames = recorderTelemetry_.droppedFrames;
 
     // Phase to phase and nothing else: no invite, no key, no endpoint, no chat.
     for (std::size_t index = 0U; index < conductor_.transitionCount(); ++index) {
@@ -1423,24 +1791,33 @@ void AppController::beginTake(
         source.fileName = file;
         activeTake_.sources.push_back(source);
     };
-    addSource("instrument", "local-capture", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalInstrument));
-    addSource("voice", "local-capture", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalVoice));
-    addSource("instrument", "local-original", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalInstrumentOriginal));
-    addSource("voice", "local-original", localId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::LocalVoiceOriginal));
-    addSource("instrument", "network-received", remoteId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::RemoteInstrument));
-    addSource("voice", "network-received", remoteId,
-        jamlink::record::SessionRecorder::trackFileName(
-            jamlink::record::RecordTrack::RemoteVoice));
+    const auto selection = recordSelection();
+    const auto addIncluded = [&](
+        jamlink::record::RecordTrack track, std::string_view role,
+        std::string_view origin, const std::string& participant) {
+        if (selection.includes(track)) {
+            addSource(role, origin, participant,
+                jamlink::record::SessionRecorder::trackFileName(track));
+            return;
+        }
+        // Named rather than silently absent. A track that is missing because
+        // it was asked for and failed, and one that was never wanted, look
+        // identical on disk, and only one of them is a problem.
+        activeTake_.excludedSources.push_back(
+            std::string(origin) + ":" + std::string(role));
+    };
+    addIncluded(jamlink::record::RecordTrack::LocalInstrument,
+        "instrument", "local-capture", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalVoice,
+        "voice", "local-capture", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalInstrumentOriginal,
+        "instrument", "local-original", localId);
+    addIncluded(jamlink::record::RecordTrack::LocalVoiceOriginal,
+        "voice", "local-original", localId);
+    addIncluded(jamlink::record::RecordTrack::RemoteInstrument,
+        "instrument", "network-received", remoteId);
+    addIncluded(jamlink::record::RecordTrack::RemoteVoice,
+        "voice", "network-received", remoteId);
 
     static_cast<void>(jamlink::record::TakeJournal::begin(activeTakeDirectory_, activeTake_));
 }
@@ -2951,6 +3328,12 @@ void AppController::chooseInitialAudioDefaults() {
     if (!devicesAvailable_) {
         return;
     }
+    if (visualAudioConflictFixture_) {
+        // The scoring below exists precisely so JamLink never chooses a graph
+        // that cannot run, so it would repair the conflict fixture on sight.
+        // That configuration is one a musician arrived at, and it is kept.
+        return;
+    }
     const auto driverScore = [](const DeviceOption& option) {
         if (option.serviceOption.backend != jamlink::audio::SoundcheckBackend::Asio) {
             return -1'000;
@@ -3279,7 +3662,10 @@ void AppController::restartAudio() {
                 : QStringLiteral("Windows shared-audio private monitor active");
         telemetryTimer_.start();
     } else {
-        setupMessage_ = audioStateText(audioTelemetry_.state);
+        const auto topology = currentTopology();
+        setupMessage_ = topology.supported
+            ? audioStateText(audioTelemetry_.state)
+            : audioSetupAdvice();
     }
     emit setupChanged();
 }

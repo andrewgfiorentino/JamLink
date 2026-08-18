@@ -5,7 +5,7 @@ open-source Windows application for private two-person sessions: guitar and
 voice travel as separate encrypted streams over a direct connection, with no
 server in the middle and no account to create.
 
-> Status: **0.4.2-test**. Under active development and validated in two-home
+> Status: **0.4.3-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -18,9 +18,12 @@ imposes.
 - **Direct encrypted audio.** AES-256-GCM with per-direction keys, a replay
   window, and authenticated participant identity. Audio goes peer to peer.
 - **One code to connect.** The host creates an invite and sends it; nothing
-  else is exchanged. Port mapping is attempted automatically over UPnP, PCP,
-  and NAT-PMP, and Windows Firewall is detected and repairable from inside the
-  application.
+  else is exchanged. The invite names every address the host can be reached on
+  rather than one guess, and the guest probes all of them at once, keeping
+  whichever answers. Two people in the same building stay on the local network
+  instead of hairpinning through a router. Port mapping is still attempted
+  automatically over UPnP, PCP, and NAT-PMP, and Windows Firewall is detected
+  and repairable from inside the application.
 - **Guitar and voice as separate streams.** Each has its own jitter buffer,
   level, and mute, so a friend's guitar can be turned down without turning
   their voice down.
@@ -29,6 +32,10 @@ imposes.
   extrapolates the instrument's own waveform rather than inserting silence.
 - **A chromatic tuner** that mutes your guitar to the room while you use it,
   and can stay open beside the session once you turn that off.
+- **Recording only what you meant to record.** Each of the four sources can be
+  left out of a take, and a source you turn off is never written to disk rather
+  than written and discarded. A take says which sources were deliberately
+  excluded, so a missing track can never be mistaken for one that failed.
 - **Recording that keeps a pristine copy.** Your instrument and your voice, each
   of your friend's streams, and — separately — local originals of your own
   sources taken before the monitor converter and before the network could touch
@@ -36,6 +43,9 @@ imposes.
 - **Recordings that admit what they are.** A take carries a manifest saying what
   the files are, whose they are, and whether it actually finished. An
   interrupted take is never presented as clean.
+- **A mute you cannot forget.** One press stops sending your guitar and voice,
+  and while it is on the room says so plainly rather than leaving you to
+  wonder whether your friend can hear you.
 - **Private text chat** over the same authenticated connection.
 - **Opus, tuned for playing rather than listening.** Restricted low-delay mode
   adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the
@@ -77,6 +87,11 @@ costs both delay and quality.
 Buffer size can be left on **Auto**: the device is opened at the smallest size
 it offers and moves up only if it actually reports dropping audio.
 
+Some combinations cannot run at all — an interface's own driver takes exclusive
+ownership, so its input cannot be used while its output goes through Windows.
+JamLink recognises this as you choose it, names the one device to change, and
+offers a button that changes it.
+
 If your interface does its own zero-latency monitoring, turn JamLink's monitor
 off for that input and use the hardware path. Capture, meters, clipping
 detection, the tuner, recording, and what your friend hears all continue.
@@ -85,8 +100,10 @@ detection, the tuner, recording, and what your friend hears all continue.
 
 - **Windows only**, x64.
 - **Two people per room.** Larger sessions are not implemented.
-- **No relay.** If both ends are behind carrier-grade or symmetric NAT, a
-  direct connection may be impossible. JamLink says so rather than pretending,
+- **No relay, and no rendezvous yet.** The guest probes every address the
+  invite named, but the host cannot punch outward until it has heard from the
+  guest. If both ends are behind carrier-grade or symmetric NAT, a direct
+  connection may still be impossible. JamLink says so rather than pretending,
   and will suggest the other person host if they can.
 - **Around 320 kbit/s upstream** for two streams. Lower than it was, but still
   a real requirement on a thin uplink; there is no automatic bitrate adaptation
@@ -94,10 +111,10 @@ detection, the tuner, recording, and what your friend hears all continue.
 - **Exchanging originals is not implemented yet.** Each side keeps pristine
   local originals of its own sources, but they are not yet sent to the other
   person, so your copy of your friend's audio is still whatever arrived.
-- **Recording is all or nothing.** Individual channels cannot yet be excluded
-  from a take, so talkback is recorded along with everything else.
 - **Both people must run the same version.** The wire protocol is
-  version-checked, and it changed in 0.4.1.
+  version-checked, and it changed in 0.4.1. The invite format changed in 0.4.3:
+  a 0.4.3 host's invite names several addresses and an older build cannot read
+  it, though 0.4.3 still joins an older host's invite.
 
 ## Building
 

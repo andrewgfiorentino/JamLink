@@ -147,7 +147,26 @@ void AudioStreamReceiver::submit(
             jitterMicroseconds_ += (deviation - jitterMicroseconds_) / 16.0;
             previousSequence_ = sequence;
             previousArrival_ = arrivalMicroseconds;
+        } else if (step >= static_cast<std::int32_t>(slotCount_ / 2U)) {
+            // A gap this wide makes the expected arrival time meaningless, so
+            // nothing is measured across it -- but the anchor has to move.
+            //
+            // Leaving it behind was a real defect. Resync rebases on a jump
+            // measured from the highest sequence, while this guard measures
+            // from the last packet used for timing, and there is a band where
+            // one triggers and the other does not. A single gap of half the
+            // ring -- about a third of a second, which is one Wi-Fi hiccup --
+            // pinned this anchor permanently: every later packet then measured
+            // an ever-larger step, stayed out of range forever, and the jitter
+            // estimate froze. The buffer would never grow again however bad
+            // the link became, which is silent, and audible only as dropouts
+            // on a connection that had visibly got worse.
+            previousSequence_ = sequence;
+            previousArrival_ = arrivalMicroseconds;
         }
+        // A step of zero or less is a reordered or duplicated packet. Neither
+        // measured nor re-anchored: moving the anchor backwards would make the
+        // next packet measure across a span that never happened.
     } else {
         previousSequence_ = sequence;
         previousArrival_ = arrivalMicroseconds;
