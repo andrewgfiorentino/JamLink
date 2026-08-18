@@ -160,6 +160,15 @@ class AppController final : public QObject {
     Q_PROPERTY(QString settingsSessionNotice READ settingsSessionNotice NOTIFY roomChanged)
     Q_PROPERTY(bool asioActive READ asioActive NOTIFY setupChanged)
 
+    // Three real devices can each work perfectly and still be unable to run
+    // together. When that happens the interface offers the single change that
+    // would fix it, named after the device rather than the audio system.
+    Q_PROPERTY(bool audioSetupBlocked READ audioSetupBlocked NOTIFY setupChanged)
+    Q_PROPERTY(QString audioSetupAdvice READ audioSetupAdvice NOTIFY setupChanged)
+    Q_PROPERTY(bool audioSetupFixAvailable READ audioSetupFixAvailable NOTIFY setupChanged)
+    Q_PROPERTY(QString audioSetupFixLabel READ audioSetupFixLabel NOTIFY setupChanged)
+    Q_PROPERTY(QString audioSetupFixDetail READ audioSetupFixDetail NOTIFY setupChanged)
+
     Q_PROPERTY(bool firewallNeedsAttention READ firewallNeedsAttention NOTIFY firewallChanged)
     Q_PROPERTY(bool firewallFixable READ firewallFixable NOTIFY firewallChanged)
     Q_PROPERTY(bool firewallBusy READ firewallBusy NOTIFY firewallChanged)
@@ -352,6 +361,14 @@ public:
     [[nodiscard]] QString monitorPathSummary() const;
     [[nodiscard]] QString settingsSessionNotice() const;
     [[nodiscard]] bool asioActive() const noexcept;
+    [[nodiscard]] bool audioSetupBlocked() const;
+    [[nodiscard]] QString audioSetupAdvice() const;
+    [[nodiscard]] bool audioSetupFixAvailable() const;
+    [[nodiscard]] QString audioSetupFixLabel() const;
+    [[nodiscard]] QString audioSetupFixDetail() const;
+    // Selects the device the diagnosis names. One press, and the musician never
+    // has to know which audio system anything is on.
+    Q_INVOKABLE void applyAudioSetupFix();
 
     [[nodiscard]] bool firewallNeedsAttention() const noexcept;
     [[nodiscard]] bool firewallFixable() const noexcept;
@@ -470,6 +487,15 @@ private:
     void scheduleSave();
     void scheduleAudioRestart();
     void restartAudio();
+    // The same rule the audio service enforces, asked of the current
+    // selections rather than of the last start attempt, so the answer is
+    // already there when a musician picks an impossible combination and does
+    // not have to wait for a failure to find out.
+    [[nodiscard]] jamlink::audio::AudioTopologyResult currentTopology() const;
+    // Where in the affected selector the named interface actually is, or -1
+    // when nothing enumerated satisfies the diagnosis.
+    [[nodiscard]] int topologyFixIndex(
+        const jamlink::audio::AudioTopologyResult& result) const;
     void reportAudioDeviceDropouts();
     void installBufferSizeOptions(std::vector<std::uint32_t> deviceValues);
     // The frame count actually in use, resolving the automatic setting to the
@@ -549,6 +575,10 @@ private:
     QString saveMessage_;
     bool visualFixture_{false};
     bool visualClipFixture_{false};
+    // Renders the impossible-setup banner offscreen. Without it the layout
+    // that only a stuck musician ever sees would be the one layout never
+    // looked at.
+    bool visualAudioConflictFixture_{false};
     bool visualRoomFixture_{false};
     QString visualPrivateRoomFixture_;
     QVariantList visualWaitingRoomRequests_;

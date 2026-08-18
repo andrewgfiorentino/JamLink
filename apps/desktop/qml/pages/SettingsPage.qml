@@ -162,6 +162,64 @@ Item {
                         width: parent.width
                         spacing: 12
 
+                        // Three devices that each work can still be unable to
+                        // run together, and a musician has no way to know
+                        // which one is wrong. A field test lost an evening to
+                        // this: the report said "unsupported Windows format",
+                        // which was true of none of them. It sits above the
+                        // pickers because it is about them, and it offers the
+                        // single change rather than describing the problem.
+                        Rectangle {
+                            id: setupBlockedBanner
+                            visible: root.controller.audioSetupBlocked
+                            width: pane.width
+                            height: visible ? blockedContent.implicitHeight + 22 : 0
+                            radius: 9
+                            color: "#1c1710"
+                            border.color: "#7a4b12"
+
+                            Column {
+                                id: blockedContent
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 8
+
+                                Text {
+                                    width: parent.width
+                                    text: root.controller.audioSetupAdvice
+                                    color: "#e8dcc4"
+                                    wrapMode: Text.WordWrap
+                                    font.family: "Segoe UI"
+                                    font.pixelSize: 10
+                                    lineHeight: 1.25
+                                }
+                                JamButton {
+                                    // Named after the device, never after the
+                                    // audio system it happens to use.
+                                    visible: root.controller.audioSetupFixAvailable
+                                    height: 32
+                                    width: parent.width
+                                    primary: true
+                                    font.pixelSize: 11
+                                    text: root.controller.audioSetupFixLabel
+                                    Accessible.name: root.controller.audioSetupFixLabel
+                                    onClicked: root.controller.applyAudioSetupFix()
+                                }
+                                Text {
+                                    width: parent.width
+                                    visible: root.controller.audioSetupFixDetail !== ""
+                                    text: root.controller.audioSetupFixDetail
+                                    color: "#a08e6f"
+                                    wrapMode: Text.WordWrap
+                                    font.family: "Segoe UI"
+                                    font.pixelSize: 9
+                                }
+                            }
+                        }
+
                         SettingsHeading { text: "Audio devices" }
 
                         Repeater {

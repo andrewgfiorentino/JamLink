@@ -77,6 +77,11 @@ costs both delay and quality.
 Buffer size can be left on **Auto**: the device is opened at the smallest size
 it offers and moves up only if it actually reports dropping audio.
 
+Some combinations cannot run at all — an interface's own driver takes exclusive
+ownership, so its input cannot be used while its output goes through Windows.
+JamLink recognises this as you choose it, names the one device to change, and
+offers a button that changes it.
+
 If your interface does its own zero-latency monitoring, turn JamLink's monitor
 off for that input and use the hardware path. Capture, meters, clipping
 detection, the tuner, recording, and what your friend hears all continue.

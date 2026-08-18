@@ -115,6 +115,8 @@ AppController::AppController(
       currentPage_(std::move(initialPage)),
       visualFixture_(visualFixture),
       visualClipFixture_(visualFixture && qEnvironmentVariableIsSet("JAMLINK_VISUAL_CLIP")),
+      visualAudioConflictFixture_(visualFixture
+          && qEnvironmentVariableIsSet("JAMLINK_VISUAL_AUDIO_CONFLICT")),
       visualPrivateRoomFixture_(visualFixture
           ? qEnvironmentVariable("JAMLINK_VISUAL_PRIVATE_ROOM") : QString()),
       visualRecordingFixture_(visualFixture
@@ -154,6 +156,45 @@ AppController::AppController(
              QStringLiteral("Focusrite Scarlett 2i2 — Output 1–2"),
              QStringLiteral("output:1"), QStringLiteral("output:2")}};
         devicesAvailable_ = true;
+        if (visualAudioConflictFixture_) {
+            // The two-home field test, reproduced exactly: the interface's own
+            // input for guitar, a USB microphone, and the same interface's
+            // plain Windows output. Real endpoints are given here rather than
+            // a flag, so the banner is rendered from the same rule the audio
+            // service enforces instead of from a picture of it.
+            const auto asio = [](const char* channel) {
+                jamlink::audio::SoundcheckEndpointOption option;
+                option.endpointId = "asio:Focusrite USB ASIO";
+                option.displayName = std::string("Focusrite USB ASIO ") + channel;
+                option.backend = jamlink::audio::SoundcheckBackend::Asio;
+                option.backendId = "Focusrite USB ASIO";
+                return option;
+            };
+            const auto windows = [](const char* id, const char* name) {
+                jamlink::audio::SoundcheckEndpointOption option;
+                option.endpointId = id;
+                option.displayName = name;
+                return option;
+            };
+            instrumentOptions_ = {
+                {QStringLiteral("fixture:interface"),
+                 QStringLiteral("Focusrite USB ASIO · Input 1"),
+                 QStringLiteral("input:1"), {}, asio("Input 1")}};
+            voiceOptions_ = {
+                {QStringLiteral("fixture:yeti"),
+                 QStringLiteral("Yeti Stereo Microphone"),
+                 QStringLiteral("capture:1"), {},
+                 windows("wasapi:yeti", "Yeti Stereo Microphone")}};
+            outputOptions_ = {
+                {QStringLiteral("fixture:speakers"),
+                 QStringLiteral("Speakers (Focusrite USB Audio)"),
+                 QStringLiteral("output:1"), QStringLiteral("output:2"),
+                 windows("wasapi:focusrite", "Speakers (Focusrite USB Audio)")},
+                {QStringLiteral("fixture:interface:asio"),
+                 QStringLiteral("Focusrite USB ASIO · Outputs 1–2"),
+                 QStringLiteral("output:1"), QStringLiteral("output:2"),
+                 asio("Outputs 1-2")}};
+        }
     } else {
         if (!audioService_) {
             audioService_ = jamlink::audio::createPlatformSoundcheckAudioService();
@@ -1032,6 +1073,12 @@ QString AppController::audioStatus() const {
             .arg(audioTelemetry_.secondaryVoiceActive
                 ? QString() : QStringLiteral(" · microphone reconnecting"));
     }
+    // "Unsupported Windows format" was what the field test reported, and it was
+    // true of nothing: every device was fine and the combination was not. A
+    // wrong cause sends a musician to change the wrong thing.
+    if (audioSetupBlocked()) {
+        return QStringLiteral("These devices cannot run together");
+    }
     const QString state = audioStateText(audioTelemetry_.state);
     return audioTelemetry_.nativeError == 0
         ? state
@@ -1229,6 +1276,179 @@ bool AppController::asioActive() const noexcept {
     }
     return outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption.backend
         == jamlink::audio::SoundcheckBackend::Asio;
+}
+
+// The rule lives in core and is asked here rather than restated. Asking it of
+// the current selections rather than of the audio service means the diagnosis
+// appears the moment an impossible combination is chosen, instead of only
+// after a start attempt has already failed and left the musician with a
+// sample rate of zero and nothing to read.
+jamlink::audio::AudioTopologyResult AppController::currentTopology() const {
+    const auto endpoint = [](const std::vector<DeviceOption>& options, int index) {
+        jamlink::audio::AudioTopologyEndpoint result;
+        if (!validIndex(index, options.size())) {
+            return result;
+        }
+        const auto& option = options[static_cast<std::size_t>(index)].serviceOption;
+        result.backend = option.backend;
+        result.endpointId = option.endpointId;
+        result.displayName = option.displayName;
+        return result;
+    };
+    jamlink::audio::AudioTopology topology;
+    topology.instrument = endpoint(instrumentOptions_, instrumentIndex_);
+    topology.voice = endpoint(voiceOptions_, voiceIndex_);
+    topology.output = endpoint(outputOptions_, outputIndex_);
+    return jamlink::audio::evaluateAudioTopology(topology);
+}
+
+int AppController::topologyFixIndex(
+    const jamlink::audio::AudioTopologyResult& result) const {
+    if (result.supported || result.requiredEndpointId.empty()) {
+        return -1;
+    }
+    const std::vector<DeviceOption>* options = nullptr;
+    if (result.changeOutput) {
+        options = &outputOptions_;
+    } else if (result.changeInstrument) {
+        options = &instrumentOptions_;
+    } else if (result.changeVoice) {
+        options = &voiceOptions_;
+    }
+    if (options == nullptr) {
+        return -1;
+    }
+
+    const bool haveInstrument = validIndex(instrumentIndex_, instrumentOptions_.size());
+    int best = -1;
+    std::uint32_t bestChannel = 0U;
+    for (std::size_t index = 0U; index < options->size(); ++index) {
+        const auto& option = (*options)[index].serviceOption;
+        if (option.endpointId != result.requiredEndpointId) {
+            continue;
+        }
+        if (result.changeVoice && haveInstrument) {
+            // Moving the microphone onto the socket the guitar is already in
+            // would make one signal out of two and look like a fix.
+            const auto& instrument =
+                instrumentOptions_[static_cast<std::size_t>(instrumentIndex_)].serviceOption;
+            if (option.endpointId == instrument.endpointId
+                && option.primaryChannel == instrument.primaryChannel) {
+                continue;
+            }
+        }
+        // An interface's first pair of outputs is the headphone socket, and its
+        // first inputs are where an instrument is plugged in. Anything further
+        // along is a send or an extra channel nobody asked for.
+        if (best < 0 || option.primaryChannel < bestChannel) {
+            best = static_cast<int>(index);
+            bestChannel = option.primaryChannel;
+        }
+    }
+    return best;
+}
+
+bool AppController::audioSetupBlocked() const {
+    // The ordinary fixture invents its selections, and a machine with no
+    // endpoints is already told exactly that. Neither is a configuration a
+    // musician chose. The conflict fixture carries real endpoints and is
+    // judged by the same rule as real hardware.
+    if (visualFixture_ && !visualAudioConflictFixture_) {
+        return false;
+    }
+    if (!devicesAvailable_) {
+        return false;
+    }
+    return !currentTopology().supported;
+}
+
+QString AppController::audioSetupAdvice() const {
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const auto advice = currentTopology().advice();
+    return QString::fromUtf8(advice.data(), static_cast<qsizetype>(advice.size()));
+}
+
+bool AppController::audioSetupFixAvailable() const {
+    return audioSetupBlocked() && topologyFixIndex(currentTopology()) >= 0;
+}
+
+QString AppController::audioSetupFixLabel() const {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        return {};
+    }
+    // The driver name alone, not the channel, because this is a button and the
+    // musician recognises the box on their desk by its name.
+    const auto& option = (result.changeOutput
+        ? outputOptions_
+        : result.changeInstrument ? instrumentOptions_ : voiceOptions_)
+            [static_cast<std::size_t>(index)].serviceOption;
+    const QString interfaceName = option.backendId.empty()
+        ? QString::fromUtf8(option.displayName)
+        : QString::fromUtf8(option.backendId);
+    if (result.changeOutput) {
+        return QStringLiteral("Use %1 for headphones").arg(interfaceName);
+    }
+    if (result.changeInstrument) {
+        return QStringLiteral("Use %1 for guitar").arg(interfaceName);
+    }
+    return QStringLiteral("Use %1 for the microphone").arg(interfaceName);
+}
+
+QString AppController::audioSetupFixDetail() const {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return {};
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        // Refusing without a way out is what the field test already did. If the
+        // interface JamLink needs is not in the list, say which one is missing
+        // rather than leaving a dead banner.
+        return QStringLiteral(
+            "The interface this needs is not in the list. Check that it is "
+            "plugged in and switched on, then retry audio.");
+    }
+    const auto& options = result.changeOutput
+        ? outputOptions_
+        : result.changeInstrument ? instrumentOptions_ : voiceOptions_;
+    return QStringLiteral("Selects %1. Nothing else changes.")
+        .arg(options[static_cast<std::size_t>(index)].displayName);
+}
+
+void AppController::applyAudioSetupFix() {
+    const auto result = currentTopology();
+    if (!audioSetupBlocked()) {
+        return;
+    }
+    const int index = topologyFixIndex(result);
+    if (index < 0) {
+        return;
+    }
+    // Through the ordinary setters, so persistence, readiness invalidation and
+    // the audio restart behave exactly as they do when a musician picks the
+    // same device by hand. A one-click fix that took a private shortcut would
+    // be a second way of changing a device, and the two would drift.
+    if (result.changeOutput) {
+        setOutputDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Output moved to your interface. Your guitar and microphone are unchanged.");
+    } else if (result.changeInstrument) {
+        setInstrumentDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Guitar input moved to your interface. Your microphone is unchanged.");
+    } else {
+        setVoiceDeviceIndex(index);
+        setupMessage_ = QStringLiteral(
+            "Microphone moved to your interface. Your guitar is unchanged.");
+    }
+    emit setupChanged();
 }
 
 // Gathers what each subsystem already knows and lets the conductor decide what
@@ -2951,6 +3171,12 @@ void AppController::chooseInitialAudioDefaults() {
     if (!devicesAvailable_) {
         return;
     }
+    if (visualAudioConflictFixture_) {
+        // The scoring below exists precisely so JamLink never chooses a graph
+        // that cannot run, so it would repair the conflict fixture on sight.
+        // That configuration is one a musician arrived at, and it is kept.
+        return;
+    }
     const auto driverScore = [](const DeviceOption& option) {
         if (option.serviceOption.backend != jamlink::audio::SoundcheckBackend::Asio) {
             return -1'000;
@@ -3279,7 +3505,10 @@ void AppController::restartAudio() {
                 : QStringLiteral("Windows shared-audio private monitor active");
         telemetryTimer_.start();
     } else {
-        setupMessage_ = audioStateText(audioTelemetry_.state);
+        const auto topology = currentTopology();
+        setupMessage_ = topology.supported
+            ? audioStateText(audioTelemetry_.state)
+            : audioSetupAdvice();
     }
     emit setupChanged();
 }
