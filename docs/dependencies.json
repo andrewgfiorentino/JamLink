@@ -56,6 +56,20 @@
       "hardware_vendor_drivers_included": false
     },
     {
+      "name": "Opus (libopus)",
+      "version": "1.4",
+      "tag": "v1.4",
+      "revision": "82ac57d9f1aaf575800cf17373348e45b7ce6c0d",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/xiph/opus",
+      "vendored_path": "third_party/opus",
+      "vendored_modified": false,
+      "linkage": "static",
+      "patent_grants": "royalty-free grants recorded in third_party/opus/LICENSE_PLEASE_READ.txt",
+      "binary_notice": "third_party/opus/COPYING",
+      "distributed_with_source_repository": true
+    },
+    {
       "name": "Material Design Icons",
       "variant": "Round",
       "revision": "50f0603134ce7b70b2d71b686cc13e8b57ccb74c",
