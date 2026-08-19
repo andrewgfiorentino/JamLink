@@ -252,6 +252,7 @@ private:
                 false,
                 asioSampleRate,
                 buffers,
+                static_cast<std::uint32_t>(preferred),
                 SoundcheckBackend::Asio,
                 driverName});
         }
@@ -284,6 +285,7 @@ private:
                 validSecond,
                 asioSampleRate,
                 buffers,
+                static_cast<std::uint32_t>(preferred),
                 SoundcheckBackend::Asio,
                 driverName});
         }

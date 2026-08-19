@@ -96,8 +96,11 @@ output. ASIO runs capture and playback on one clock in one callback. Windows
 shared audio runs them on independent clocks with a converter between, which
 costs both delay and quality.
 
-Buffer size can be left on **Auto**: the device is opened at the smallest size
-it offers and moves up only if it actually reports dropping audio.
+Buffer size can be left on **Auto**: the device is opened at the size its own
+driver recommends — the same figure your interface's control panel defaults to —
+and moves up only if it actually reports dropping audio. The smallest size a
+driver will admit to is a floor rather than an operating point; some report a
+third of a millisecond, where a healthy machine sitting idle will drop blocks.
 
 Some combinations cannot run at all — an interface's own driver takes exclusive
 ownership, so its input cannot be used while its output goes through Windows.

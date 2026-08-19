@@ -26,6 +26,24 @@
   reported a disk falling behind, a take coming out with gaps, and where a
   finished take landed — none of which reached the screen, so a damaged take
   looked exactly like a clean one.
+- Fixed the buffer message reappearing every few seconds while sitting idle,
+  always naming the same size. Raising the buffer restarts the audio, and the
+  restart came back through the code that builds the size list — which reset
+  the raise that had just been made. The device then dropped audio again at the
+  smallest size and raised again, forever. The message was telling the truth
+  about a change that was being undone a moment later.
+- Automatic buffer size now opens your device at the size its own driver
+  recommends, which is what the interface's control panel defaults to, rather
+  than the smallest size the driver will admit to. A Focusrite reports sixteen
+  frames as its minimum — a third of a millisecond — and a healthy machine
+  sitting idle drops blocks there. The recommendation was already being read
+  from the driver and then thrown away.
+- A device now gets a moment to settle before its drop-outs are believed.
+  Opening a device is itself a gap, and counting that gap as evidence would
+  have the buffer climb its whole ladder chasing the noise its own restarts
+  were making. The drop-out baseline is also reset with the device, since the
+  device counts from zero again and a total from the previous session describes
+  nothing.
 - Verified a full room of six musicians hearing each other simultaneously:
   thirty separate sessions, every one audible at once.
 

@@ -546,7 +546,9 @@ private:
     [[nodiscard]] int topologyFixIndex(
         const jamlink::audio::AudioTopologyResult& result) const;
     void reportAudioDeviceDropouts();
-    void installBufferSizeOptions(std::vector<std::uint32_t> deviceValues);
+    void installBufferSizeOptions(
+        std::vector<std::uint32_t> deviceValues,
+        std::uint32_t preferredFrames);
     // The frame count actually in use, resolving the automatic setting to the
     // size it has settled on.
     [[nodiscard]] std::uint32_t effectiveBufferFrames() const noexcept;
@@ -616,6 +618,13 @@ private:
     std::uint32_t autoBufferFrames_{0U};
     bool autoBufferRaised_{false};
     qint64 audioDropoutReportMilliseconds_{0};
+    // Opening a device is itself a gap. Counting that gap as evidence would
+    // have the buffer climb its whole ladder chasing the noise its own
+    // restarts were making, so drop-outs are ignored until the device has had
+    // a moment to settle. Separate from the report rate limit below, which
+    // decides how often a struggling device may speak rather than when it
+    // starts being believed.
+    qint64 audioSettleUntilMilliseconds_{0};
     QTimer telemetryTimer_;
     QString currentPage_;
     QString tunerReturnPage_{QStringLiteral("home")};

@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <thread>
 
 namespace {
 
@@ -45,7 +46,7 @@ public:
     [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
         const jamlink::audio::SoundcheckEndpointOption asioInput{
             "asio:test", "Test ASIO · Input 2", 1U, 0U, false,
-            48'000U, {64U, 128U, 256U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U, 256U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Test ASIO"};
         const jamlink::audio::SoundcheckEndpointOption voiceA{
             "test:voice-a", "USB Microphone A · Input 1", 0U, 0U, false,
@@ -55,7 +56,7 @@ public:
             44'100U, {128U, 256U}};
         const jamlink::audio::SoundcheckEndpointOption output{
             "asio:test", "Test ASIO · Outputs 1–2", 0U, 1U, true,
-            48'000U, {64U, 128U, 256U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U, 256U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Test ASIO"};
         return {{asioInput, voiceA, voiceB}, {output}};
     }
@@ -209,11 +210,11 @@ public:
     [[nodiscard]] jamlink::audio::SoundcheckDeviceInventory enumerate() override {
         const jamlink::audio::SoundcheckEndpointOption guitarInput{
             "asio:Focusrite USB ASIO", "Focusrite USB ASIO Input 1", 0U, 0U, false,
-            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Focusrite USB ASIO"};
         const jamlink::audio::SoundcheckEndpointOption lineInput{
             "asio:Focusrite USB ASIO", "Focusrite USB ASIO Input 2", 1U, 0U, false,
-            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Focusrite USB ASIO"};
         const jamlink::audio::SoundcheckEndpointOption yeti{
             "wasapi:yeti", "Yeti Stereo Microphone", 0U, 0U, false,
@@ -223,11 +224,11 @@ public:
         // headphones to a socket nothing is plugged into.
         const jamlink::audio::SoundcheckEndpointOption spareOutputs{
             "asio:Focusrite USB ASIO", "Focusrite USB ASIO Outputs 3-4", 2U, 3U, true,
-            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Focusrite USB ASIO"};
         const jamlink::audio::SoundcheckEndpointOption mainOutputs{
             "asio:Focusrite USB ASIO", "Focusrite USB ASIO Outputs 1-2", 0U, 1U, true,
-            48'000U, {64U, 128U}, jamlink::audio::SoundcheckBackend::Asio,
+            48'000U, {64U, 128U}, 128U, jamlink::audio::SoundcheckBackend::Asio,
             "Focusrite USB ASIO"};
         const jamlink::audio::SoundcheckEndpointOption windowsOutput{
             "wasapi:focusrite", "Speakers (Focusrite USB Audio)", 0U, 1U, true,
@@ -816,11 +817,11 @@ int main(int argc, char* argv[]) {
         // The setting's name is not a substitute for the number a player needs.
         passed = expect(explanation.contains(QStringLiteral("Currently"))
                             && explanation.contains(QStringLiteral("ms"))
-                            && explanation.contains(QStringLiteral("64")),
+                            && explanation.contains(QStringLiteral("128")),
                         "automatic reports the size actually in use, not just its name")
             && passed;
-        passed = expect(explanation.contains(QStringLiteral("smallest")),
-                        "automatic explains that it starts low and only climbs")
+        passed = expect(explanation.contains(QStringLiteral("recommend")),
+                        "automatic explains that it starts where the device advises")
             && passed;
 
         automatic.setBufferSizeIndex(2);
