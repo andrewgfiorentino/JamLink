@@ -909,6 +909,85 @@ int main(int argc, char* argv[]) {
                         "the guitar fix selects the interface's first input") && passed;
     }
 
+    // Your own level in the room, reported from a real session as a slider
+    // that would not move. It stored the value and changed the audio, but the
+    // room model listens to a different signal than the one the setter emitted,
+    // so the control snapped back to the value the model still held.
+    {
+        jamlink::desktop::AppController levels(
+            directory / "own-levels.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        // Counted rather than read back. Calling roomParticipants() recomputes
+        // it every time, so a test that only checked the value would pass
+        // whether or not the signal fired -- and the signal is the entire
+        // defect: without it the room screen never re-reads the model, and the
+        // control springs back to the value it is still showing.
+        int roomUpdates = 0;
+        QObject::connect(&levels, &jamlink::desktop::AppController::roomChanged,
+                         [&roomUpdates]() { ++roomUpdates; });
+
+        levels.setRoomParticipantStreamGain(
+            levels.profileId(), QStringLiteral("instrument"), 0.32);
+        passed = expect(roomUpdates > 0,
+                        "moving your own guitar level tells the room to re-read it")
+            && passed;
+
+        const int afterInstrument = roomUpdates;
+        levels.setRoomParticipantStreamGain(
+            levels.profileId(), QStringLiteral("voice"), 0.71);
+        passed = expect(roomUpdates > afterInstrument,
+                        "and your own microphone level likewise") && passed;
+
+        const auto localGain = [&levels](const QString& stream) {
+            for (const auto& entry : levels.roomParticipants()) {
+                const auto card = entry.toMap();
+                if (card.value(QStringLiteral("local")).toBool()) {
+                    return card.value(stream).toDouble();
+                }
+            }
+            return -1.0;
+        };
+        passed = expect(near(localGain(QStringLiteral("instrumentGain")), 0.32)
+                            && near(localGain(QStringLiteral("voiceGain")), 0.71),
+                        "and the room reports the level that was chosen") && passed;
+        // The setting itself still holds, so Sound Check and the room agree.
+        passed = expect(near(levels.instrumentMonitorGain(), 0.32)
+                            && near(levels.voiceMonitorGain(), 0.71),
+                        "the room and the setup screen never disagree about it")
+            && passed;
+    }
+
+    // Muting one of your own channels to the room. Reported from a real
+    // session: the switches in the room decide whether you hear yourself, the
+    // outgoing mute existed all the way down to the transport, and nothing on
+    // screen could set it -- so a musician who wanted their microphone muted
+    // to the room simply could not say so.
+    {
+        jamlink::desktop::AppController channels(
+            directory / "send-mutes.jlpf", true, QStringLiteral("room"), 0U, 0U);
+        passed = expect(!channels.instrumentSendMuted() && !channels.voiceSendMuted(),
+                        "a session starts with both channels reaching the room") && passed;
+
+        channels.setVoiceSendMuted(true);
+        passed = expect(channels.voiceSendMuted() && !channels.instrumentSendMuted(),
+                        "the microphone can be muted without taking the guitar with it")
+            && passed;
+
+        // The tuner also holds the instrument's outgoing mute. Whichever wrote
+        // last would otherwise undo the other, and closing the tuner would
+        // un-mute a guitar the player had deliberately muted.
+        channels.setInstrumentSendMuted(true);
+        channels.setTunerActive(true);
+        channels.setTunerActive(false);
+        passed = expect(channels.instrumentSendMuted(),
+                        "closing the tuner never clears a mute the musician chose")
+            && passed;
+
+        channels.setInstrumentSendMuted(false);
+        channels.setVoiceSendMuted(false);
+        passed = expect(!channels.instrumentSendMuted() && !channels.voiceSendMuted(),
+                        "both channels can be given back to the room") && passed;
+    }
+
     // Same rule as the setup banner: the muted layout's screenshot proves
     // nothing unless the fixture is genuinely in the state that shows it.
     // A room fixture that is still waiting hides the entire action row.

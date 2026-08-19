@@ -366,6 +366,30 @@ void AppController::setTunerMutesInstrument(bool muted) {
 // written directly, because whichever wrote last would otherwise silently undo
 // the other -- closing the tuner would have un-muted a guitar the player had
 // deliberately muted, with nothing on screen changing to say so.
+bool AppController::instrumentSendMuted() const noexcept { return instrumentSendMuted_; }
+bool AppController::voiceSendMuted() const noexcept { return voiceSendMuted_; }
+
+void AppController::setInstrumentSendMuted(bool muted) {
+    if (instrumentSendMuted_ == muted) {
+        return;
+    }
+    instrumentSendMuted_ = muted;
+    // Through the single writer, never straight to the transport: the tuner
+    // also holds the instrument's outgoing mute, and whichever wrote last
+    // would otherwise undo the other.
+    applyLocalSendMutes();
+    emit roomChanged();
+}
+
+void AppController::setVoiceSendMuted(bool muted) {
+    if (voiceSendMuted_ == muted) {
+        return;
+    }
+    voiceSendMuted_ = muted;
+    applyLocalSendMutes();
+    emit roomChanged();
+}
+
 void AppController::applyLocalSendMutes() {
     if (!peerTransport_) {
         return;
@@ -2034,7 +2058,15 @@ void AppController::setInstrumentMonitorGain(double gain) {
             preferences_.voiceMonitorEnabled);
     }
     scheduleSave();
+    // Both, because these are rendered in two places that listen to
+    // different signals. The room shows every musician's own channels
+    // through roomParticipants, and emitting only setupChanged left that
+    // model holding the old value -- so a slider dragged in the room
+    // moved the audio and then snapped visibly back to where it had
+    // been, which reads as a control that does not work.
     emit setupChanged();
+    emit roomChanged();
+
 }
 
 void AppController::setVoiceMonitorGain(double gain) {
@@ -2051,7 +2083,14 @@ void AppController::setVoiceMonitorGain(double gain) {
             preferences_.voiceMonitorEnabled);
     }
     scheduleSave();
+    // Both, because these are rendered in two places that listen to
+    // different signals. The room shows every musician's own channels
+    // through roomParticipants, and emitting only setupChanged left that
+    // model holding the old value -- so a slider dragged in the room
+    // moved the audio and then snapped visibly back to where it had
+    // been, which reads as a control that does not work.
     emit setupChanged();
+    emit roomChanged();
 }
 
 void AppController::setInstrumentMonitorEnabled(bool enabled) {
@@ -2067,7 +2106,14 @@ void AppController::setInstrumentMonitorEnabled(bool enabled) {
             preferences_.voiceMonitorEnabled);
     }
     scheduleSave();
+    // Both, because these are rendered in two places that listen to
+    // different signals. The room shows every musician's own channels
+    // through roomParticipants, and emitting only setupChanged left that
+    // model holding the old value -- so a slider dragged in the room
+    // moved the audio and then snapped visibly back to where it had
+    // been, which reads as a control that does not work.
     emit setupChanged();
+    emit roomChanged();
 }
 
 void AppController::setVoiceMonitorEnabled(bool enabled) {
@@ -2087,7 +2133,14 @@ void AppController::setVoiceMonitorEnabled(bool enabled) {
             preferences_.voiceMonitorEnabled);
     }
     scheduleSave();
+    // Both, because these are rendered in two places that listen to
+    // different signals. The room shows every musician's own channels
+    // through roomParticipants, and emitting only setupChanged left that
+    // model holding the old value -- so a slider dragged in the room
+    // moved the audio and then snapped visibly back to where it had
+    // been, which reads as a control that does not work.
     emit setupChanged();
+    emit roomChanged();
 }
 
 double AppController::instrumentLevel() const noexcept {

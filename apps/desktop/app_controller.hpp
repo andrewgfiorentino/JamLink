@@ -121,6 +121,13 @@ class AppController final : public QObject {
     Q_PROPERTY(QString networkDiagnostics READ networkDiagnostics NOTIFY roomChanged)
     Q_PROPERTY(QString packetSummary READ packetSummary NOTIFY roomChanged)
     Q_PROPERTY(bool sendMuted READ sendMuted WRITE setSendMuted NOTIFY roomChanged)
+    // Per channel, and separate from the monitor switches beside them. Those
+    // decide whether you hear yourself; these decide whether anybody else
+    // does. Both existed all the way down to the transport and neither had a
+    // control, so a musician who wanted their microphone muted to the room had
+    // no way to say so.
+    Q_PROPERTY(bool instrumentSendMuted READ instrumentSendMuted WRITE setInstrumentSendMuted NOTIFY roomChanged)
+    Q_PROPERTY(bool voiceSendMuted READ voiceSendMuted WRITE setVoiceSendMuted NOTIFY roomChanged)
 
     Q_PROPERTY(QString recordingDirectory READ recordingDirectory WRITE setRecordingDirectory NOTIFY settingsChanged)
     // Which sources a take may contain. Talkback is the usual reason to turn
@@ -320,6 +327,10 @@ public:
     [[nodiscard]] QString packetSummary() const;
     [[nodiscard]] bool sendMuted() const noexcept;
     void setSendMuted(bool muted);
+    [[nodiscard]] bool instrumentSendMuted() const noexcept;
+    [[nodiscard]] bool voiceSendMuted() const noexcept;
+    void setInstrumentSendMuted(bool muted);
+    void setVoiceSendMuted(bool muted);
 
     [[nodiscard]] QString recordingDirectory() const;
     void setRecordingDirectory(const QString& directory);
