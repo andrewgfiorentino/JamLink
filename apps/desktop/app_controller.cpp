@@ -217,7 +217,18 @@ AppController::AppController(
     connect(&saveTimer_, &QTimer::timeout, this, &AppController::persistNow);
     audioRestartTimer_.setSingleShot(true);
     audioRestartTimer_.setInterval(180);
-    connect(&audioRestartTimer_, &QTimer::timeout, this, &AppController::retryAudio);
+    // Reopening the stream, not rescanning the machine.
+    //
+    // This used to call retryAudio, which enumerates every audio device
+    // present -- and enumerating ASIO means opening each driver in turn to ask
+    // what it offers. On a machine with a few interfaces installed that is
+    // over a second during which audio is stopped and every meter reads
+    // unavailable. Changing a buffer size or a device does not need any of it:
+    // the inventory is already loaded and has not changed.
+    //
+    // Rescanning is still right when a device has actually gone away, and the
+    // two places that need it ask for it directly.
+    connect(&audioRestartTimer_, &QTimer::timeout, this, &AppController::restartAudio);
     // Primed here so the interface is never handed an empty answer before the
     // first telemetry tick, which on a machine with no audio device may never
     // arrive at all.
@@ -283,7 +294,8 @@ AppController::AppController(
     }
     if (!visualFixture_ && devicesAvailable_
         && (!restoredPreferences_ || restoredSetupAvailable_)) {
-        audioRestartTimer_.start(0);
+        // The first open of the session, which does want the full scan.
+        QTimer::singleShot(0, this, &AppController::retryAudio);
     }
     if (!visualFixture_) {
         // Known before the first invite is created, so a musician is told what
@@ -3985,7 +3997,9 @@ void AppController::pollAudioTelemetry() {
         && audioTelemetry_.state != jamlink::audio::SoundcheckAudioState::Running) {
         setupMessage_ = audioStateText(audioTelemetry_.state);
         telemetryTimer_.stop();
-        audioRestartTimer_.start(1'000);
+        // A device stopped on its own. That is the one case where looking at
+        // what is actually present is the point rather than an expense.
+        QTimer::singleShot(1'000, this, &AppController::retryAudio);
     }
     if (audioTelemetry_.state == jamlink::audio::SoundcheckAudioState::Running
         && previousSecondary != audioTelemetry_.secondaryVoiceActive) {

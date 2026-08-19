@@ -5,7 +5,7 @@ open-source Windows application for small private sessions: guitar and voice
 travel as separate encrypted streams over direct connections, with no server in
 the middle and no account to create.
 
-> Status: **0.4.7-test**. Under active development and validated in two-home
+> Status: **0.4.8-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
