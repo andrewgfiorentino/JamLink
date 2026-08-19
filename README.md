@@ -1,141 +1,143 @@
 # JamLink
 
-**Play music together over the internet, in real time.** JamLink is a free and
-open-source Windows application for small private sessions: guitar and voice
-travel as separate encrypted streams over direct connections, with no server in
-the middle and no account to create.
+**Play music together over the internet, in real time.** JamLink is a free
+Windows app for small private sessions — you and a few friends, playing at the
+same time, not trading recordings back and forth. There is no account to make,
+nothing to subscribe to, and no company server your music passes through: the
+audio goes straight between your computers.
 
-> Status: **0.4.8-test**. Under active development and validated in two-home
-> field testing, but not yet at a 1.0 release. Expect rough edges.
+> Status: **0.4.8-test**. It works and it has been used for real sessions
+> between two houses, but it is not finished. Expect rough edges.
 
-## What it does
+## What it feels like to use
 
-**Low latency is the whole point.** With an ASIO interface, monitoring runs at
-around 5 ms and playing together feels like being in a room rather than
-trading messages. Windows shared audio works too, at a higher floor Windows
-imposes.
+**Being early is the whole point.** With a proper audio interface, you hear
+yourself about five milliseconds after you play — close enough that playing
+together feels like being in a room rather than sending messages. It also works
+with plain Windows audio, just not as fast.
 
-- **Direct encrypted audio.** AES-256-GCM with per-direction keys, a replay
-  window, and authenticated participant identity. Audio goes peer to peer.
-- **One code to connect.** The host creates an invite and sends it; nothing
-  else is exchanged. The invite names every address the host can be reached on
-  rather than one guess, and the guest probes all of them at once, keeping
-  whichever answers. Two people in the same building stay on the local network
-  instead of hairpinning through a router. Port mapping is still attempted
-  automatically over UPnP, PCP, and NAT-PMP, and Windows Firewall is detected
-  and repairable from inside the application.
-- **Guitar and voice as separate streams.** Each has its own jitter buffer,
-  level, and mute — for every musician in the room, and for your own two
-  channels. Your microphone can be muted to the room while your guitar keeps
-  playing, separately from whether you hear yourself.
-- **Survives an imperfect connection.** An adaptive jitter buffer sized from
-  measured arrival jitter, and pitch-synchronous packet-loss concealment that
-  extrapolates the instrument's own waveform rather than inserting silence.
-- **A chromatic tuner** that mutes your guitar to the room while you use it,
-  and can stay open beside the session once you turn that off.
-- **Recording only what you meant to record.** Each of the four sources can be
-  left out of a take, and a source you turn off is never written to disk rather
-  than written and discarded. A take says which sources were deliberately
-  excluded, so a missing track can never be mistaken for one that failed.
-- **Recording that keeps a pristine copy.** Your instrument and your voice, each
-  of your friend's streams, and — separately — local originals of your own
-  sources taken before the monitor converter and before the network could touch
-  them. The live tracks are what was heard; the originals are what was played.
-- **A take that opens.** Every finished take writes a session file beside the
-  WAVs that lays each track on one timeline, named by who played it and whether
-  it was heard, played, or received — so a recording is not six files to drag
-  into place and hope.
-- **Recordings that admit what they are.** A take carries a manifest saying what
-  the files are, whose they are, and whether it actually finished. An
-  interrupted take is never presented as clean.
-- **A mute you cannot forget.** One press stops sending your guitar and voice,
-  and while it is on the room says so plainly rather than leaving you to
-  wonder whether your friend can hear you.
-- **Private text chat** over the same authenticated connection.
-- **A send that adapts to the uplink you actually have.** Each end reports what
-  it is losing, and the other lowers its rate when that is sustained — quickly
-  down, slowly back up, so a session never swings audibly between two
-  qualities. A last-resort limiter keeps a hot input from reaching your friend
-  as clipping, on the network path only: what you monitor, what you record, and
-  the pristine originals are untouched.
-- **Opus, tuned for playing rather than listening.** Restricted low-delay mode
-  adds 2.5 ms, against the 6.5 ms the default mode would cost — more than the
-  entire monitoring path on an ASIO interface. Two streams take roughly
-  320 kbit/s upstream instead of 1.6 Mbit/s, and less than that on a connection
-  that cannot carry it.
-- **One answer, not a dashboard.** A session conductor gathers what every
-  subsystem knows and says whether you can play. Anything claiming you can is
-  gated on evidence that audio is actually moving, never on a socket existing.
-  When something needs doing, JamLink offers one action rather than a wall of
-  warnings.
-- **Honest reporting.** Where a figure is inferred rather than measured, the
-  text says so. Round trip and receive buffering are measured; one-way delay
-  is derived.
+- **Up to six people, everyone hearing everyone.** Each person gets their own
+  volume, mute and meter, so you can turn one friend's guitar down without
+  touching their voice. If somebody drops out, the rest of you keep playing.
+- **One code to connect.** Whoever starts the room gets an invite to send.
+  Nothing else is exchanged, and nobody needs to sign up. If you and a friend
+  are in the same building, JamLink notices and keeps the audio on your local
+  network instead of sending it out to the internet and back.
+- **Guitar and voice stay separate.** Two independent channels for each person,
+  each with its own level and mute. You can mute your microphone to the room
+  while your guitar keeps playing — separately from whether you hear yourself.
+- **A mute you cannot forget.** One press stops sending everything, and while
+  it is on the room says so plainly instead of leaving you wondering whether
+  anyone can hear you.
+- **It copes with a rough connection.** JamLink keeps a small cushion of audio
+  and grows or shrinks it as your connection changes. When a piece of sound
+  goes missing on the way, it carries on the note you were already playing
+  rather than dropping to silence — so a hiccup sounds like a smudge instead of
+  a hole. If your upload genuinely cannot keep up, it quietly sends a little
+  less rather than breaking up, and goes back to full quality once things
+  settle.
+- **Nobody can listen in.** Everything is encrypted between each pair of
+  players, so even someone else in the same room cannot read your audio or your
+  messages. Nobody can join without your invite, and audio captured off the
+  wire cannot be recorded and pushed back at either of you later.
+- **A tuner** that mutes your guitar to the room while you use it, so nobody
+  has to listen to you tune. Leave that off and you can keep it open beside the
+  session.
+- **Recording that keeps an untouched copy.** Every take records each person's
+  guitar and voice as separate files. Alongside those, JamLink keeps a copy of
+  *your own* playing taken before it was mixed for your headphones and before
+  the internet could touch it. The first set is what everyone heard; the second
+  is what you actually played, and a dropout cannot damage it.
+- **Record only what you meant to.** Any of the channels can be left out of a
+  take, and one you turn off is never written to disk at all. The take notes
+  what you left out on purpose, so a missing file is never mistaken for one
+  that failed.
+- **Takes that open.** Each finished take writes a session file next to the
+  audio, so it opens in Reaper with every part already lined up on one
+  timeline, named by who played it. No dragging six files into place and hoping.
+- **Takes that admit what they are.** If a recording was interrupted, or the
+  disk fell behind and left gaps, the take says so. It is never presented as
+  clean when it is not.
+- **Private text chat** on the same encrypted connection.
+- **One clear answer, not a dashboard.** Rather than a wall of green and amber
+  lights, JamLink works out whether you can actually play and tells you. When
+  something needs fixing it offers one thing to do. And it only claims you are
+  ready when sound is genuinely moving — never because a connection merely
+  exists.
+- **It does not overstate what it knows.** Where a number is an estimate rather
+  than something measured, it says so.
 
 ## Installing
 
-Download the latest ZIP from [Releases](../../releases), extract it to a normal
-folder, and run `JamLink.exe`. Both people must run the **same version** — the
-wire protocol is version-checked and mismatched builds refuse to join rather
-than failing obscurely.
+Download the latest ZIP from [Releases](../../releases), unzip it somewhere
+normal, and run `JamLink.exe`.
 
-The build is not code-signed, so Windows will show a reputation warning. Verify
-the published SHA-256 against the `.sha256` file before choosing **More info →
-Run anyway**.
+**Everyone in the session needs the same version.** JamLink checks, and refuses
+to connect mismatched versions rather than half-working in a way that is hard
+to diagnose.
 
-Requires Windows 11 x64 and headphones. There is no echo cancellation, by
-design — it costs latency and colours the instrument.
+The app is not code-signed yet, so Windows will warn you about it. Compare the
+published SHA-256 with the `.sha256` file if you want to be sure, then choose
+**More info → Run anyway**.
 
-See [docs/running-a-session.md](docs/running-a-session.md) for the two-person
-setup walkthrough.
+You need Windows 11 (64-bit) and **headphones**. There is deliberately no echo
+cancellation — it would add delay and change how your instrument sounds.
 
-## Audio setup, briefly
+[docs/running-a-session.md](docs/running-a-session.md) walks through setting up
+a session.
 
-**If you have an audio interface, select its ASIO driver** for input and
-output. ASIO runs capture and playback on one clock in one callback. Windows
-shared audio runs them on independent clocks with a converter between, which
-costs both delay and quality.
+## Setting up your sound
 
-Buffer size can be left on **Auto**: the device is opened at the size its own
-driver recommends — the same figure your interface's control panel defaults to —
-and moves up only if it actually reports dropping audio. The smallest size a
-driver will admit to is a floor rather than an operating point; some report a
-third of a millisecond, where a healthy machine sitting idle will drop blocks.
+**If you have an audio interface, choose its ASIO driver** for both input and
+output. ASIO runs recording and playback together off one clock, which is what
+makes it fast. Plain Windows audio runs them separately with a conversion step
+in between, which costs both time and quality.
 
-Some combinations cannot run at all — an interface's own driver takes exclusive
-ownership, so its input cannot be used while its output goes through Windows.
-JamLink recognises this as you choose it, names the one device to change, and
-offers a button that changes it.
+**Leave buffer size on Auto.** JamLink opens your interface at the size its own
+driver recommends — the same number your interface's control panel uses — and
+only moves up if your computer actually starts dropping audio. The smallest
+size a driver will accept is not a sensible place to run: some will accept a
+third of a millisecond, where a perfectly healthy computer sitting idle will
+stutter.
 
-If your interface does its own zero-latency monitoring, turn JamLink's monitor
-off for that input and use the hardware path. Capture, meters, clipping
-detection, the tuner, recording, and what your friend hears all continue.
+**Some combinations simply cannot work.** An interface's ASIO driver takes over
+the whole device, so you cannot use its input while sending your headphones
+through Windows. JamLink spots this as you choose it, tells you which single
+device to change, and gives you a button that changes it.
 
-## Known limitations
+**If your interface has its own direct monitoring**, use that and turn
+JamLink's monitoring off for that input. Everything else — meters, the tuner,
+recording, and what your friends hear — carries on as normal.
 
-- **Windows only**, x64.
-- **Up to six people, and everyone hears everyone.** Each musician has their
-  own connection, keys, buffers and meters, and a room that loses somebody
-  keeps playing. Everyone sends directly to everyone else, so upload grows with
-  the number of other people — a fourth musician costs every existing musician
-  more, not only the one joining. JamLink declines to admit somebody when your
-  connection has already said it cannot carry the people who are here. See
-  [docs/multi-participant-architecture.md](docs/multi-participant-architecture.md)
-  for the bandwidth arithmetic.
-- **No relay, and no rendezvous yet.** The guest probes every address the
-  invite named, but the host cannot punch outward until it has heard from the
-  guest. If both ends are behind carrier-grade or symmetric NAT, a direct
-  connection may still be impossible. JamLink says so rather than pretending,
-  and will suggest the other person host if they can.
-- **Exchanging originals is not implemented yet.** Each side keeps pristine
-  local originals of its own sources, but they are not yet sent to the other
-  person, so your copy of your friend's audio is still whatever arrived.
-- **Both people must run the same version.** The wire protocol is
-  version-checked, and it changed in 0.4.1. The invite format changed in 0.4.3,
-  and 0.4.4 keys each pair of musicians separately rather than keying the room,
-  so 0.4.4 and earlier builds cannot talk to each other at all.
+## What it cannot do yet
 
-## Building
+- **Windows only**, 64-bit.
+- **Six people is the limit**, and the practical limit may be lower. Everyone
+  sends their audio to everyone else, so each extra person costs *everybody*
+  more upload, not just the person joining — roughly another 0.3 Mbit/s each.
+  JamLink will decline to let someone in when your connection has already shown
+  it cannot carry the people who are here.
+- **Some connections cannot host.** If your internet connection changes the
+  address JamLink is reached on every time it is used, an invite you create
+  leads nowhere. JamLink detects this and tells you to have your friend create
+  the invite instead — the session is identical either way. If *everybody* is
+  behind that kind of connection, a direct session may not be possible at all;
+  there is no fallback server yet.
+- **You cannot send your untouched recordings to each other.** Each person
+  keeps a clean copy of their own playing, but it stays on their machine, so
+  your copy of a friend's part is still whatever arrived over the internet.
+- **The metronome is not finished.** The click and count-in exist inside the
+  app but there is no control for them yet.
+- **Everyone needs the same version**, and that has mattered recently: the way
+  sessions connect changed in 0.4.1, invites changed in 0.4.3, and encryption
+  changed in 0.4.4 — so anything older than 0.4.4 cannot talk to anything newer
+  at all.
+
+---
+
+## For developers
+
+### Building
 
 Requirements: Windows 11 x64, CMake 3.25 or newer, Visual Studio 2022 with the
 C++ toolchain, and Qt 6.10.3 for MSVC 2022 x64 at `.qt/6.10.3/msvc2022_64`.
@@ -163,42 +165,45 @@ notices:
 powershell -ExecutionPolicy Bypass -File scripts/package_windows.ps1
 ```
 
-## How it is tested
+### How it is tested
 
-Realtime audio breaks in ways that are hard to tell apart from a bad network,
-so the test suite is built around making that distinction impossible to get
-wrong.
+When realtime audio goes wrong it is very hard to tell whether the fault is the
+software, the computer, or the internet connection — and guessing wrong wastes
+everybody's evening. The tests exist to make those three impossible to confuse.
 
-- **Deterministic network impairment.** The receive path is driven through
-  loss, reordering, duplication, and jitter models, with concealment quality
-  measured against the source signal rather than eyeballed.
-- **Conservation of audio.** The send path asserts that every captured frame
-  was either transmitted, is still queued, or was counted as discarded, so
-  audio cannot quietly go missing between the capture callback and the socket.
-- **Real sockets.** Two transports handshake, exchange encrypted audio and
-  chat, reconnect, and reject malformed and replayed packets over loopback.
-- **Allocation tracking** in realtime paths, and virtual-time drift
-  simulations for independent capture and playback clocks.
-- **Offscreen rendering** of every screen, including minimum window width.
+- **A fake bad connection.** Audio is pushed through simulated loss, delay,
+  reordering and duplication, and the result is compared against the original
+  signal rather than listened to and judged by ear.
+- **Nothing goes missing.** Every piece of captured audio must be accounted for
+  — sent, still waiting, or deliberately discarded and counted — so sound
+  cannot quietly vanish between your instrument and the network.
+- **Real connections.** Up to six copies of JamLink connect to each other over
+  real network sockets and exchange real encrypted audio, including reconnects,
+  and including deliberately malformed and hostile traffic.
+- **No hidden pauses.** The parts that run while audio is playing are checked
+  to make sure they never stop to allocate memory, which is what causes clicks.
+  Clock drift between separate recording and playback devices is simulated
+  rather than waited for.
+- **Every screen is drawn and checked**, including at the narrowest window size
+  the app allows.
 
-Design notes for the hardest paths are in
+Design notes for the hardest parts are in
 [docs/receive-path.md](docs/receive-path.md),
 [docs/send-path.md](docs/send-path.md), and
 [docs/session-conductor.md](docs/session-conductor.md). Each records the rules
-it was written to keep, and the defects that established them.
+it was written to keep, and the bugs that established them.
 
-## Contributing
+### Contributing
 
-Issues, live-session reports, and session logs are welcome and need nothing
-signed.
+Bug reports, session reports and logs are very welcome and need nothing signed.
 
-**Code contributions require a signed agreement before they can be merged.**
-JamLink has a single copyright holder, which is what keeps a future
-dual-licensed edition possible; one contribution merged without an agreement
-would remove that permanently. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) and
+**Code contributions need a signed agreement before they can be merged.**
+JamLink has a single copyright holder, which is what keeps future licensing
+options open; one contribution merged without an agreement would close them
+permanently. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) and
 [CLA.md](docs/CLA.md).
 
-## Licence
+### Licence
 
 JamLink-owned code is [GPL-3.0-or-later](LICENSE). The Windows executable
 selects Qt and the Steinberg ASIO SDK under GPL version 3.
