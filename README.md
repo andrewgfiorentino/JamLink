@@ -1,5 +1,7 @@
 # JamLink
 
+> **Public repository status — 2026-08-19:** This repository preserves the GPL-licensed source, release history, tags, notices, and provenance for JamLink versions published here through `v0.4.8-test`. **Active development is no longer conducted in this public repository.** Existing GPL rights are unchanged. See [PUBLIC_REPOSITORY_STATUS.md](PUBLIC_REPOSITORY_STATUS.md).
+
 **Play music together over the internet, in real time.** JamLink is a free
 Windows app for small private sessions — you and a few friends, playing at the
 same time, not trading recordings back and forth. There is no account to make,
@@ -137,6 +139,8 @@ recording, and what your friends hear — carries on as normal.
 
 ## For developers
 
+The material below documents the public GPL code preserved in this repository. It is retained for historical builds, licence compliance, reproducibility, and study; it is not the active development tree.
+
 ### Building
 
 Requirements: Windows 11 x64, CMake 3.25 or newer, Visual Studio 2022 with the
@@ -195,21 +199,13 @@ it was written to keep, and the bugs that established them.
 
 ### Contributing
 
-Bug reports, session reports and logs are very welcome and need nothing signed.
-
-**Code contributions need a signed agreement before they can be merged.**
-JamLink has a single copyright holder, which is what keeps future licensing
-options open; one contribution merged without an agreement would close them
-permanently. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) and
-[CLA.md](docs/CLA.md).
+Bug reports, session reports, and release feedback remain welcome. Active-product code contributions are not currently accepted through this public repository. See [PUBLIC_REPOSITORY_STATUS.md](PUBLIC_REPOSITORY_STATUS.md) and [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ### Licence
 
-JamLink-owned code is [GPL-3.0-or-later](LICENSE). The Windows executable
-selects Qt and the Steinberg ASIO SDK under GPL version 3.
+The JamLink-owned source preserved in this repository is [GPL-3.0-or-later](LICENSE). The published Windows builds represented by this source selected Qt and the Steinberg ASIO SDK under GPL version 3 as documented with those releases.
 
 Required notices and corresponding-source details are in [NOTICE](NOTICE),
 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md), and
 [SOURCE_AND_LICENSES.md](docs/SOURCE_AND_LICENSES.md).
-[docs/licensing-options.md](docs/licensing-options.md) records what the current
-dependencies do and do not allow.
+[docs/licensing-options.md](docs/licensing-options.md) records the licensing analysis that accompanied this public development line.

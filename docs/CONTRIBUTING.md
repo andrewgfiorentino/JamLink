@@ -1,54 +1,29 @@
 <!-- Copyright (c) 2026 Andrew Fiorentino -->
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# Contributing to JamLink
+# Contributing to the public JamLink repository
 
-Thank you for wanting to help. Please read the licensing section before opening
-a pull request — it is short, and it is the one thing that cannot be sorted out
-afterwards.
+As of 2026-08-19, active JamLink development is no longer conducted in this public repository. See [`PUBLIC_REPOSITORY_STATUS.md`](../PUBLIC_REPOSITORY_STATUS.md).
 
-## Contributor Licence Agreement
+## What is still welcome here
 
-**Every code contribution requires a signed Contributor Licence Agreement
-before it can be merged.** See [CLA.md](CLA.md).
+Public bug reports, session reports, release feedback, reproducibility notes, documentation corrections, and reports about the historical GPL releases remain useful.
 
-This is not bureaucracy for its own sake. JamLink is currently GPL-3.0-or-later
-and has a single copyright holder, which is what keeps a future dual-licence or
-commercial edition possible at all. A single merged contribution without a CLA
-would permanently remove that option, because relicensing then needs the
-agreement of every contributor, forever, including anyone who has stopped
-answering email.
+## Code pull requests
 
-The CLA does not take your copyright away. You keep it, and you grant a licence
-broad enough that the project can be relicensed later.
+Active-product code contributions are not currently being accepted through this public repository. Please do not open unsolicited implementation pull requests against the active product line.
 
-Contributions that need no CLA: issues, bug reports, test results from a live
-session, documentation typo fixes, and translations of user-facing text.
+The historical source already published here remains available under GPL-3.0-or-later according to its accompanying licence notices. This repository is being retained so those releases keep their public source, history, notices, tags, and provenance.
 
-## Before opening a pull request
+## Existing contributor-licensing record
 
-- Both configurations must build clean. Warnings are errors here.
-  - `cmake --build --preset windows-debug` then `ctest --preset windows-debug`
-  - `cmake --build --preset windows-gui-debug` then `ctest --preset windows-gui-debug`
-- New behaviour needs a test that fails without the change. If the behaviour
-  cannot be tested, say so in the pull request and explain why.
-- Realtime rules are absolute in the audio callback: no allocation, no file or
-  socket access, no locks, no logging. `AudioStreamReceiver` and
-  `OutgoingAudioPacer` are the models to follow.
-- Do not report an estimate as a measurement. If a number was inferred rather
-  than measured, the text a musician reads has to say so.
-- No control may be shown that cannot act. A switch that moves and changes
-  nothing is treated as a defect, not a placeholder.
+JamLink's public development line used a Contributor Licence Agreement to preserve future relicensing options. The historical CLA and contributor record remain in this repository for provenance:
+
+- [`CLA.md`](CLA.md)
+- [`CONTRIBUTORS.md`](CONTRIBUTORS.md)
+
+Nothing about the repository-status transition revokes or narrows rights previously granted under GPL-3.0-or-later.
 
 ## Third-party code
 
-Do not add a dependency without raising it first. Two constraints apply:
-
-- Anything incompatible with GPL-3.0-or-later cannot be added at all.
-- Anything that would be awkward under a future commercial licence should be
-  avoided, or kept isolated behind an interface the way the Steinberg ASIO SDK
-  is. `jamlink_asio_isolation_tests` enforces that particular boundary and will
-  fail the build if it erodes.
-
-Current third-party licences are recorded in
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+The third-party components and licences applicable to the historical public releases are recorded in [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md), [`SOURCE_AND_LICENSES.md`](SOURCE_AND_LICENSES.md), and the component-specific notices preserved in the tree.
