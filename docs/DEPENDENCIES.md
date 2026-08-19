@@ -38,6 +38,22 @@ three-clause BSD-style terms. The exact retained file list and trademark notice
 are in [`third_party/asio-sdk/README.md`](../third_party/asio-sdk/README.md), and
 the SDK license is retained beside it. No hardware-vendor driver is bundled.
 
+### Opus (libopus) 1.4
+
+JamLink vendors unmodified libopus 1.4 sources at `third_party/opus`, upstream
+tag `v1.4`, commit `82ac57d9f1aaf575800cf17373348e45b7ce6c0d`.
+`jamlink_core` statically links Opus for the network audio codec. The license is
+the BSD-style text in [`third_party/opus/COPYING`](../third_party/opus/COPYING),
+and the upstream royalty-free patent grants are recorded in
+[`third_party/opus/LICENSE_PLEASE_READ.txt`](../third_party/opus/LICENSE_PLEASE_READ.txt).
+Exact provenance and the reason for vendoring are recorded in
+[`third_party/opus/README.jamlink.md`](../third_party/opus/README.jamlink.md).
+
+Because Opus is statically linked, binary distributions must reproduce its
+copyright/license/disclaimer in the accompanying documentation or other
+materials. Opus does not require JamLink-owned source to be published under its
+BSD terms.
+
 ## Runtime network service
 
 The host queries Cloudflare's public STUN endpoint `stun.cloudflare.com:3478` for IPv4 public-address discovery. It sends a standard STUN binding request; no JamLink audio or invite secret is sent to STUN. Cloudflare documents this endpoint as a free public STUN service. The runtime service is not linked code and carries no source-code license into the application. Internet availability and Cloudflare's service terms/operation remain external dependencies.
