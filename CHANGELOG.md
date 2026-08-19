@@ -32,6 +32,12 @@
   the raise that had just been made. The device then dropped audio again at the
   smallest size and raised again, forever. The message was telling the truth
   about a change that was being undone a moment later.
+- Automatic buffer size now opens your device at the size its own driver
+  recommends, which is what the interface's control panel defaults to, rather
+  than the smallest size the driver will admit to. A Focusrite reports sixteen
+  frames as its minimum — a third of a millisecond — and a healthy machine
+  sitting idle drops blocks there. The recommendation was already being read
+  from the driver and then thrown away.
 - A device now gets a moment to settle before its drop-outs are believed.
   Opening a device is itself a gap, and counting that gap as evidence would
   have the buffer climb its whole ladder chasing the noise its own restarts

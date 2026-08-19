@@ -30,6 +30,11 @@ struct SoundcheckEndpointOption final {
     bool hasSecondaryChannel{false};
     std::uint32_t mixSampleRate{0U};
     std::vector<std::uint32_t> bufferFrameOptions;
+    // What the driver itself recommends, which is what every DAW opens at.
+    // Zero when the device does not say. Distinct from the smallest size it
+    // will admit to: that is a floor, not an operating point, and starting
+    // there produces drop-outs on a healthy machine doing nothing.
+    std::uint32_t preferredBufferFrames{0U};
     SoundcheckBackend backend{SoundcheckBackend::WasapiShared};
     // ASIO uses the driver name here. WASAPI leaves it empty and identifies
     // the endpoint entirely with endpointId.

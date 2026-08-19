@@ -150,7 +150,7 @@ AppController::AppController(
 
     if (visualFixture_) {
         sampleRateValues_ = {44'100U, 48'000U, 96'000U};
-        installBufferSizeOptions({64U, 128U, 256U});
+        installBufferSizeOptions({64U, 128U, 256U}, 128U);
         instrumentOptions_ = {
             {QStringLiteral("fixture:interface"),
              QStringLiteral("Focusrite Scarlett 2i2 — Input 1"),
@@ -1366,8 +1366,8 @@ QString AppController::bufferSizeExplanation() const {
         // name, or the one number a player needs is the one number missing.
         return QStringLiteral(
             "Currently %1 frames, about %2 ms between playing a note and hearing "
-            "it back. JamLink opens your device at the smallest size it offers "
-            "and moves up only when the device reports that it dropped audio. %3")
+            "it back. JamLink opens your device at the size its own driver "
+            "recommends and moves up only when the device reports that it dropped audio. %3")
             .arg(effectiveBufferFrames())
             .arg(bufferLatencyMilliseconds(effectiveBufferFrames()), 0, 'f', 1)
             .arg(autoBufferRaised_
@@ -3582,7 +3582,7 @@ void AppController::updateOutputCapabilities() {
     }
     const auto& option = outputOptions_[static_cast<std::size_t>(outputIndex_)].serviceOption;
     sampleRateValues_ = {option.mixSampleRate == 0U ? 48'000U : option.mixSampleRate};
-    installBufferSizeOptions(option.bufferFrameOptions);
+    installBufferSizeOptions(option.bufferFrameOptions, option.preferredBufferFrames);
     sampleRateIndex_ = 0;
     bufferSizeIndex_ = std::clamp(
         bufferSizeIndex_, 0, static_cast<int>(bufferSizeValues_.size() - 1U));
@@ -3839,9 +3839,10 @@ void AppController::restartAudio() {
 }
 
 // Zero heads the list and means automatic. It is a real setting rather than a
-// label: the device is opened at the smallest size it offers, and only a device
-// that actually reports dropping audio moves it up.
-void AppController::installBufferSizeOptions(std::vector<std::uint32_t> deviceValues) {
+// label: the device is opened at the size its own driver recommends, and only a
+// device that actually reports dropping audio moves it up.
+void AppController::installBufferSizeOptions(
+    std::vector<std::uint32_t> deviceValues, std::uint32_t preferredFrames) {
     std::sort(deviceValues.begin(), deviceValues.end());
     deviceValues.erase(
         std::remove(deviceValues.begin(), deviceValues.end(), 0U), deviceValues.end());
@@ -3868,7 +3869,16 @@ void AppController::installBufferSizeOptions(std::vector<std::uint32_t> deviceVa
         && std::find(deviceValues.begin(), deviceValues.end(), autoBufferFrames_)
             != deviceValues.end();
     if (!keepRaise) {
-        autoBufferFrames_ = deviceValues.front();
+        // The driver's own recommendation, not the smallest size it will
+        // admit to. A minimum is a floor: a Focusrite reports sixteen frames,
+        // a third of a millisecond, and a healthy machine sitting idle drops
+        // blocks there -- which is not a fault, and raising the buffer in
+        // response to it was chasing a problem JamLink had created by opening
+        // the device somewhere no DAW would.
+        const bool preferredUsable = preferredFrames != 0U
+            && std::find(deviceValues.begin(), deviceValues.end(), preferredFrames)
+                != deviceValues.end();
+        autoBufferFrames_ = preferredUsable ? preferredFrames : deviceValues.front();
         autoBufferRaised_ = false;
     }
     bufferSizeValues_.clear();
