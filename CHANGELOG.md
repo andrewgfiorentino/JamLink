@@ -47,6 +47,18 @@
 - Verified a full room of six musicians hearing each other simultaneously:
   thirty separate sessions, every one audible at once.
 
+## 0.4.8-test — 2026-08-19
+
+- Fixed the Sound Check screen going blank — every meter reading UNAVAILABLE
+  and every level N/A — for a second or so at a time, over and over. Changing
+  a buffer size or a device restarted the audio by rescanning every audio
+  device on the machine, and rescanning ASIO means opening each driver in turn
+  to ask what it offers. On a machine with several interfaces installed that is
+  well over a second with the audio stopped. Reopening the stream does not need
+  any of it: the list of devices is already known and has not changed.
+  Rescanning still happens when a device has genuinely gone away, which is the
+  one case where looking at what is actually present is the point.
+
 ## Unreleased
 
 - A room can now hold more than two musicians. The transport keeps a slot per person instead of one set of "the peer" state, and the network worker services every slot each pass: each musician gets their own handshake, their own keys and nonce sequence, their own probe schedule, their own receive buffers and their own timeout. Playback mixes them, and each person's level, mute and meter apply to their own contribution rather than to the sum.
