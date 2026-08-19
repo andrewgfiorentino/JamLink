@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.8-test — 2026-08-19
+
+- Fixed the Sound Check screen going blank — every meter reading UNAVAILABLE
+  and every level N/A — for a second or so at a time, over and over. Changing
+  a buffer size or a device restarted the audio by rescanning every audio
+  device on the machine, and rescanning ASIO means opening each driver in turn
+  to ask what it offers. On a machine with several interfaces installed that is
+  well over a second with the audio stopped. Reopening the stream does not need
+  any of it: the list of devices is already known and has not changed.
+  Rescanning still happens when a device has genuinely gone away, which is the
+  one case where looking at what is actually present is the point.
+
 ## 0.4.7-test — 2026-08-18
 
 - Two musicians who joined the same host are now introduced to each other, so a
@@ -47,19 +59,20 @@
 - Verified a full room of six musicians hearing each other simultaneously:
   thirty separate sessions, every one audible at once.
 
-## 0.4.8-test — 2026-08-19
+## 0.4.6-test — 2026-08-19
 
-- Fixed the Sound Check screen going blank — every meter reading UNAVAILABLE
-  and every level N/A — for a second or so at a time, over and over. Changing
-  a buffer size or a device restarted the audio by rescanning every audio
-  device on the machine, and rescanning ASIO means opening each driver in turn
-  to ask what it offers. On a machine with several interfaces installed that is
-  well over a second with the audio stopped. Reopening the stream does not need
-  any of it: the list of devices is already known and has not changed.
-  Rescanning still happens when a device has genuinely gone away, which is the
-  one case where looking at what is actually present is the point.
+- Two musicians who joined the same host are now introduced to each other, so a
+  room of three is a room rather than a star. Before this both guests reached
+  the host, neither had heard of the other, and one of them simply could not be
+  heard by the other — while every three-person check passed. Whoever created
+  the room forwards what they know to each member: a musician may always say
+  where they are, and only the person whose invite you used may tell you about
+  anybody else, because joining their room is already choosing to trust them
+  with it.
+- Verified a full room of six hearing each other at once — thirty separate
+  connections, every one audible simultaneously.
 
-## Unreleased
+## 0.4.5-test — 2026-08-18
 
 - A room can now hold more than two musicians. The transport keeps a slot per person instead of one set of "the peer" state, and the network worker services every slot each pass: each musician gets their own handshake, their own keys and nonce sequence, their own probe schedule, their own receive buffers and their own timeout. Playback mixes them, and each person's level, mute and meter apply to their own contribution rather than to the sum.
 - Your audio is captured, limited and encoded once, then sealed separately for each person it goes to. Doing that per person instead would have handed the first musician every packet and everybody after them silence — and no two-person test could ever have shown it, so a test deliberately reproduces the fault and was confirmed to fail on it.
@@ -67,6 +80,58 @@
 - One person dropping out no longer speaks for the room. "Connected" now means at least one other musician is in session, which is the honest answer to whether you can play at all, and whether everybody expected is present is reported separately — so a room with one person missing keeps playing and still says it is a person short. Their slot and addresses are kept so they can come back without a fresh invite.
 - Chat is delivered to everybody in the room and is not finished until each of them has acknowledged it. Fixed message identifiers colliding between senders: everyone numbers their own messages from one, so a second person's message could be dropped as a duplicate of the first without anything saying so.
 - Round trip, buffer depth, jitter and concealment are now measured per musician rather than averaged into one figure, so a support bundle can say which connection was the trouble.
+
+## 0.4.4-test — 2026-08-18
+
+- A limiter now sits between a hot input and your friend's headphones, on the
+  network path only. What you monitor, what you record, and the pristine
+  originals are untouched. There is no lookahead, because lookahead costs
+  exactly as much delay as it buys quality, and a block that never reaches the
+  ceiling comes out bit-identical.
+- The send rate now follows the connection you actually have. Each end reports
+  what it is losing and the other lowers its rate when that is sustained —
+  quickly down, slowly back up, with a dead band between so a session never
+  swings audibly between two qualities. At the floor it says so rather than
+  continuing to look like it is adapting.
+- Every finished take writes a session file beside the WAVs that lays each
+  track on one timeline, named by who played it and whether the audio was
+  heard, played, or received — so a recording is not six files to drag into
+  place and hope.
+- Each pair of musicians is keyed separately rather than the whole room sharing
+  one key. With a room-wide key everyone present holds everything needed to
+  read everyone else's audio and chat, and a packet addressed to one person
+  authenticates as one addressed to another. Neither is exploitable with two
+  people, which is why it was fixed before a third could exist.
+- A click track with a count-in and a tempo that can be changed while it plays,
+  counted in samples against the audio rather than driven from a timer. Not yet
+  wired to the monitor.
+- Fixed a gap of one exact width permanently freezing the receive buffer's
+  jitter estimate, so it stopped adapting for the rest of the session. The only
+  symptom was dropouts on a connection that had got worse, which is
+  indistinguishable from the connection simply being bad.
+
+## 0.4.3-test — 2026-08-18
+
+- An invite now names every address you can be reached on rather than one
+  guess, and the other end tries all of them at once and keeps whichever
+  answers. Two musicians in the same building stay on the local network instead
+  of being sent out through a router that may refuse to bring them back.
+- JamLink now detects a connection that cannot be hosted from and says so.
+  Some internet connections change the address JamLink is reached on every time
+  it is used, which makes an invite you create lead nowhere; the answer is for
+  your friend to create the invite instead, and the session is identical either
+  way. Previously this looked like a spinner.
+- The room-wide mute has a control and a state you cannot miss. It existed only
+  as a keyboard shortcut, with nothing on screen saying whether it was on.
+- Each of the four sources can be left out of a take, and a source you turn off
+  is never written to disk rather than written and discarded. A take says which
+  sources were deliberately excluded, so a missing track cannot be mistaken for
+  one that failed.
+- The support bundle stopped reporting things it never measured: a single
+  audio-system line that described one endpoint and hid the others, a codec
+  named for a session in which nothing was decoded, a sample rate of zero
+  presented as a measurement, and reconnect and dropped-frame counts that were
+  printed but never filled in.
 
 ## 0.4.2-test — 2026-08-17
 
