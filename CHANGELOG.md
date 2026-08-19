@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.7-test — 2026-08-18
+
+- Two musicians who joined the same host are now introduced to each other, so a
+  room of three is a room rather than a star. Whoever created the room forwards
+  what they know to each member; a musician may always say where they are, and
+  only the person whose invite you used may tell you about anybody else. Before
+  this, both guests reached the host and neither had heard of the other, so one
+  of them simply could not be heard by the other — while every three-person
+  check passed.
+- Fixed your own channel levels springing back the moment you let go of them.
+  The value was stored and the monitor really did change, but the room screen
+  reads those levels through a model that listens to a different signal than the
+  one the setting emitted, so the control snapped back to the value the model was
+  still holding. It reads as a slider that does not work.
+- Added a mute for each of your own channels. Muting just the microphone to the
+  room, so a guitar keeps flowing while nothing else does, worked all the way
+  down to the transport and had no control anywhere that could set it. The
+  switches beside them decide whether you hear yourself, which is a different
+  question, and the caption said so incorrectly.
+- A custom profile photo can be removed. Choosing one worked; taking it back
+  existed in the code and could not be reached, so the only way out was to
+  choose a different picture.
+- The recorder now says what it is doing where it can be read. It already
+  reported a disk falling behind, a take coming out with gaps, and where a
+  finished take landed — none of which reached the screen, so a damaged take
+  looked exactly like a clean one.
+- Verified a full room of six musicians hearing each other simultaneously:
+  thirty separate sessions, every one audible at once.
+
 ## Unreleased
 
 - A room can now hold more than two musicians. The transport keeps a slot per person instead of one set of "the peer" state, and the network worker services every slot each pass: each musician gets their own handshake, their own keys and nonce sequence, their own probe schedule, their own receive buffers and their own timeout. Playback mixes them, and each person's level, mute and meter apply to their own contribution rather than to the sum.

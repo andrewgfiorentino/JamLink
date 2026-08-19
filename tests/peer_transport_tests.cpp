@@ -1234,6 +1234,70 @@ void twoGuestsAreIntroducedAndHearEachOther() {
     host->stop();
 }
 
+// A full room, all at once.
+//
+// Three musicians proves the introduction works. Six proves the shape holds at
+// the ceiling: thirty separate sessions, every machine sending to five others
+// and summing five others back, with nobody dropped and nobody heard twice.
+// Everything below six passes with a mixer that quietly played only the loudest
+// peer, which is why the assertion is that every single one of them is audible.
+void sixMusiciansAllHearEachOtherAtOnce() {
+    std::vector<std::unique_ptr<IPeerAudioTransport>> room;
+    for (int index = 0; index < 6; ++index) {
+        auto transport = jamlink::network::createPlatformPeerAudioTransport();
+        if (!transport) {
+            check(false, "full-room harness setup");
+            return;
+        }
+        const std::string id = "profile-" + std::to_string(index);
+        const std::string name = "Musician " + std::to_string(index);
+        transport->setLocalParticipant(participant(id.c_str(), name.c_str()));
+        room.push_back(std::move(transport));
+    }
+
+    const std::string invite = forceLoopback(room[0]->host(0U, false));
+    if (invite.empty()) {
+        check(false, "full-room harness hosts");
+        return;
+    }
+    for (std::size_t index = 1U; index < room.size(); ++index) {
+        if (!room[index]->join(invite)) {
+            check(false, "every musician can attempt the room");
+            return;
+        }
+    }
+    // Five other people, so five sessions on every machine.
+    const bool everyoneIn = waitForPeerCount(
+        *room[0], 5U, std::chrono::milliseconds(20'000));
+    check(everyoneIn, "the room holds six musicians at once");
+    if (!everyoneIn) {
+        for (auto& transport : room) {
+            transport->stop();
+        }
+        return;
+    }
+
+    std::vector<IPeerAudioTransport*> raw;
+    for (auto& transport : room) {
+        raw.push_back(transport.get());
+    }
+    const auto peaks = pumpRoom(
+        raw, std::chrono::milliseconds(12'000), std::chrono::milliseconds(3'000));
+
+    bool everyoneAudible = true;
+    for (std::size_t index = 0U; index < peaks.size(); ++index) {
+        everyoneAudible = everyoneAudible && peaks[index] > audibleThreshold;
+    }
+    check(everyoneAudible, "every musician hears the room, simultaneously");
+    for (std::size_t index = 0U; index < room.size(); ++index) {
+        check(room[index]->telemetry().connectedPeers == 5U,
+              "each musician holds a session with every other musician");
+    }
+    for (auto& transport : room) {
+        transport->stop();
+    }
+}
+
 void oneMusicianLeavingLeavesTheRestPlaying() {
     auto host = jamlink::network::createPlatformPeerAudioTransport();
     auto staying = jamlink::network::createPlatformPeerAudioTransport();
@@ -1393,6 +1457,7 @@ int main() {
     additionalGuestCannotDisplaceActivePerformer();
     admitsASecondMusicianAndSendsToBoth();
     twoGuestsAreIntroducedAndHearEachOther();
+    sixMusiciansAllHearEachOtherAtOnce();
     oneMusicianLeavingLeavesTheRestPlaying();
     aRefusedMusicianIsToldRatherThanLeftWaiting();
 

@@ -5,7 +5,7 @@ open-source Windows application for small private sessions: guitar and voice
 travel as separate encrypted streams over direct connections, with no server in
 the middle and no account to create.
 
-> Status: **0.4.6-test**. Under active development and validated in two-home
+> Status: **0.4.7-test**. Under active development and validated in two-home
 > field testing, but not yet at a 1.0 release. Expect rough edges.
 
 ## What it does
@@ -25,8 +25,9 @@ imposes.
   automatically over UPnP, PCP, and NAT-PMP, and Windows Firewall is detected
   and repairable from inside the application.
 - **Guitar and voice as separate streams.** Each has its own jitter buffer,
-  level, and mute, so a friend's guitar can be turned down without turning
-  their voice down.
+  level, and mute — for every musician in the room, and for your own two
+  channels. Your microphone can be muted to the room while your guitar keeps
+  playing, separately from whether you hear yourself.
 - **Survives an imperfect connection.** An adaptive jitter buffer sized from
   measured arrival jitter, and pitch-synchronous packet-loss concealment that
   extrapolates the instrument's own waveform rather than inserting silence.

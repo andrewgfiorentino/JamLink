@@ -361,6 +361,23 @@ Item {
                 }
             }
 
+            // What the recorder is actually saying. It already reported a disk
+            // that fell behind, a take that came out with gaps, and where a
+            // finished one landed -- and none of it reached the screen, so a
+            // damaged take looked exactly like a clean one.
+            Text {
+                visible: root.controller.recording
+                    || root.controller.recordingLocation.length > 0
+                width: parent.width
+                text: root.controller.recordingMessage
+                color: root.controller.recordingMessage.indexOf("gaps") >= 0
+                        || root.controller.recordingMessage.indexOf("could not") >= 0
+                    ? "#ef6b7f" : Theme.textSecondary
+                wrapMode: Text.WordWrap
+                font.family: Theme.fontFamily
+                font.pixelSize: 9
+            }
+
             // Being muted is a state you have to be unable to forget. The
             // shortcut alone left no way to tell from the screen whether your
             // friend could hear you, which is the one thing a musician needs
@@ -439,7 +456,8 @@ Item {
                 JamButton {
                     width: (parent.width - 36) / 5
                     height: parent.height
-                    text: root.controller.recording ? "Stop " + root.controller.recordingElapsed : "Record"
+                    text: root.controller.recording
+                        ? "Stop " + root.controller.recordingElapsed : "Record"
                     iconSource: Qt.resolvedUrl("../../assets/music_note.svg")
                     enabled: root.controller.audioActive
                     onClicked: root.controller.toggleRecording()
@@ -509,6 +527,9 @@ Item {
                             readonly property bool monitorOn: monitorRow.modelData.instrument
                                 ? root.controller.instrumentMonitorEnabled
                                 : root.controller.voiceMonitorEnabled
+                            readonly property bool sendMuted: monitorRow.modelData.instrument
+                                ? root.controller.instrumentSendMuted
+                                : root.controller.voiceSendMuted
 
                             JamIcon {
                                 anchors.verticalCenter: parent.verticalCenter
@@ -538,6 +559,30 @@ Item {
                                         root.controller.voiceMonitorEnabled = checked
                                 }
                             }
+                            // Whether anybody else hears this channel, which is
+                            // a different question from the switch beside it
+                            // and was previously unaskable: the outgoing mute
+                            // existed all the way down to the transport with no
+                            // control anywhere that could set it.
+                            IconButton {
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconSource: Qt.resolvedUrl("../../assets/mic.svg")
+                                iconColor: monitorRow.sendMuted
+                                    ? "#ef6b7f" : "#5d666c"
+                                Accessible.name: monitorRow.sendMuted
+                                    ? "Let your friend hear your "
+                                        + monitorRow.modelData.label + " again"
+                                    : "Stop sending your "
+                                        + monitorRow.modelData.label
+                                onClicked: {
+                                    if (monitorRow.modelData.instrument)
+                                        root.controller.instrumentSendMuted =
+                                            !root.controller.instrumentSendMuted
+                                    else
+                                        root.controller.voiceSendMuted =
+                                            !root.controller.voiceSendMuted
+                                }
+                            }
                             Item { width: 6; height: 1 }
                         }
                     }
@@ -546,10 +591,20 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - 470
                         visible: width > 60
-                        text: (!root.controller.instrumentMonitorEnabled
-                                && !root.controller.voiceMonitorEnabled)
-                            ? "Off · use your interface's direct monitoring"
-                            : "Your friend still hears you either way"
+                        // The old wording promised your friend heard you
+                        // whatever these switches did, which stopped being true
+                        // the moment a channel could be muted to the room.
+                        text: (root.controller.instrumentSendMuted
+                                && root.controller.voiceSendMuted)
+                            ? "Muted · nobody can hear you"
+                            : root.controller.instrumentSendMuted
+                                ? "Your guitar is muted to the room"
+                                : root.controller.voiceSendMuted
+                                    ? "Your microphone is muted to the room"
+                                    : (!root.controller.instrumentMonitorEnabled
+                                        && !root.controller.voiceMonitorEnabled)
+                                        ? "Off · use your interface's direct monitoring"
+                                        : "These change what you hear, not what they hear"
                         color: Theme.textSecondary
                         elide: Text.ElideRight
                         font.family: Theme.fontFamily

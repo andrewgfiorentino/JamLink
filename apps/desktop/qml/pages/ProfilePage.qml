@@ -116,6 +116,17 @@ Item {
                         Accessible.name: "Choose custom profile image"
                         onClicked: avatarDialog.open()
                     }
+                    // A photo could be chosen and never taken back. The way to
+                    // remove one existed and nothing on screen could reach it,
+                    // so the only way out was to pick a different picture.
+                    JamButton {
+                        visible: root.controller.profileCustomAvatarSource.toString().length > 0
+                        width: 108
+                        height: 30
+                        text: "Remove photo"
+                        Accessible.name: "Remove the custom profile image"
+                        onClicked: root.controller.clearCustomAvatar()
+                    }
                 }
             }
 
