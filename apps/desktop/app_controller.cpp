@@ -27,6 +27,13 @@
 
 namespace jamlink::desktop {
 namespace {
+// Long enough for a device to open and start delivering, short enough that a
+// machine which genuinely cannot keep up is not left struggling.
+constexpr qint64 audioSettleMilliseconds = 1'500;
+
+} // namespace
+
+namespace {
 
 constexpr std::uint64_t fnvOffset = 14'695'981'039'346'656'037ULL;
 constexpr std::uint64_t fnvPrime = 1'099'511'628'211ULL;
@@ -3777,6 +3784,15 @@ void AppController::restartAudio() {
         preferences_.voiceMonitorEnabled};
     static_cast<void>(audioService_->start(configuration));
     audioTelemetry_ = audioService_->telemetry();
+    // The device counts drop-outs from zero again, so a baseline taken from the
+    // session before this one describes nothing. Stamping the clock as well
+    // gives the device a few seconds to settle: opening it is itself a gap, and
+    // counting that gap as evidence would have the buffer climb its whole
+    // ladder chasing the noise its own restarts were making.
+    reportedAudioDropouts_ = 0U;
+    audioDropoutReportMilliseconds_ = 0;
+    audioSettleUntilMilliseconds_ =
+        QDateTime::currentMSecsSinceEpoch() + audioSettleMilliseconds;
     {
         // Monitoring delay is decided almost entirely by which backend is in
         // use and how large the buffer is, so a complaint about it has to be
@@ -3834,8 +3850,27 @@ void AppController::installBufferSizeOptions(std::vector<std::uint32_t> deviceVa
     if (deviceValues.empty()) {
         deviceValues = {480U};
     }
-    autoBufferFrames_ = deviceValues.front();
-    autoBufferRaised_ = false;
+    // Keep a raise that belongs to this same device.
+    //
+    // Raising the buffer restarts the audio, and the restart comes back
+    // through here -- so resetting unconditionally threw away the raise that
+    // had just been made, the device dropped audio again at the smallest size,
+    // and it raised again. Every few seconds, forever, always reporting the
+    // same number, while sitting idle. The message was telling the truth about
+    // a change that was being undone a moment later.
+    //
+    // A genuinely different device is a different ladder and does start again
+    // from the smallest size, which is the behaviour automatic mode promises.
+    const bool sameLadder = bufferSizeValues_.size() == deviceValues.size() + 1U
+        && std::equal(deviceValues.begin(), deviceValues.end(),
+                      bufferSizeValues_.begin() + 1);
+    const bool keepRaise = sameLadder && autoBufferRaised_
+        && std::find(deviceValues.begin(), deviceValues.end(), autoBufferFrames_)
+            != deviceValues.end();
+    if (!keepRaise) {
+        autoBufferFrames_ = deviceValues.front();
+        autoBufferRaised_ = false;
+    }
     bufferSizeValues_.clear();
     bufferSizeValues_.reserve(deviceValues.size() + 1U);
     bufferSizeValues_.push_back(0U);
@@ -3899,6 +3934,12 @@ void AppController::reportAudioDeviceDropouts() {
     const std::uint64_t dropouts =
         audioTelemetry_.underruns + audioTelemetry_.overruns;
     if (dropouts <= reportedAudioDropouts_) {
+        return;
+    }
+    // Still settling. The baseline moves with it, so what the device dropped
+    // while opening is never held against it afterwards.
+    if (QDateTime::currentMSecsSinceEpoch() < audioSettleUntilMilliseconds_) {
+        reportedAudioDropouts_ = dropouts;
         return;
     }
     // Rate limited so a struggling device cannot fill the log at the telemetry
